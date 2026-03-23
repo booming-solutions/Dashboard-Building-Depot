@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase';
+import * as XLSX from 'xlsx';
 
 export default function AdminPage() {
   const [user, setUser] = useState(null);
@@ -29,34 +30,42 @@ export default function AdminPage() {
     setLogs(data || []);
   }
 
-  async function parseExcel(file) {
-    const XLSX = (await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm')).default || await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm');
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const json = XLSX.utils.sheet_to_json(sheet);
+  function parseExcel(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, { type: 'array', cellDates: true });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const json = XLSX.utils.sheet_to_json(sheet);
 
-    return json.map(row => {
-      const keys = Object.keys(row);
-      const find = (patterns) => keys.find(k => patterns.some(p => k.toLowerCase().includes(p))) || patterns[0];
+          const rows = json.map(row => {
+            const keys = Object.keys(row);
+            const find = (patterns) => keys.find(k => patterns.some(p => k.toLowerCase().includes(p))) || patterns[0];
 
-      let dateVal = row[find(['date'])];
-      if (dateVal instanceof Date) dateVal = dateVal.toISOString().split('T')[0];
-      else if (typeof dateVal === 'number') {
-        dateVal = new Date((dateVal - 25569) * 86400000).toISOString().split('T')[0];
-      }
+            let dateVal = row[find(['date'])];
+            if (dateVal instanceof Date) dateVal = dateVal.toISOString().split('T')[0];
+            else if (typeof dateVal === 'number') dateVal = new Date((dateVal - 25569) * 86400000).toISOString().split('T')[0];
 
-      return {
-        bum: String(row[find(['bum'])] || ''),
-        sale_date: dateVal,
-        store_number: String(row[find(['store'])] || ''),
-        dept_code: String(row[find(['department code', 'dept_code'])] || ''),
-        dept_name: String(row[find(['department name', 'dept_name'])] || ''),
-        net_sales: parseFloat(row[find(['net sales', 'net_sales'])]) || 0,
-        gross_margin: parseFloat(row[keys.find(k => k.toLowerCase().includes('gross margin') && !k.toLowerCase().includes('%')) || 'Gross Margin']) || 0,
-        gm_percentage: parseFloat(row[keys.find(k => (k.toLowerCase().includes('gross margin') && k.toLowerCase().includes('%')) || k.toLowerCase() === 'gm%') || 'Gross Margin %']) || 0,
+            return {
+              bum: String(row[find(['bum'])] || ''),
+              sale_date: dateVal,
+              store_number: String(row[find(['store'])] || ''),
+              dept_code: String(row[find(['department code', 'dept_code'])] || ''),
+              dept_name: String(row[find(['department name', 'dept_name'])] || ''),
+              net_sales: parseFloat(row[find(['net sales', 'net_sales'])]) || 0,
+              gross_margin: parseFloat(row[keys.find(k => k.toLowerCase().includes('gross margin') && !k.toLowerCase().includes('%')) || 'Gross Margin']) || 0,
+              gm_percentage: parseFloat(row[keys.find(k => (k.toLowerCase().includes('gross margin') && k.toLowerCase().includes('%')) || k.toLowerCase() === 'gm%') || 'Gross Margin %']) || 0,
+            };
+          }).filter(r => r.bum && r.sale_date && r.dept_code);
+
+          resolve(rows);
+        } catch (err) { reject(err); }
       };
-    }).filter(r => r.bum && r.sale_date && r.dept_code);
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
   }
 
   async function handleFile(file) {

@@ -2,9 +2,13 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
+import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
+
+Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
 
 function formatCurrency(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
 function formatPct(n) { return (n || 0).toFixed(1) + '%'; }
+const MONTH_NAMES = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
 
 function KPI({ label, value, sub, color }) {
   return (
@@ -54,7 +58,7 @@ export default function SalesDashboard() {
       monthly[m].gm += parseFloat(r.gross_margin);
     });
     const months = Object.keys(monthly).sort();
-    return { months, sales: months.map(m => monthly[m].sales), gm: months.map(m => monthly[m].gm), gmPct: months.map(m => monthly[m].gm / monthly[m].sales * 100) };
+    return { months, sales: months.map(m => monthly[m].sales), gm: months.map(m => monthly[m].gm), gmPct: months.map(m => monthly[m].sales > 0 ? monthly[m].gm / monthly[m].sales * 100 : 0) };
   }
 
   function getBumData(rows) {
@@ -79,12 +83,7 @@ export default function SalesDashboard() {
     return { names: sorted.map(s => s[0].replace(/^\d+\s/, '')), sales: sorted.map(s => s[1].sales), gm: sorted.map(s => s[1].gm) };
   }
 
-  async function renderCharts() {
-    if (typeof window === 'undefined') return;
-    const Chart = (await import('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/+esm')).Chart;
-    const { CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend } = await import('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/+esm');
-    Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend);
-
+  function renderCharts() {
     const rows = filtered();
     const monthly = getMonthlyData(rows);
     const bumData = getBumData(rows);
@@ -92,43 +91,40 @@ export default function SalesDashboard() {
 
     Object.values(chartsRef.current).forEach(c => c?.destroy());
 
+    const monthLabels = monthly.months.map(m => {
+      const [y, mo] = m.split('-');
+      return MONTH_NAMES[parseInt(mo) - 1] + ' ' + y.slice(2);
+    });
+
     if (monthlyRef.current) {
       chartsRef.current.monthly = new Chart(monthlyRef.current, {
-        type: 'bar', data: {
-          labels: monthly.months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'][parseInt(mo)-1] + ' ' + y.slice(2); }),
-          datasets: [{ label: 'Net Sales', data: monthly.sales, backgroundColor: '#2E8BC0', borderRadius: 4 }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatCurrency(c.raw) } } }, scales: { y: { ticks: { callback: v => '$' + (v/1e6).toFixed(1) + 'M' } } } }
+        type: 'bar',
+        data: { labels: monthLabels, datasets: [{ label: 'Net Sales', data: monthly.sales, backgroundColor: '#2E8BC0', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatCurrency(c.raw) } } }, scales: { y: { ticks: { callback: v => '$' + (v / 1e6).toFixed(1) + 'M' } } } }
       });
     }
 
     if (gmRef.current) {
       chartsRef.current.gm = new Chart(gmRef.current, {
-        type: 'line', data: {
-          labels: monthly.months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'][parseInt(mo)-1] + ' ' + y.slice(2); }),
-          datasets: [{ label: 'GM%', data: monthly.gmPct, borderColor: '#F0B429', backgroundColor: 'rgba(240,180,41,0.1)', fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: '#F0B429' }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatPct(c.raw) } } }, scales: { y: { min: 25, max: 45, ticks: { callback: v => v + '%' } } } }
+        type: 'line',
+        data: { labels: monthLabels, datasets: [{ label: 'GM%', data: monthly.gmPct, borderColor: '#F0B429', backgroundColor: 'rgba(240,180,41,0.1)', fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: '#F0B429' }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatPct(c.raw) } } }, scales: { y: { min: 20, max: 50, ticks: { callback: v => v + '%' } } } }
       });
     }
 
     if (bumRef.current) {
       chartsRef.current.bum = new Chart(bumRef.current, {
-        type: 'bar', data: {
-          labels: bumData.names,
-          datasets: [{ label: 'Net Sales', data: bumData.sales, backgroundColor: ['#1B3A5C', '#2E8BC0', '#4BA3D4', '#F0B429', '#D49E1F'], borderRadius: 4 }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatCurrency(c.raw) } } }, scales: { x: { ticks: { callback: v => '$' + (v/1e6).toFixed(1) + 'M' } } } }
+        type: 'bar',
+        data: { labels: bumData.names, datasets: [{ label: 'Net Sales', data: bumData.sales, backgroundColor: ['#1B3A5C', '#2E8BC0', '#4BA3D4', '#F0B429', '#D49E1F'], borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatCurrency(c.raw) } } }, scales: { x: { ticks: { callback: v => '$' + (v / 1e6).toFixed(1) + 'M' } } } }
       });
     }
 
     if (deptRef.current) {
       chartsRef.current.dept = new Chart(deptRef.current, {
-        type: 'bar', data: {
-          labels: deptData.names,
-          datasets: [{ label: 'Net Sales', data: deptData.sales, backgroundColor: '#2E8BC0', borderRadius: 4 }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatCurrency(c.raw) } } }, scales: { x: { ticks: { callback: v => '$' + (v/1e6).toFixed(1) + 'M' } } } }
+        type: 'bar',
+        data: { labels: deptData.names, datasets: [{ label: 'Net Sales', data: deptData.sales, backgroundColor: '#2E8BC0', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => formatCurrency(c.raw) } } }, scales: { x: { ticks: { callback: v => '$' + (v / 1e6).toFixed(1) + 'M' } } } }
       });
     }
   }
