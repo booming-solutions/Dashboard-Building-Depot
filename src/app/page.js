@@ -1,6 +1,33 @@
-import Link from 'next/link';
+'use client';
 
-function Navbar() {
+import { useState } from 'react';
+import Link from 'next/link';
+import { translations } from '@/lib/translations';
+
+function LanguageSwitcher({ lang, setLang }) {
+  return (
+    <div className="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
+      <button
+        onClick={() => setLang('nl')}
+        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+          lang === 'nl' ? 'bg-white text-navy shadow-sm' : 'text-gray-400 hover:text-gray-600'
+        }`}
+      >
+        NL
+      </button>
+      <button
+        onClick={() => setLang('en')}
+        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+          lang === 'en' ? 'bg-white text-navy shadow-sm' : 'text-gray-400 hover:text-gray-600'
+        }`}
+      >
+        EN
+      </button>
+    </div>
+  );
+}
+
+function Navbar({ t, lang, setLang }) {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-white/92 backdrop-blur-xl border-b border-navy/5 px-6 py-3">
       <div className="max-w-6xl mx-auto flex items-center justify-between">
@@ -8,12 +35,13 @@ function Navbar() {
           <img src="/logo.png" alt="Booming Solutions" className="h-10 w-10 object-contain" />
           <span className="font-display text-xl font-semibold text-navy tracking-tight">Booming Solutions</span>
         </Link>
-        <div className="hidden md:flex items-center gap-8">
-          <a href="#services" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">Services</a>
-          <a href="#dashboards" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">AI Dashboards</a>
-          <a href="#contact" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">Contact</a>
+        <div className="hidden md:flex items-center gap-6">
+          <a href="#services" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">{t.nav.services}</a>
+          <a href="#dashboards" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">{t.nav.dashboards}</a>
+          <a href="#contact" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">{t.nav.contact}</a>
+          <LanguageSwitcher lang={lang} setLang={setLang} />
           <Link href="/login" className="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-navy-light transition-all hover:-translate-y-0.5">
-            Inloggen
+            {t.nav.login}
           </Link>
         </div>
       </div>
@@ -21,41 +49,41 @@ function Navbar() {
   );
 }
 
-function Hero() {
+function Hero({ t }) {
   return (
     <section className="min-h-screen flex items-center pt-24 pb-16 px-6 bg-gradient-to-br from-white via-blue-pale to-gray-50">
       <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-12 items-center">
         <div>
           <div className="inline-flex items-center gap-2 bg-white border border-gray-200 px-4 py-1.5 rounded-full text-xs text-gray-500 font-medium shadow-sm mb-6">
             <span className="w-2 h-2 rounded-full bg-gold animate-pulse" />
-            Beschikbaar voor nieuwe projecten
+            {t.hero.badge}
           </div>
           <h1 className="font-display text-4xl md:text-5xl font-semibold text-navy leading-tight tracking-tight">
-            Financieel leiderschap,<br />versterkt met <em className="text-blue italic">AI</em>
+            {t.hero.title1}<br />{t.hero.title2} <em className="text-blue italic">AI</em>
           </h1>
           <p className="text-lg text-gray-500 leading-relaxed mt-6 max-w-lg">
-            Interim CFO-services gecombineerd met intelligente dashboards. Helder inzicht in uw financiën — altijd en overal toegankelijk.
+            {t.hero.subtitle}
           </p>
           <div className="flex gap-4 mt-8">
             <a href="#contact" className="inline-flex items-center gap-2 bg-gold text-navy-deep px-6 py-3 rounded-xl font-semibold hover:bg-gold-light transition-all hover:-translate-y-0.5 shadow-lg shadow-gold/30">
-              Plan een gesprek →
+              {t.hero.cta} →
             </a>
             <a href="#dashboards" className="inline-flex items-center gap-2 bg-white text-navy px-6 py-3 rounded-xl font-semibold border-2 border-gray-200 hover:border-navy transition-all hover:-translate-y-0.5">
-              Bekijk dashboards
+              {t.hero.ctaSecondary}
             </a>
           </div>
         </div>
         <div className="relative">
           <div className="bg-white rounded-2xl p-6 shadow-2xl shadow-navy/10 border border-navy/5">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-sm font-semibold text-navy">Financieel overzicht</h3>
-              <span className="text-xs bg-blue-pale text-blue px-3 py-1 rounded-full font-medium">Live data</span>
+              <h3 className="text-sm font-semibold text-navy">{t.dashboard.title}</h3>
+              <span className="text-xs bg-blue-pale text-blue px-3 py-1 rounded-full font-medium">{t.dashboard.live}</span>
             </div>
             <div className="grid grid-cols-3 gap-3 mb-4">
               {[
-                { label: 'Omzet', value: '$2.4M', change: '↑ 12.5%', up: true },
+                { label: t.dashboard.revenue, value: '$2.4M', change: '↑ 12.5%', up: true },
                 { label: 'EBITDA', value: '$380K', change: '↑ 8.2%', up: true },
-                { label: 'Burn rate', value: '$52K', change: '↓ 3.1%', up: false },
+                { label: t.dashboard.burnRate, value: '$52K', change: '↓ 3.1%', up: false },
               ].map((m) => (
                 <div key={m.label} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
                   <div className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">{m.label}</div>
@@ -83,36 +111,19 @@ function Hero() {
   );
 }
 
-function Services() {
+function Services({ t }) {
   const services = [
-    {
-      icon: '📊',
-      title: 'Interim CFO',
-      desc: 'Ervaren financieel leiderschap voor uw organisatie. Van cashflow management tot strategische planning en boardroom presentaties.',
-      color: 'bg-navy text-gold',
-    },
-    {
-      icon: '🤖',
-      title: 'AI Dashboards',
-      desc: 'Real-time financiële dashboards, aangedreven door AI. Automatische inzichten, voorspellingen en rapportages.',
-      color: 'bg-blue text-white',
-    },
-    {
-      icon: '✓',
-      title: 'Financiële analyse',
-      desc: 'Diepgaande analyses van uw financiële positie. KPI-tracking, benchmarking en scenario-planning.',
-      color: 'bg-gold text-navy',
-    },
+    { icon: '📊', ...t.services.cfo, color: 'bg-navy text-gold' },
+    { icon: '🤖', ...t.services.ai, color: 'bg-blue text-white' },
+    { icon: '✓', ...t.services.analysis, color: 'bg-gold text-navy' },
   ];
 
   return (
     <section id="services" className="py-24 px-6 bg-white">
       <div className="max-w-5xl mx-auto">
-        <p className="text-xs uppercase tracking-widest text-blue font-semibold mb-3">Onze expertise</p>
-        <h2 className="font-display text-3xl md:text-4xl font-semibold text-navy tracking-tight mb-4">Wat Booming Solutions biedt</h2>
-        <p className="text-base text-gray-500 leading-relaxed max-w-xl mb-12">
-          Van strategisch financieel advies tot real-time AI-dashboards — wij zorgen voor helder inzicht en slimme beslissingen.
-        </p>
+        <p className="text-xs uppercase tracking-widest text-blue font-semibold mb-3">{t.services.label}</p>
+        <h2 className="font-display text-3xl md:text-4xl font-semibold text-navy tracking-tight mb-4">{t.services.title}</h2>
+        <p className="text-base text-gray-500 leading-relaxed max-w-xl mb-12">{t.services.subtitle}</p>
         <div className="grid md:grid-cols-3 gap-5">
           {services.map((s) => (
             <div key={s.title} className="bg-gray-50 rounded-2xl p-7 border border-gray-100 hover:-translate-y-1 hover:shadow-lg hover:shadow-navy/5 transition-all">
@@ -127,25 +138,16 @@ function Services() {
   );
 }
 
-function DashboardSection() {
-  const features = [
-    { title: 'Live financiële dashboards', desc: 'Omzet, kosten, cashflow en EBITDA in real-time. Aangepast aan uw specifieke KPI\'s.' },
-    { title: 'AI-gestuurde inzichten', desc: 'Automatische signalering van trends, afwijkingen en besparingsmogelijkheden.' },
-    { title: 'Rapportages en documenten', desc: 'Veilig bestanden delen. Board decks, maandrapportages en analyses altijd beschikbaar.' },
-    { title: 'Mobiele app (PWA)', desc: 'Installeer de app op uw telefoon. Bekijk uw dashboards onderweg, zonder App Store.' },
-  ];
-
+function DashboardSection({ t }) {
   return (
     <section id="dashboards" className="py-24 px-6 bg-navy-deep text-white relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_50%,rgba(46,139,192,0.15),transparent_60%)]" />
       <div className="max-w-5xl mx-auto relative z-10">
-        <p className="text-xs uppercase tracking-widest text-gold font-semibold mb-3">Klantenportaal</p>
-        <h2 className="font-display text-3xl md:text-4xl font-semibold text-white tracking-tight mb-4">Uw financiën, altijd bij de hand</h2>
-        <p className="text-base text-white/55 leading-relaxed max-w-xl mb-10">
-          Log in op het Booming platform en bekijk uw persoonlijke dashboards, rapportages en gedeelde documenten.
-        </p>
+        <p className="text-xs uppercase tracking-widest text-gold font-semibold mb-3">{t.portal.label}</p>
+        <h2 className="font-display text-3xl md:text-4xl font-semibold text-white tracking-tight mb-4">{t.portal.title}</h2>
+        <p className="text-base text-white/55 leading-relaxed max-w-xl mb-10">{t.portal.subtitle}</p>
         <div className="grid md:grid-cols-2 gap-4">
-          {features.map((f) => (
+          {t.portal.features.map((f) => (
             <div key={f.title} className="flex gap-4 items-start bg-white/5 rounded-xl p-5 border border-white/8 hover:bg-white/8 transition-all">
               <span className="w-2.5 h-2.5 rounded-full bg-gold mt-1.5 flex-shrink-0" />
               <div>
@@ -160,40 +162,134 @@ function DashboardSection() {
   );
 }
 
-function CTA() {
+function ContactForm({ t }) {
+  const [form, setForm] = useState({ name: '', email: '', company: '', message: '' });
+  const [status, setStatus] = useState('idle');
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setStatus('sending');
+
+    try {
+      const res = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        setStatus('success');
+        setForm({ name: '', email: '', company: '', message: '' });
+      } else {
+        setStatus('error');
+      }
+    } catch {
+      setStatus('error');
+    }
+  }
+
   return (
-    <section id="contact" className="py-24 px-6 bg-gray-50 text-center">
-      <div className="max-w-xl mx-auto">
-        <p className="text-xs uppercase tracking-widest text-blue font-semibold mb-3">Klaar om te starten?</p>
-        <h2 className="font-display text-3xl md:text-4xl font-semibold text-navy tracking-tight mb-4">Laten we kennismaken</h2>
-        <p className="text-base text-gray-500 leading-relaxed mb-8">
-          Benieuwd wat Booming Solutions voor uw organisatie kan betekenen? Plan een vrijblijvend gesprek.
-        </p>
-        <a href="mailto:info@boomingsolutions.ai" className="inline-flex items-center gap-2 bg-gold text-navy-deep px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-gold-light transition-all hover:-translate-y-0.5 shadow-lg shadow-gold/30">
-          Neem contact op →
-        </a>
+    <section id="contact" className="py-24 px-6 bg-gray-50">
+      <div className="max-w-2xl mx-auto">
+        <div className="text-center mb-10">
+          <p className="text-xs uppercase tracking-widest text-blue font-semibold mb-3">{t.contact.label}</p>
+          <h2 className="font-display text-3xl md:text-4xl font-semibold text-navy tracking-tight mb-4">{t.contact.title}</h2>
+          <p className="text-base text-gray-500 leading-relaxed">{t.contact.subtitle}</p>
+        </div>
+
+        {status === 'success' ? (
+          <div className="bg-green-50 border border-green-200 rounded-2xl p-8 text-center">
+            <div className="text-4xl mb-4">✅</div>
+            <p className="text-green-700 font-medium">{t.contact.success}</p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="bg-white rounded-2xl p-8 shadow-lg shadow-navy/5 border border-gray-100 space-y-5">
+            <div className="grid md:grid-cols-2 gap-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t.contact.name} *</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 text-navy focus:outline-none focus:ring-2 focus:ring-blue/30 focus:border-blue transition-all"
+                  placeholder={t.contact.namePh}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t.contact.email} *</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 text-navy focus:outline-none focus:ring-2 focus:ring-blue/30 focus:border-blue transition-all"
+                  placeholder={t.contact.emailPh}
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-1.5">{t.contact.company}</label>
+              <input
+                type="text"
+                value={form.company}
+                onChange={(e) => setForm({ ...form, company: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 text-navy focus:outline-none focus:ring-2 focus:ring-blue/30 focus:border-blue transition-all"
+                placeholder={t.contact.companyPh}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-1.5">{t.contact.message} *</label>
+              <textarea
+                value={form.message}
+                onChange={(e) => setForm({ ...form, message: e.target.value })}
+                rows={5}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 text-navy focus:outline-none focus:ring-2 focus:ring-blue/30 focus:border-blue transition-all resize-none"
+                placeholder={t.contact.messagePh}
+                required
+              />
+            </div>
+
+            {status === 'error' && (
+              <div className="bg-red-50 text-red-600 text-sm rounded-xl px-4 py-3 border border-red-100">
+                {t.contact.error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={status === 'sending'}
+              className="w-full bg-gold text-navy-deep py-3.5 rounded-xl font-semibold text-lg hover:bg-gold-light transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-gold/20"
+            >
+              {status === 'sending' ? t.contact.sending : t.contact.send} {status !== 'sending' && '→'}
+            </button>
+          </form>
+        )}
       </div>
     </section>
   );
 }
 
-function Footer() {
+function Footer({ t }) {
   return (
     <footer className="py-8 px-6 bg-navy-deep text-white/40 text-center text-sm">
-      <p>© 2026 Booming Solutions · Curaçao · <a href="#" className="text-gold hover:underline">Privacy</a> · <a href="#" className="text-gold hover:underline">Voorwaarden</a></p>
+      <p>{t.footer.rights} · <a href="#" className="text-gold hover:underline">{t.footer.privacy}</a> · <a href="#" className="text-gold hover:underline">{t.footer.terms}</a></p>
     </footer>
   );
 }
 
 export default function Home() {
+  const [lang, setLang] = useState('nl');
+  const t = translations[lang];
+
   return (
     <main>
-      <Navbar />
-      <Hero />
-      <Services />
-      <DashboardSection />
-      <CTA />
-      <Footer />
+      <Navbar t={t} lang={lang} setLang={setLang} />
+      <Hero t={t} />
+      <Services t={t} />
+      <DashboardSection t={t} />
+      <ContactForm t={t} />
+      <Footer t={t} />
     </main>
   );
 }
