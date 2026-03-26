@@ -57,12 +57,27 @@ export default function SalesDashboard(){
   useEffect(()=>{loadData()},[]);
 
   async function loadData(){
-    const [{data:sd},{data:bd}]=await Promise.all([
-      supabase.from('sales_monthly').select('*').order('year').order('month').limit(15000),
-      supabase.from('budget_data').select('*').limit(15000)
-    ]);
-    if(sd)setData(sd);
-    if(bd)setBudgetData(bd);
+    let allSales=[];
+    let from=0;
+    const step=1000;
+    while(true){
+      const{data:batch}=await supabase.from('sales_monthly').select('*').order('year').order('month').range(from,from+step-1);
+      if(!batch||!batch.length)break;
+      allSales=allSales.concat(batch);
+      if(batch.length<step)break;
+      from+=step;
+    }
+    let allBudget=[];
+    from=0;
+    while(true){
+      const{data:batch}=await supabase.from('budget_data').select('*').range(from,from+step-1);
+      if(!batch||!batch.length)break;
+      allBudget=allBudget.concat(batch);
+      if(batch.length<step)break;
+      from+=step;
+    }
+    setData(allSales);
+    setBudgetData(allBudget);
     setLoading(false);
   }
 
