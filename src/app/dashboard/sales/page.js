@@ -58,7 +58,7 @@ export default function SalesDashboard(){
 
   async function loadData(){
     const [{data:sd},{data:bd}]=await Promise.all([
-      supabase.from('sales_monthly').select('*').order('year').order('month'),
+      supabase.from('sales_monthly').select('*').order('year').order('month').limit(15000),
       supabase.from('budget_data').select('*')
     ]);
     if(sd)setData(sd);
