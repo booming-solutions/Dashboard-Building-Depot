@@ -90,6 +90,7 @@ export default function SalesDashboard(){
   const[sortDir,setSortDir]=useState('desc');
   const[tableRows,setTableRows]=useState(20);
   const[tab,setTab]=useState('dashboard');
+  const[isLoggedIn,setIsLoggedIn]=useState(false);
   const[showMenu,setShowMenu]=useState(false);
   const[showCGFModal,setShowCGFModal]=useState(false);
   const[cgfUnlocked,setCgfUnlocked]=useState(false);
@@ -105,7 +106,7 @@ export default function SalesDashboard(){
   const monthlyRef=useRef(null);const gmRef=useRef(null);const mgrRef=useRef(null);const deptRef=useRef(null);const chartsRef=useRef({});
   const supabase=createClient();
 
-  useEffect(()=>{loadData()},[]);
+  useEffect(()=>{loadData();checkAuth();},[]);
 
   async function loadData(){
     let allSales=[],allBudget=[],from=0;const step=1000;
@@ -115,6 +116,11 @@ export default function SalesDashboard(){
     const{data:md}=await supabase.from('sales_data').select('sale_date').order('sale_date',{ascending:false}).limit(1);
     if(md&&md.length)setLastDate(new Date(md[0].sale_date));
     setData(allSales);setBudgetData(allBudget);if(corr)setCorrections(corr);setLoading(false);
+  }
+  async function checkAuth(){
+    const{data:{user}}=await supabase.auth.getUser();
+    setIsLoggedIn(!!user);
+
   }
 
   const currentYear=year,priorYear=year-1;
@@ -237,14 +243,14 @@ export default function SalesDashboard(){
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 mb-5 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-4">
           <img src="/logo.png" alt="Logo" className="h-12 rounded-lg cursor-pointer hover:opacity-80 transition-opacity" onClick={()=>setShowMenu(!showMenu)}/>
-          <div><h1 style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:'24px',fontWeight:900}}>Sales Performance Dashboard</h1><p className="text-[13px] text-[#6b5240]">Building Depot Trading B.V.{lastDate?` — data t/m ${lastDate.getDate()} ${MN[lastDate.getMonth()]} ${lastDate.getFullYear()}`:''}</p></div>
+          <div><h1 style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:'24px',fontWeight:900}}>Sales Performance Dashboard</h1><p className="text-[13px] text-[#6b5240]">Building Depot{lastDate?` — data t/m ${lastDate.getDate()} ${MN[lastDate.getMonth()]} ${lastDate.getFullYear()}`:''}</p></div>
         </div>
         <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
       </div>
 
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
         <button onClick={()=>setTab('dashboard')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='dashboard'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Dashboard</button>
-        <button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Correcties</button>
+        {isLoggedIn&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Correcties</button>}
       </div>
 
       {tab==='dashboard'&&<>
