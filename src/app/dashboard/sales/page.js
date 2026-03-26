@@ -14,7 +14,7 @@ const pctChange = (cur,prev) => prev?((cur-prev)/Math.abs(prev)*100):0;
 const STORE_NAMES = {'1':'Curaçao','B':'Bonaire'};
 
 function Pill({label,active,onClick}){
-  return <button className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border ${active?"bg-[#E84E1B] text-white border-[#E84E1B]":"bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]"}`} onClick={onClick}>{label}</button>;
+  return <button className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ${active?"bg-[#E84E1B] text-white border-[#E84E1B]":"bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]"}`} onClick={onClick}>{label}</button>;
 }
 
 function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget}){
@@ -26,13 +26,13 @@ function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget}){
       {ly!==undefined&&<p className="text-[13px] text-[#6b5240] font-mono mt-1">LY: {ly}</p>}
       {varLy!==undefined&&<span className={`inline-block px-2 py-0.5 rounded text-[12px] font-semibold font-mono mt-1 ${varLy>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{varLy>=0?'+':''}{fmtP(varLy)}</span>}
       {budget!==undefined&&<p className="text-[13px] text-[#6b5240] font-mono mt-1">{budgetLabel}: {budget}</p>}
-      {varBudget!==undefined&&<span className={`inline-block px-2 py-0.5 rounded text-[12px] font-semibold font-mono mt-1 ml-0 ${varBudget>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{varBudget>=0?'+':''}{fmtP(varBudget)}</span>}
+      {varBudget!==undefined&&<span className={`inline-block px-2 py-0.5 rounded text-[12px] font-semibold font-mono mt-1 ${varBudget>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{varBudget>=0?'+':''}{fmtP(varBudget)}</span>}
     </div>
   );
 }
 
 export default function SalesDashboard(){
-  const [salesData,setSalesData]=useState([]);
+  const [data,setData]=useState([]);
   const [budgetData,setBudgetData]=useState([]);
   const [loading,setLoading]=useState(true);
   const [store,setStore]=useState('1');
@@ -57,11 +57,11 @@ export default function SalesDashboard(){
   useEffect(()=>{loadData()},[]);
 
   async function loadData(){
-    const[{data:sd},{data:bd}]=await Promise.all([
-      supabase.from('sales_data').select('*').order('sale_date'),
+    const [{data:sd},{data:bd}]=await Promise.all([
+      supabase.from('sales_monthly').select('*').order('year').order('month'),
       supabase.from('budget_data').select('*')
     ]);
-    if(sd)setSalesData(sd);
+    if(sd)setData(sd);
     if(bd)setBudgetData(bd);
     setLoading(false);
   }
@@ -71,63 +71,44 @@ export default function SalesDashboard(){
   const isYTD=month==='ytd';
   const selectedMonth=month==='all'||month==='ytd'?null:parseInt(month);
 
-  // Find max month with data in current year
   const maxDataMonth=useMemo(()=>{
     let max=0;
-    salesData.forEach(r=>{
-      const d=new Date(r.sale_date);
-      if(d.getFullYear()===currentYear){
-        const m=d.getMonth()+1;
-        if(m>max)max=m;
-      }
-    });
+    data.forEach(r=>{if(r.year===currentYear&&r.month>max)max=r.month});
     return max;
-  },[salesData,currentYear]);
+  },[data,currentYear]);
 
-  const filtered=useMemo(()=>{
-    return salesData.filter(r=>{
-      if(store!=='all'&&r.store_number!==store)return false;
-      if(bum!=='all'&&r.bum!==bum)return false;
-      if(dept!=='all'&&r.dept_code!==dept)return false;
-      const d=new Date(r.sale_date);
-      const y=d.getFullYear();
-      const m=d.getMonth()+1;
-      if(y!==currentYear)return false;
-      if(selectedMonth&&m!==selectedMonth)return false;
-      if(isYTD&&m>maxDataMonth)return false;
-      return true;
-    });
-  },[salesData,store,currentYear,month,bum,dept,maxDataMonth,selectedMonth,isYTD]);
+  const filtered=useMemo(()=>data.filter(r=>{
+    if(store!=='all'&&r.store_number!==store)return false;
+    if(bum!=='all'&&r.bum!==bum)return false;
+    if(dept!=='all'&&r.dept_code!==dept)return false;
+    if(r.year!==currentYear)return false;
+    if(selectedMonth&&r.month!==selectedMonth)return false;
+    if(isYTD&&r.month>maxDataMonth)return false;
+    return true;
+  }),[data,store,currentYear,month,bum,dept,maxDataMonth,selectedMonth,isYTD]);
 
-  const priorFiltered=useMemo(()=>{
-    return salesData.filter(r=>{
-      if(store!=='all'&&r.store_number!==store)return false;
-      if(bum!=='all'&&r.bum!==bum)return false;
-      if(dept!=='all'&&r.dept_code!==dept)return false;
-      const d=new Date(r.sale_date);
-      const y=d.getFullYear();
-      const m=d.getMonth()+1;
-      if(y!==priorYear)return false;
-      if(selectedMonth&&m!==selectedMonth)return false;
-      if(isYTD&&m>maxDataMonth)return false;
-      return true;
-    });
-  },[salesData,store,priorYear,month,bum,dept,maxDataMonth,selectedMonth,isYTD]);
+  const priorFiltered=useMemo(()=>data.filter(r=>{
+    if(store!=='all'&&r.store_number!==store)return false;
+    if(bum!=='all'&&r.bum!==bum)return false;
+    if(dept!=='all'&&r.dept_code!==dept)return false;
+    if(r.year!==priorYear)return false;
+    if(selectedMonth&&r.month!==selectedMonth)return false;
+    if(isYTD&&r.month>maxDataMonth)return false;
+    return true;
+  }),[data,store,priorYear,month,bum,dept,maxDataMonth,selectedMonth,isYTD]);
 
   const salesType=budgetMode==='target'?'target_sales':'cgf_sales';
   const marginType=budgetMode==='target'?'target_margin':'cgf_margin';
 
-  const budgetFiltered=useMemo(()=>{
-    return budgetData.filter(b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
-      if(dept!=='all'&&b.dept_code!==dept)return false;
-      const[by,bm]=b.month.split('-').map(Number);
-      if(by!==currentYear)return false;
-      if(selectedMonth&&bm!==selectedMonth)return false;
-      if(isYTD&&bm>maxDataMonth)return false;
-      return b.budget_type===salesType||b.budget_type===marginType;
-    });
-  },[budgetData,store,currentYear,month,dept,budgetMode,maxDataMonth,selectedMonth,isYTD,salesType,marginType]);
+  const budgetFiltered=useMemo(()=>budgetData.filter(b=>{
+    if(store!=='all'&&b.store_number!==store)return false;
+    if(dept!=='all'&&b.dept_code!==dept)return false;
+    const [by,bm]=b.month.split('-').map(Number);
+    if(by!==currentYear)return false;
+    if(selectedMonth&&bm!==selectedMonth)return false;
+    if(isYTD&&bm>maxDataMonth)return false;
+    return b.budget_type===salesType||b.budget_type===marginType;
+  }),[budgetData,store,currentYear,month,dept,budgetMode,maxDataMonth,selectedMonth,isYTD,salesType,marginType]);
 
   const sum=(arr,key)=>arr.reduce((s,r)=>s+parseFloat(r[key]||0),0);
   const totalSales=sum(filtered,'net_sales');
@@ -140,34 +121,30 @@ export default function SalesDashboard(){
   const budgetMargin=sum(budgetFiltered.filter(b=>b.budget_type===marginType),'amount');
   const budgetGmPct=budgetSales?budgetMargin/budgetSales*100:0;
 
-  const stores=useMemo(()=>[...new Set(salesData.map(r=>r.store_number))].sort(),[salesData]);
-  const years=useMemo(()=>[...new Set(salesData.map(r=>new Date(r.sale_date).getFullYear()))].sort(),[salesData]);
-  const bums=useMemo(()=>[...new Set(salesData.filter(r=>{const d=new Date(r.sale_date);return d.getFullYear()===currentYear&&(store==='all'||r.store_number===store)}).map(r=>r.bum))].sort(),[salesData,currentYear,store]);
-  const depts=useMemo(()=>[...new Set(salesData.map(r=>r.dept_code+'|'+r.dept_name))].sort((a,b)=>parseInt(a)-parseInt(b)),[salesData]);
+  const stores=useMemo(()=>[...new Set(data.map(r=>r.store_number))].sort(),[data]);
+  const years=useMemo(()=>[...new Set(data.map(r=>r.year))].sort(),[data]);
+  const bums=useMemo(()=>[...new Set(data.filter(r=>r.year===currentYear&&(store==='all'||r.store_number===store)).map(r=>r.bum))].sort(),[data,currentYear,store]);
+  const depts=useMemo(()=>[...new Set(data.map(r=>r.dept_code+'|'+r.dept_name))].sort((a,b)=>parseInt(a)-parseInt(b)),[data]);
 
   const budgetLabel=budgetMode==='target'?'Target':'CGF';
-  const budgetTotal=budgetMode==='target'?'70M':'65M';
 
   const renderCharts=useCallback(()=>{
     Object.values(chartsRef.current).forEach(c=>c?.destroy());
     chartsRef.current={};
 
-    // Monthly aggregation
     const curMonthly={};
-    filtered.forEach(r=>{const mo=new Date(r.sale_date).getMonth();if(!curMonthly[mo])curMonthly[mo]={s:0,g:0};curMonthly[mo].s+=parseFloat(r.net_sales);curMonthly[mo].g+=parseFloat(r.gross_margin)});
+    filtered.forEach(r=>{const mo=r.month-1;if(!curMonthly[mo])curMonthly[mo]={s:0,g:0};curMonthly[mo].s+=parseFloat(r.net_sales);curMonthly[mo].g+=parseFloat(r.gross_margin)});
     const lyMonthly={};
-    priorFiltered.forEach(r=>{const mo=new Date(r.sale_date).getMonth();if(!lyMonthly[mo])lyMonthly[mo]={s:0,g:0};lyMonthly[mo].s+=parseFloat(r.net_sales);lyMonthly[mo].g+=parseFloat(r.gross_margin)});
+    priorFiltered.forEach(r=>{const mo=r.month-1;if(!lyMonthly[mo])lyMonthly[mo]={s:0,g:0};lyMonthly[mo].s+=parseFloat(r.net_sales);lyMonthly[mo].g+=parseFloat(r.gross_margin)});
     const budMonthly={};
     budgetFiltered.forEach(b=>{const mo=parseInt(b.month.split('-')[1])-1;if(!budMonthly[mo])budMonthly[mo]={s:0,g:0};if(b.budget_type===salesType)budMonthly[mo].s+=parseFloat(b.amount);if(b.budget_type===marginType)budMonthly[mo].g+=parseFloat(b.amount)});
 
-    // Determine which months to show
     let allMonths=[];
-    if(selectedMonth){
-      allMonths=[selectedMonth-1];
-    }else{
+    if(selectedMonth){allMonths=[selectedMonth-1]}
+    else{
       const allKeys=new Set([...Object.keys(curMonthly),...Object.keys(lyMonthly),...Object.keys(budMonthly)].map(Number));
       allMonths=[...allKeys].sort((a,b)=>a-b);
-      if(allMonths.length===0)for(let i=0;i<12;i++)allMonths.push(i);
+      if(!allMonths.length)for(let i=0;i<12;i++)allMonths.push(i);
     }
     const labels=allMonths.map(i=>MN[i]);
 
@@ -195,7 +172,6 @@ export default function SalesDashboard(){
       });
     }
 
-    // Manager chart
     const bumAgg={};
     filtered.forEach(r=>{if(!bumAgg[r.bum])bumAgg[r.bum]={s:0,g:0};bumAgg[r.bum].s+=parseFloat(r.net_sales);bumAgg[r.bum].g+=parseFloat(r.gross_margin)});
     const bumSorted=Object.entries(bumAgg).sort((a,b)=>b[1].s-a[1].s);
@@ -210,7 +186,6 @@ export default function SalesDashboard(){
       });
     }
 
-    // Dept chart
     const deptAgg={};
     filtered.forEach(r=>{const name=r.dept_name;if(!deptAgg[name])deptAgg[name]={s:0,g:0};deptAgg[name].s+=parseFloat(r.net_sales);deptAgg[name].g+=parseFloat(r.gross_margin)});
     const deptSorted=Object.entries(deptAgg).sort((a,b)=>b[1].s-a[1].s).slice(0,15);
@@ -225,48 +200,34 @@ export default function SalesDashboard(){
     }
   },[filtered,priorFiltered,budgetFiltered,currentYear,priorYear,budgetLabel,mgrMetric,deptMetric,selectedMonth,salesType,marginType]);
 
-  // Re-render charts when dependencies change
-  useEffect(()=>{
-    if(salesData.length)renderCharts();
-  },[renderCharts,salesData.length]);
+  useEffect(()=>{if(data.length)renderCharts()},[renderCharts,data.length]);
 
-  // Detail table
   const tableData=useMemo(()=>{
-    const agg={};
-    filtered.forEach(r=>{
-      const mo=new Date(r.sale_date).getMonth()+1;
-      const key=`${currentYear}-${mo}-${r.dept_name}-${r.bum}`;
-      if(!agg[key])agg[key]={year:currentYear,month:mo,dept:r.dept_name,bum:r.bum,net_sales:0,gross_margin:0,dept_code:r.dept_code};
-      agg[key].net_sales+=parseFloat(r.net_sales);
-      agg[key].gross_margin+=parseFloat(r.gross_margin);
-    });
     const lyAgg={};
     priorFiltered.forEach(r=>{
-      const mo=new Date(r.sale_date).getMonth()+1;
-      const key=`${mo}-${r.dept_name}-${r.bum}`;
+      const key=`${r.month}-${r.dept_name}-${r.bum}`;
       if(!lyAgg[key])lyAgg[key]={net_sales:0};
       lyAgg[key].net_sales+=parseFloat(r.net_sales);
     });
-    return Object.values(agg).map(row=>{
-      const lyKey=`${row.month}-${row.dept}-${row.bum}`;
+    return filtered.map(r=>{
+      const lyKey=`${r.month}-${r.dept_name}-${r.bum}`;
       const ly=lyAgg[lyKey]?.net_sales||0;
-      const varPct=ly?((row.net_sales-ly)/Math.abs(ly)*100):0;
-      const gmPct=row.net_sales?row.gross_margin/row.net_sales*100:0;
-      return{...row,ly,varPct,gmPct};
+      const varPct=ly?((parseFloat(r.net_sales)-ly)/Math.abs(ly)*100):0;
+      const gmPct=parseFloat(r.net_sales)?parseFloat(r.gross_margin)/parseFloat(r.net_sales)*100:0;
+      return{year:r.year,month:r.month,dept:r.dept_name,bum:r.bum,net_sales:parseFloat(r.net_sales),gross_margin:parseFloat(r.gross_margin),ly,varPct,gmPct};
     }).filter(r=>!search||r.dept.toLowerCase().includes(search.toLowerCase())||r.bum.toLowerCase().includes(search.toLowerCase()))
     .sort((a,b)=>sortDir==='desc'?b[sortCol]-a[sortCol]:a[sortCol]-b[sortCol]);
-  },[filtered,priorFiltered,search,sortCol,sortDir,currentYear]);
+  },[filtered,priorFiltered,search,sortCol,sortDir]);
 
   function toggleSort(col){if(sortCol===col)setSortDir(d=>d==='desc'?'asc':'desc');else{setSortCol(col);setSortDir('desc');}}
 
   if(loading)return<div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Dashboard laden...</p></div>;
-  if(!salesData.length)return<div className="text-center py-16"><p className="text-[#6b5240]">Geen data. Upload eerst via Admin.</p></div>;
+  if(!data.length)return<div className="text-center py-16"><p className="text-[#6b5240]">Geen data beschikbaar.</p></div>;
 
   const storeName=store==='all'?'Alle':STORE_NAMES[store]||store;
 
   return(
     <div className="max-w-[1520px] mx-auto" style={{fontFamily:"'DM Sans',-apple-system,sans-serif",color:'#1a0a04'}}>
-      {/* Header */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 mb-5 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-4">
           <img src="/logo.png" alt="Logo" className="h-12 rounded-lg"/>
@@ -278,20 +239,15 @@ export default function SalesDashboard(){
         <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName} · XCG</div>
       </div>
 
-      {/* Filters */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
-          <div className="flex gap-1">
-            {stores.map(s=><Pill key={s} label={STORE_NAMES[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}
-          </div>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span>
+          <div className="flex gap-1">{stores.map(s=><Pill key={s} label={STORE_NAMES[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div>
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span>
-          <div className="flex gap-1">
-            {years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}
-          </div>
+          <div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Maand</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span>
           <div className="flex gap-1 flex-wrap">
             <Pill label="Alle" active={month==='all'} onClick={()=>setMonth('all')}/>
             <Pill label="YTD" active={month==='ytd'} onClick={()=>setMonth('ytd')}/>
@@ -299,19 +255,19 @@ export default function SalesDashboard(){
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Manager</span>
           <div className="flex gap-1">
             <Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>
             {bums.map(b=><Pill key={b} label={b} active={bum===b} onClick={()=>setBum(b)}/>)}
           </div>
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Budget</span>
           <div className="flex gap-1">
-            <Pill label={`Target (${budgetTotal})`} active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>
+            <Pill label="Target (70M)" active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>
             <Pill label="CGF (65M)" active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Departement</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Departement</span>
           <select value={dept} onChange={e=>setDept(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg">
             <option value="all">Alle Departementen</option>
             {depts.map(d=>{const[code,name]=d.split('|');return<option key={code} value={code}>{name}</option>})}
@@ -319,14 +275,12 @@ export default function SalesDashboard(){
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <KPI label="Netto Omzet" value={fmtM(totalSales)} ly={fmtM(lySales)} varLy={pctChange(totalSales,lySales)} budget={fmtM(budgetSales)} budgetLabel={budgetLabel} varBudget={pctChange(totalSales,budgetSales)}/>
         <KPI label="Bruto Marge" value={fmtM(totalGM)} ly={fmtM(lyGM)} varLy={pctChange(totalGM,lyGM)} budget={fmtM(budgetMargin)} budgetLabel={budgetLabel} varBudget={pctChange(totalGM,budgetMargin)}/>
         <KPI label="Bruto Marge %" value={fmtP(gmPct)} ly={fmtP(lyGmPct)} varLy={gmPct-lyGmPct} budget={fmtP(budgetGmPct)} budgetLabel={budgetLabel} varBudget={gmPct-budgetGmPct}/>
       </div>
 
-      {/* Charts row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
           <h3 className="text-[15px] font-bold mb-4">Maandelijkse Omzet</h3>
@@ -338,7 +292,6 @@ export default function SalesDashboard(){
         </div>
       </div>
 
-      {/* Charts row 2 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
           <div className="flex justify-between items-center mb-4">
@@ -364,7 +317,6 @@ export default function SalesDashboard(){
         </div>
       </div>
 
-      {/* Detail Table */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
         <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
           <h3 className="text-[15px] font-bold">Detail Tabel</h3>
