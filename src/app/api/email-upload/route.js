@@ -80,7 +80,24 @@ export async function POST(request) {
 
     console.log(`Valid rows: ${rows.length}`);
 
-    // Insert into Supabase in batches of 500
+    // Smart replace: find unique dates in the new data and delete them first
+    const uniqueDates = [...new Set(rows.map(r => r.sale_date))].filter(Boolean);
+    console.log(`Dates in file: ${uniqueDates.join(', ')}`);
+
+    if (uniqueDates.length > 0) {
+      const { error: deleteError, count } = await supabase
+        .from('sales_data')
+        .delete({ count: 'exact' })
+        .in('sale_date', uniqueDates);
+
+      if (deleteError) {
+        console.error(`Delete error: ${deleteError.message}`);
+      } else {
+        console.log(`Deleted ${count || 0} existing rows for dates: ${uniqueDates.join(', ')}`);
+      }
+    }
+
+    // Insert new data in batches of 500
     let totalInserted = 0;
     for (let i = 0; i < rows.length; i += 500) {
       const batch = rows.slice(i, i + 500);
