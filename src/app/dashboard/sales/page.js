@@ -121,7 +121,7 @@ export default function SalesDashboard(){
   const isYTD=months.includes('ytd'),isAll=months.includes('all');
   const selectedMonths=useMemo(()=>{if(isAll||isYTD)return null;return months.map(m=>parseInt(m)).filter(m=>!isNaN(m))},[months,isAll,isYTD]);
   const isBonaire=store==='B';const curr=isBonaire?'US$':'XCG';
-  const conv=useCallback(v=>isBonaire?v/XCG_USD:v,[isBonaire]);
+  const conv=useCallback(v=>v,[isBonaire]);
   const fmtMC=useCallback(n=>fmtM(conv(n)),[conv]);
 
   const dayFrac=useMemo(()=>{
