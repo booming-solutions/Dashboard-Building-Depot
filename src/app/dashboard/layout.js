@@ -1,3 +1,8 @@
+/* ============================================================
+   BESTAND: layout_dashboard.js
+   KOPIEER NAAR: src/app/dashboard/layout.js
+   (hernoem naar layout.js bij het plaatsen)
+   ============================================================ */
 'use client';
 
 import { useState, useEffect } from 'react';

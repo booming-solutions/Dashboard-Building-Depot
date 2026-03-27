@@ -1,3 +1,8 @@
+/* ============================================================
+   BESTAND: page_sales.js
+   KOPIEER NAAR: src/app/dashboard/sales/page.js
+   (hernoem naar page.js bij het plaatsen)
+   ============================================================ */
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
