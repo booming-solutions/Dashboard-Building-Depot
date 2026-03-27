@@ -79,7 +79,7 @@ export default function SalesDashboard(){
   const[loading,setLoading]=useState(true);
   const[store,setStore]=useState('1');
   const[year,setYear]=useState(2026);
-  const[months,setMonths]=useState(['all']);
+  const[months,setMonths]=useState([String(new Date().getMonth()+1)]);
   const[bum,setBum]=useState('all');
   const[budgetMode,setBudgetMode]=useState('target');
   const[dept,setDept]=useState('all');
