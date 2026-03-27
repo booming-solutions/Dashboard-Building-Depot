@@ -10,7 +10,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [mode, setMode] = useState('login'); // 'login' or 'signup'
+  const [mode, setMode] = useState('login');
   const [message, setMessage] = useState('');
   const [showPass, setShowPass] = useState(false);
   const router = useRouter();
@@ -60,43 +60,51 @@ export default function LoginPage() {
 
         {/* Logo op witte achtergrond */}
         <div style={{
-          width: '100px',
-          height: '100px',
+          width: '110px',
+          height: '110px',
           borderRadius: '24px',
           background: '#ffffff',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           boxShadow: '0 8px 32px rgba(27,46,74,0.12), 0 2px 8px rgba(27,46,74,0.06)',
-          marginBottom: '16px',
+          marginBottom: '20px',
         }}>
           <img
             src="/logo.png"
             alt="Booming Solutions"
-            style={{ width: '76px', height: '76px', objectFit: 'contain' }}
+            style={{ width: '82px', height: '82px', objectFit: 'contain' }}
           />
         </div>
 
+        {/* BOOMING SOLUTIONS in Bookman Old Style */}
         <h1 style={{
-          fontSize: '28px',
+          fontSize: '32px',
           fontWeight: 700,
           color: '#1B2E4A',
-          letterSpacing: '-0.02em',
-          marginBottom: '4px',
-          marginTop: '0',
-        }}>
-          Booming Solutions
-        </h1>
-        <p style={{
-          fontSize: '13px',
-          color: '#4B7A9E',
-          fontFamily: "'IBM Plex Mono', monospace",
           letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          marginBottom: '36px',
+          marginBottom: '2px',
           marginTop: '0',
+          fontFamily: "'Bookman Old Style', 'Bookman', 'Georgia', 'Palatino Linotype', serif",
+          textTransform: 'uppercase',
+          textAlign: 'center',
         }}>
-          CFO Dashboard Platform
+          BOOMING SOLUTIONS
+        </h1>
+
+        {/* INSIGHT PROVIDER - uitgelijnd op dezelfde breedte */}
+        <p style={{
+          fontSize: '14px',
+          color: '#4B7A9E',
+          letterSpacing: '0.72em',
+          textTransform: 'uppercase',
+          marginBottom: '40px',
+          marginTop: '4px',
+          fontFamily: "'Bookman Old Style', 'Bookman', 'Georgia', 'Palatino Linotype', serif",
+          textAlign: 'center',
+          fontWeight: 400,
+        }}>
+          INSIGHT PROVIDER
         </p>
 
         {/* Login Kaart */}
@@ -300,11 +308,11 @@ export default function LoginPage() {
             <rect x="3" y="11" width="18" height="11" rx="2"/>
             <path d="M7 11V7a5 5 0 0110 0v4"/>
           </svg>
-          <span style={{ fontSize: '12px', color: '#64748B', letterSpacing: '0.06em', fontFamily: "'IBM Plex Mono', monospace" }}>
+          <span style={{ fontSize: '12px', color: '#64748B', letterSpacing: '0.06em', fontFamily: 'monospace' }}>
             VERGRENDELD
           </span>
           <span style={{ fontSize: '11px', color: '#475569', margin: '0 12px' }}>·</span>
-          <span style={{ fontSize: '11px', color: '#475569', fontFamily: "'IBM Plex Mono', monospace" }}>
+          <span style={{ fontSize: '11px', color: '#475569', fontFamily: 'monospace' }}>
             © 2026 Booming Solutions
           </span>
         </div>

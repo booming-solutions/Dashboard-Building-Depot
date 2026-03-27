@@ -40,16 +40,32 @@ export default function DashboardLayout({ children }) {
 
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
+    { href: '/dashboard/admin/users', label: 'Admin Panel', icon: '⚙️' },
   ];
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col transition-all duration-300 fixed h-full z-40`} style={{background:'linear-gradient(180deg, #e8eff7 0%, #dce6f1 100%)'}}>
+        
+        {/* Logo en naam - tekst loopt nu terug */}
         <div className="p-4 flex items-center gap-3 border-b border-[#c5d4e6]">
           <img src="/logo.png" alt="Logo" className="h-9 w-9 flex-shrink-0 rounded-lg" />
-          {sidebarOpen && <span className="font-display text-[15px] font-bold text-[#1B3A5C] truncate tracking-tight">BOOMING SOLUTIONS</span>}
+          {sidebarOpen && (
+            <span 
+              className="font-bold text-[#1B3A5C] leading-tight"
+              style={{ 
+                fontSize: '14px', 
+                letterSpacing: '0.02em',
+                wordBreak: 'break-word',
+                lineHeight: '1.2',
+              }}
+            >
+              BOOMING SOLUTIONS
+            </span>
+          )}
         </div>
 
+        {/* Navigatie */}
         <nav className="flex-1 py-4 px-3">
           <div className="space-y-1">
             {navItems.map((item) => (
@@ -63,6 +79,7 @@ export default function DashboardLayout({ children }) {
             ))}
           </div>
 
+          {/* Admin sectie - alleen zichtbaar voor admins */}
           {profile?.role === 'admin' && (
             <div className="mt-6 pt-4 border-t border-[#c5d4e6]">
               {sidebarOpen && <p className="text-[10px] text-[#1B3A5C]/40 uppercase tracking-wider font-semibold px-3 mb-2">Admin</p>}
@@ -70,7 +87,7 @@ export default function DashboardLayout({ children }) {
                 {adminItems.map((item) => (
                   <Link key={item.href} href={item.href}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                      pathname === item.href ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'
+                      pathname === item.href || pathname.startsWith(item.href + '/') ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'
                     }`}>
                     <span className="text-base flex-shrink-0">{item.icon}</span>
                     {sidebarOpen && <span>{item.label}</span>}
@@ -81,6 +98,7 @@ export default function DashboardLayout({ children }) {
           )}
         </nav>
 
+        {/* Gebruiker info + uitloggen */}
         <div className="p-4 border-t border-[#c5d4e6]">
           {sidebarOpen && user && (
             <div className="mb-2">
@@ -95,6 +113,7 @@ export default function DashboardLayout({ children }) {
         </div>
       </aside>
 
+      {/* Hoofdinhoud */}
       <main className={`flex-1 ${sidebarOpen ? 'ml-64' : 'ml-20'} transition-all duration-300`}>
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-400 hover:text-[#1B3A5C] transition-colors">
@@ -107,6 +126,35 @@ export default function DashboardLayout({ children }) {
         </header>
         <div className="p-6">{children}</div>
       </main>
+
+      {/* Vergrendelde voettekst */}
+      <div style={{
+        position: 'fixed',
+        bottom: 0,
+        left: sidebarOpen ? '256px' : '80px',
+        right: 0,
+        background: 'linear-gradient(135deg, #152238 0%, #1B2E4A 100%)',
+        borderTop: '1px solid rgba(75,163,212,0.15)',
+        padding: '10px 32px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '8px',
+        zIndex: 100,
+        transition: 'left 0.3s',
+      }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2" strokeLinecap="round">
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0110 0v4"/>
+        </svg>
+        <span style={{ fontSize: '11px', color: '#64748B', letterSpacing: '0.06em', fontFamily: 'monospace' }}>
+          VERGRENDELD
+        </span>
+        <span style={{ fontSize: '10px', color: '#475569', margin: '0 8px' }}>·</span>
+        <span style={{ fontSize: '10px', color: '#475569', fontFamily: 'monospace' }}>
+          © 2026 Booming Solutions
+        </span>
+      </div>
     </div>
   );
 }
