@@ -5,7 +5,6 @@ import { createClient } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 
-/* ─── Dropdown nav item ─── */
 function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
   const isAnyActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
   const [open, setOpen] = useState(isAnyActive);
@@ -50,7 +49,6 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
   );
 }
 
-/* ─── Login modal ─── */
 function LoginModal({ show, onClose, supabase, onSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -73,9 +71,9 @@ function LoginModal({ show, onClose, supabase, onSuccess }) {
           <div><h3 className="text-[16px] font-bold text-[#1a0a04]">Inloggen</h3><p className="text-[12px] text-[#6b5240]">Administrator toegang</p></div>
         </div>
         <input type="email" value={email} onChange={e => { setEmail(e.target.value); setError(''); }}
-          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-3 focus:outline-none focus:border-[#1B3A5C] focus:ring-1 focus:ring-[#1B3A5C]/20" placeholder="E-mailadres" autoFocus />
+          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-3 focus:outline-none focus:border-[#1B3A5C]" placeholder="E-mailadres" autoFocus />
         <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-2 focus:outline-none focus:border-[#1B3A5C] focus:ring-1 focus:ring-[#1B3A5C]/20" placeholder="Wachtwoord" />
+          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-2 focus:outline-none focus:border-[#1B3A5C]" placeholder="Wachtwoord" />
         {error && <p className="text-[12px] text-red-500 mb-2">{error}</p>}
         <div className="flex gap-2 mt-4">
           <button onClick={() => { onClose(); setEmail(''); setPassword(''); setError(''); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
@@ -86,7 +84,6 @@ function LoginModal({ show, onClose, supabase, onSuccess }) {
   );
 }
 
-/* ─── Main Layout ─── */
 export default function DashboardLayout({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -106,20 +103,12 @@ export default function DashboardLayout({ children }) {
     else { setProfile(null); }
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    setUser(null); setProfile(null);
-    router.push('/'); router.refresh();
-  }
-
+  async function handleLogout() { await supabase.auth.signOut(); setUser(null); setProfile(null); router.push('/'); router.refresh(); }
   function handleRefresh() { setRefreshing(true); window.location.reload(); }
 
   const omzetItems = [{ href: '/dashboard/sales', label: 'Omzet en Marge' }];
   const voorraadItems = [{ href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' }];
-  const adminItems = [
-    { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
-    { href: '/dashboard/admin/users', label: 'Admin Panel', icon: '⚙️' },
-  ];
+  const adminItems = [{ href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' }, { href: '/dashboard/admin/users', label: 'Admin Panel', icon: '⚙️' }];
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -145,7 +134,6 @@ export default function DashboardLayout({ children }) {
               <span className="text-base flex-shrink-0">📁</span>{sidebarOpen && <span>Bestanden</span>}
             </Link>
           </div>
-
           {profile?.role === 'admin' && (
             <div className="mt-6 pt-4 border-t border-[#c5d4e6]">
               {sidebarOpen && <p className="text-[10px] text-[#1B3A5C]/40 uppercase tracking-wider font-semibold px-3 mb-2">Admin</p>}
@@ -164,13 +152,10 @@ export default function DashboardLayout({ children }) {
           {user ? (
             <>
               {sidebarOpen && <div className="mb-2"><p className="text-xs text-[#1B3A5C]/70 truncate">{profile?.full_name || user.email?.split('@')[0]}</p><p className="text-[10px] text-[#1B3A5C]/40">{profile?.role || 'user'}</p></div>}
-              <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-[#1B3A5C]/50 hover:text-[#1B3A5C] transition-colors w-full">
-                <span>🚪</span>{sidebarOpen && <span>Uitloggen</span>}
-              </button>
+              <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-[#1B3A5C]/50 hover:text-[#1B3A5C] transition-colors w-full"><span>🚪</span>{sidebarOpen && <span>Uitloggen</span>}</button>
             </>
           ) : (
-            <button onClick={() => setShowLogin(true)}
-              className="flex items-center gap-2.5 text-sm text-[#1B3A5C] hover:text-[#1B3A5C] transition-all w-full px-2 py-2 rounded-lg bg-white/60 hover:bg-white border border-[#c5d4e6] hover:border-[#1B3A5C]/30 shadow-sm">
+            <button onClick={() => setShowLogin(true)} className="flex items-center gap-2.5 text-sm text-[#1B3A5C] transition-all w-full px-2 py-2 rounded-lg bg-white/60 hover:bg-white border border-[#c5d4e6] hover:border-[#1B3A5C]/30 shadow-sm">
               <span className="w-7 h-7 rounded-lg bg-[#1B3A5C] flex items-center justify-center flex-shrink-0"><span className="text-white text-xs">🔑</span></span>
               {sidebarOpen && <span className="font-semibold text-[13px]">Inloggen</span>}
             </button>
@@ -184,11 +169,8 @@ export default function DashboardLayout({ children }) {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18" /></svg>
           </button>
           <div className="flex items-center gap-3">
-            <button onClick={handleRefresh} disabled={refreshing} title="Ververs data"
-              className="flex items-center gap-1.5 text-xs text-[#6b7280] hover:text-[#1B3A5C] bg-gray-50 hover:bg-gray-100 border border-gray-200 px-3 py-1.5 rounded-full font-medium transition-all disabled:opacity-50">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? 'animate-spin' : ''}>
-                <path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-              </svg>
+            <button onClick={handleRefresh} disabled={refreshing} title="Ververs data" className="flex items-center gap-1.5 text-xs text-[#6b7280] hover:text-[#1B3A5C] bg-gray-50 hover:bg-gray-100 border border-gray-200 px-3 py-1.5 rounded-full font-medium transition-all disabled:opacity-50">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? 'animate-spin' : ''}><path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /></svg>
               <span className="hidden sm:inline">{refreshing ? 'Verversen...' : 'Ververs'}</span>
             </button>
             {profile?.role === 'admin' && <span className="text-xs bg-amber-50 text-amber-600 px-3 py-1 rounded-full font-medium">Admin</span>}
