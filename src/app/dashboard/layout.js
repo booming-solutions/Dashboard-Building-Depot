@@ -2,16 +2,16 @@
    BESTAND: layout_dashboard.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (hernoem naar layout.js bij het plaatsen)
-   VERSIE: v3.27.01
+   VERSIE: v3.27.02
    ============================================================ */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 
-const APP_VERSION = 'v3.27.01';
+const APP_VERSION = 'v3.27.02';
 
 function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
   const isAnyActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
@@ -102,13 +102,63 @@ export default function DashboardLayout({ children }) {
   const pathname = usePathname();
   const supabase = createClient();
 
-  useEffect(() => { getUser(); }, []);
+  const loadProfile = useCallback(async (userId) => {
+    try {
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+      if (error) {
+        console.warn('Profile load failed, retrying in 1s...', error.message);
+        // Retry once after a short delay (session might not be ready)
+        setTimeout(async () => {
+          const { data: retryData } = await supabase.from('profiles').select('*').eq('id', userId).single();
+          if (retryData) {
+            console.log('Profile loaded on retry:', retryData.role);
+            setProfile(retryData);
+          }
+        }, 1000);
+      } else {
+        console.log('Profile loaded:', data.role);
+        setProfile(data);
+      }
+    } catch (e) {
+      console.error('Profile load error:', e);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    async function init() {
+      // First wait for the session to be established
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setUser(session.user);
+        await loadProfile(session.user.id);
+      }
+
+      // Listen for auth changes (login/logout)
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (session?.user) {
+          setUser(session.user);
+          // Small delay to ensure session cookie is set for RLS
+          setTimeout(() => loadProfile(session.user.id), 500);
+        } else {
+          setUser(null);
+          setProfile(null);
+        }
+      });
+
+      return () => subscription?.unsubscribe();
+    }
+    init();
+  }, []);
 
   async function getUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    setUser(user);
-    if (user) { const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single(); setProfile(data); }
-    else { setProfile(null); }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      setUser(session.user);
+      await loadProfile(session.user.id);
+    } else {
+      setUser(null);
+      setProfile(null);
+    }
   }
 
   async function handleLogout() { await supabase.auth.signOut(); setUser(null); setProfile(null); router.push('/'); router.refresh(); }
@@ -165,7 +215,7 @@ export default function DashboardLayout({ children }) {
           <div className="p-4">
             {user ? (
               <>
-                {sidebarOpen && <div className="mb-2"><p className="text-xs text-[#1B3A5C]/70 truncate">{profile?.full_name || user.email?.split('@')[0]}</p><p className="text-[10px] text-[#1B3A5C]/40">{profile?.role || 'user'}</p></div>}
+                {sidebarOpen && <div className="mb-2"><p className="text-xs text-[#1B3A5C]/70 truncate">{profile?.full_name || user.email?.split('@')[0]}</p><p className="text-[10px] text-[#1B3A5C]/40">{profile?.role || 'laden...'}</p></div>}
                 <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-[#1B3A5C]/50 hover:text-[#1B3A5C] transition-colors w-full"><span>🚪</span>{sidebarOpen && <span>Uitloggen</span>}</button>
               </>
             ) : (
