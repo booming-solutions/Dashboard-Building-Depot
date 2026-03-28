@@ -30,11 +30,9 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
       </div>
     );
   }
-
   return (
     <div>
-      <button onClick={() => setOpen(!open)}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all w-full ${isAnyActive ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
+      <button onClick={() => setOpen(!open)} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all w-full ${isAnyActive ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
         <span className="text-base flex-shrink-0">{icon}</span>
         <span className="flex-1 text-left">{label}</span>
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`}><path d="M3 4.5L6 7.5L9 4.5" /></svg>
@@ -42,8 +40,7 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
       {open && (
         <div className="ml-5 mt-0.5 space-y-0.5 border-l-2 border-[#1B3A5C]/10 pl-3">
           {items.map(item => (
-            <Link key={item.href} href={item.href}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
+            <Link key={item.href} href={item.href} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
               <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: pathname === item.href ? '#1B3A5C' : 'transparent', border: pathname === item.href ? 'none' : '1px solid rgba(27,58,92,0.25)' }} />
               {item.label}
             </Link>
@@ -60,14 +57,12 @@ function LoginModal({ show, onClose, supabase, onSuccess }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   if (!show) return null;
-
   async function handleLogin() {
     setLoading(true); setError('');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) { setError(error.message); setLoading(false); }
     else { onSuccess(); onClose(); setEmail(''); setPassword(''); setLoading(false); }
   }
-
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
       <div className="bg-white rounded-2xl p-7 w-[360px] shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -75,10 +70,8 @@ function LoginModal({ show, onClose, supabase, onSuccess }) {
           <div className="w-10 h-10 rounded-xl bg-[#1B3A5C] flex items-center justify-center"><span className="text-white text-lg">🔑</span></div>
           <div><h3 className="text-[16px] font-bold text-[#1a0a04]">Inloggen</h3><p className="text-[12px] text-[#6b5240]">Administrator toegang</p></div>
         </div>
-        <input type="email" value={email} onChange={e => { setEmail(e.target.value); setError(''); }}
-          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-3 focus:outline-none focus:border-[#1B3A5C]" placeholder="E-mailadres" autoFocus />
-        <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-2 focus:outline-none focus:border-[#1B3A5C]" placeholder="Wachtwoord" />
+        <input type="email" value={email} onChange={e => { setEmail(e.target.value); setError(''); }} className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-3 focus:outline-none focus:border-[#1B3A5C]" placeholder="E-mailadres" autoFocus />
+        <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()} className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-2 focus:outline-none focus:border-[#1B3A5C]" placeholder="Wachtwoord" />
         {error && <p className="text-[12px] text-red-500 mb-2">{error}</p>}
         <div className="flex gap-2 mt-4">
           <button onClick={() => { onClose(); setEmail(''); setPassword(''); setError(''); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
@@ -100,14 +93,12 @@ export default function DashboardLayout({ children }) {
   const supabase = createClient();
 
   useEffect(() => { getUser(); }, []);
-
   async function getUser() {
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
     if (user) { const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single(); setProfile(data); }
     else { setProfile(null); }
   }
-
   async function handleLogout() { await supabase.auth.signOut(); setUser(null); setProfile(null); router.push('/'); router.refresh(); }
   function handleRefresh() { setRefreshing(true); window.location.reload(); }
 
@@ -118,13 +109,11 @@ export default function DashboardLayout({ children }) {
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <LoginModal show={showLogin} onClose={() => setShowLogin(false)} supabase={supabase} onSuccess={getUser} />
-
       <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col transition-all duration-300 fixed h-full z-40`} style={{ background: 'linear-gradient(180deg, #e8eff7 0%, #dce6f1 100%)' }}>
         <div className="p-4 flex items-center gap-3 border-b border-[#c5d4e6]">
           <img src="/logo.png" alt="Logo" className="h-9 w-9 flex-shrink-0 rounded-lg" />
           {sidebarOpen && <span className="font-bold text-[#1B3A5C] leading-tight" style={{ fontSize: '14px', letterSpacing: '0.02em', wordBreak: 'break-word', lineHeight: '1.2' }}>BOOMING SOLUTIONS</span>}
         </div>
-
         <nav className="flex-1 py-4 px-3 overflow-y-auto">
           <div className="space-y-1">
             <Link href="/dashboard" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === '/dashboard' ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
@@ -152,7 +141,6 @@ export default function DashboardLayout({ children }) {
             </div>
           )}
         </nav>
-
         <div className="p-4 border-t border-[#c5d4e6]">
           {user ? (
             <>
@@ -167,7 +155,6 @@ export default function DashboardLayout({ children }) {
           )}
         </div>
       </aside>
-
       <main className={`flex-1 ${sidebarOpen ? 'ml-64' : 'ml-20'} transition-all duration-300`}>
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-400 hover:text-[#1B3A5C] transition-colors">
@@ -184,7 +171,6 @@ export default function DashboardLayout({ children }) {
         </header>
         <div className="p-6">{children}</div>
       </main>
-
       <div style={{ position: 'fixed', bottom: 0, left: sidebarOpen ? '256px' : '80px', right: 0, background: 'linear-gradient(135deg, #152238 0%, #1B2E4A 100%)', borderTop: '1px solid rgba(75,163,212,0.15)', padding: '10px 32px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', zIndex: 100, transition: 'left 0.3s' }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" /></svg>
         <span style={{ fontSize: '11px', color: '#64748B', letterSpacing: '0.06em', fontFamily: 'monospace' }}>VERGRENDELD</span>

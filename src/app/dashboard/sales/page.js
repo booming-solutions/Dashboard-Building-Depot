@@ -242,15 +242,17 @@ export default function SalesDashboard(){
 
   return(
     <div className="max-w-[1520px] mx-auto" style={{fontFamily:"'DM Sans',-apple-system,sans-serif",color:'#1a0a04'}}>
-      <LogoMenu show={showMenu} onClose={()=>setShowMenu(false)} cgfUnlocked={cgfUnlocked} onCGF={()=>{setShowMenu(false);if(cgfUnlocked)setBudgetMode('cgf');else setShowCGFModal(true)}} onCorrections={()=>{setShowMenu(false);setTab('correcties')}}/>
       <CGFModal show={showCGFModal} onClose={()=>setShowCGFModal(false)} onUnlock={()=>{setCgfUnlocked(true);setBudgetMode('cgf')}}/>
 
-      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 mb-5 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-4">
-          <img src="/logo.png" alt="Logo" className="h-12 rounded-lg cursor-pointer hover:opacity-80 transition-opacity" onClick={()=>setShowMenu(!showMenu)}/>
-          <div><h1 style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:'24px',fontWeight:900}}>Sales Performance Dashboard</h1><p className="text-[13px] text-[#6b5240]">Building Depot{lastDate?` — data t/m ${lastDate.getDate()} ${MN[lastDate.getMonth()]} ${lastDate.getFullYear()}`:''}</p></div>
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h1 style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:'22px',fontWeight:900}}>Omzet en Marge</h1>
+          <p className="text-[13px] text-[#6b5240]">Building Depot{lastDate?` — data t/m ${lastDate.getDate()} ${MN[lastDate.getMonth()]} ${lastDate.getFullYear()}`:''}</p>
         </div>
-        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
+        <div className="flex items-center gap-3">
+          <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
+          <button onClick={()=>{if(cgfUnlocked)setBudgetMode(budgetMode==='cgf'?'target':'cgf');else setShowCGFModal(true)}} className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all ${cgfUnlocked?'bg-green-50 text-green-600 border-green-200':'bg-[#faf7f4] text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]'}`}>{cgfUnlocked?'🔓 CGF':'🔒 CGF'}</button>
+        </div>
       </div>
 
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
