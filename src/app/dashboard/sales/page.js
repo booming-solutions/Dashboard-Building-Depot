@@ -96,9 +96,12 @@ export default function SalesDashboard(){
   const[tableRows,setTableRows]=useState(20);
   const[tab,setTab]=useState('dashboard');
   const[isLoggedIn,setIsLoggedIn]=useState(false);
+  const[isAdmin,setIsAdmin]=useState(false);
   const[showMenu,setShowMenu]=useState(false);
   const[showCGFModal,setShowCGFModal]=useState(false);
   const[cgfUnlocked,setCgfUnlocked]=useState(false);
+  // Auto-unlock CGF for admins
+  useEffect(()=>{if(isAdmin)setCgfUnlocked(true)},[isAdmin]);
   const[corrStore,setCorrStore]=useState('1');
   const[corrYear,setCorrYear]=useState(2026);
   const[corrMonth,setCorrMonth]=useState(1);
@@ -125,6 +128,10 @@ export default function SalesDashboard(){
   async function checkAuth(){
     const{data:{user}}=await supabase.auth.getUser();
     setIsLoggedIn(!!user);
+    if(user){
+      const{data:prof}=await supabase.from('profiles').select('role').eq('id',user.id).maybeSingle();
+      setIsAdmin(prof?.role==='admin');
+    }
 
   }
 
@@ -257,7 +264,7 @@ export default function SalesDashboard(){
 
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
         <button onClick={()=>setTab('dashboard')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='dashboard'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Dashboard</button>
-        {isLoggedIn&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Correcties</button>}
+        {isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Correcties</button>}
       </div>
 
       {tab==='dashboard'&&<>
