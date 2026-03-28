@@ -122,7 +122,7 @@ export default function SalesDashboard(){
     from=0;while(true){const{data:b}=await supabase.from('budget_data').select('*').range(from,from+step-1);if(!b||!b.length)break;allBudget=allBudget.concat(b);if(b.length<step)break;from+=step}
     const{data:corr}=await supabase.from('corrections').select('*').order('created_at',{ascending:false});
     const{data:md}=await supabase.from('sales_data').select('sale_date').order('sale_date',{ascending:false}).limit(1);
-    if(md&&md.length)setLastDate(new Date(md[0].sale_date));
+    if(md&&md.length){const d=md[0].sale_date;const[y,m,day]=d.split('-').map(Number);setLastDate(new Date(y,m-1,day))}
     setData(allSales);setBudgetData(allBudget);if(corr)setCorrections(corr);setLoading(false);
   }
   async function checkAuth(){
