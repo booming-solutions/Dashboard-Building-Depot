@@ -166,7 +166,10 @@ export default function DashboardLayout({ children }) {
 
   const isAdmin = profile?.role === 'admin';
 
-  const omzetItems = [{ href: '/dashboard/sales', label: 'Omzet en Marge' }];
+  const omzetItems = [
+    { href: '/dashboard/sales', label: 'Omzet en Marge' },
+    { href: '/dashboard/sales/index', label: 'Index Rapport' },
+  ];
   const voorraadItems = [{ href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' }];
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
