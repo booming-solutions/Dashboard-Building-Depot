@@ -5,7 +5,7 @@
    ============================================================ */
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
 
 const MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
@@ -331,20 +331,18 @@ export default function IndexDashboard() {
                     colSpanLabel label={<><span className="font-semibold">{g.buName}</span><span className="text-[#6b5240] font-normal"> — Resp: {g.bum}</span></>} />
                 ))}
                 <tr><td colSpan={14} className="h-3 bg-[#faf7f4]" /></tr>
-                {buGroups.map(g => (
-                  <React.Fragment key={`bg-${g.bum}`}>
-                    <tr className="bg-[#1B3A5C]/5">
-                      <td colSpan={14} className="p-3 border-b border-[#c5d4e6] border-t-2 border-[#1B3A5C]/20">
-                        <div className="flex items-center gap-3">
-                          <span className="text-[14px] font-bold text-[#1B3A5C]">{g.buName}</span>
-                          <span className="text-[12px] text-[#6b5240]">Responsible: {g.bum}</span>
-                        </div>
-                      </td>
-                    </tr>
-                    {g.departments.map((d, i) => <DataRow key={d.deptCode} d={d} bg={i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]'} />)}
-                    {g.total && <DataRow d={g.total} bg="bg-[#f5f0ea]" bold colSpanLabel label={<span className="italic text-[#6b5240]">TOTAAL {g.buName.replace('BU-', '')}</span>} />}
-                  </React.Fragment>
-                ))}
+                {buGroups.flatMap(g => [
+                  <tr key={`hdr-${g.bum}`} className="bg-[#1B3A5C]/5">
+                    <td colSpan={14} className="p-3 border-b border-[#c5d4e6] border-t-2 border-[#1B3A5C]/20">
+                      <div className="flex items-center gap-3">
+                        <span className="text-[14px] font-bold text-[#1B3A5C]">{g.buName}</span>
+                        <span className="text-[12px] text-[#6b5240]">Responsible: {g.bum}</span>
+                      </div>
+                    </td>
+                  </tr>,
+                  ...g.departments.map((d, i) => <DataRow key={`d-${d.deptCode}`} d={d} bg={i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]'} />),
+                  g.total ? <DataRow key={`tot-${g.bum}`} d={g.total} bg="bg-[#f5f0ea]" bold colSpanLabel label={<span className="italic text-[#6b5240]">TOTAAL {g.buName.replace('BU-', '')}</span>} /> : null,
+                ].filter(Boolean))}
               </tbody>
             </table>
           </div>
@@ -397,28 +395,26 @@ export default function IndexDashboard() {
               <tbody>
                 {reportData.grandTotal && <DataRow d={reportData.grandTotal} bg="bg-[#faf7f4]" bold colSpanLabel label="TOTAAL ALLE MANAGERS" />}
                 <tr><td colSpan={14} className="h-3 bg-[#faf7f4]" /></tr>
-                {bumGroups.map(g => (
-                  <React.Fragment key={`bum-${g.bum}`}>
-                    <tr className="bg-[#1B3A5C]/5">
-                      <td colSpan={14} className="p-3 border-b border-[#c5d4e6] border-t-2 border-[#1B3A5C]/20">
-                        <div className="flex items-center gap-3">
-                          <span className="w-8 h-8 rounded-full bg-[#E84E1B] text-white flex items-center justify-center text-[12px] font-bold flex-shrink-0">{g.bum.charAt(0)}</span>
-                          <div>
-                            <span className="text-[14px] font-bold text-[#1B3A5C]">{g.bum}</span>
-                            {g.buName && <span className="text-[11px] text-[#6b5240] ml-2">— {g.buName}</span>}
-                          </div>
-                          <div className="ml-auto flex items-center gap-4 text-[11px]">
-                            <span className="text-[#6b5240]">{g.departments.length} dept.</span>
-                            <span className={`font-bold font-mono ${g.total.mtdIndexBudget < 100 ? 'text-red-600' : 'text-green-700'}`}>Index: {Math.round(g.total.mtdIndexBudget)}</span>
-                          </div>
+                {bumGroups.flatMap(g => [
+                  <tr key={`bumhdr-${g.bum}`} className="bg-[#1B3A5C]/5">
+                    <td colSpan={14} className="p-3 border-b border-[#c5d4e6] border-t-2 border-[#1B3A5C]/20">
+                      <div className="flex items-center gap-3">
+                        <span className="w-8 h-8 rounded-full bg-[#E84E1B] text-white flex items-center justify-center text-[12px] font-bold flex-shrink-0">{g.bum.charAt(0)}</span>
+                        <div>
+                          <span className="text-[14px] font-bold text-[#1B3A5C]">{g.bum}</span>
+                          {g.buName && <span className="text-[11px] text-[#6b5240] ml-2">— {g.buName}</span>}
                         </div>
-                      </td>
-                    </tr>
-                    <DataRow d={g.total} bg="bg-[#f5f0ea]" bold colSpanLabel label={<span className="font-bold">TOTAAL {g.bum.toUpperCase()}</span>} />
-                    {g.departments.map((d, i) => <DataRow key={d.deptCode} d={d} bg={i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]'} />)}
-                    <tr><td colSpan={14} className="h-2" /></tr>
-                  </React.Fragment>
-                ))}
+                        <div className="ml-auto flex items-center gap-4 text-[11px]">
+                          <span className="text-[#6b5240]">{g.departments.length} dept.</span>
+                          <span className={`font-bold font-mono ${g.total.mtdIndexBudget < 100 ? 'text-red-600' : 'text-green-700'}`}>Index: {Math.round(g.total.mtdIndexBudget)}</span>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>,
+                  <DataRow key={`bumtot-${g.bum}`} d={g.total} bg="bg-[#f5f0ea]" bold colSpanLabel label={<span className="font-bold">TOTAAL {g.bum.toUpperCase()}</span>} />,
+                  ...g.departments.map((d, i) => <DataRow key={`bumd-${d.deptCode}`} d={d} bg={i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]'} />),
+                  <tr key={`bumspc-${g.bum}`}><td colSpan={14} className="h-2" /></tr>,
+                ])}
               </tbody>
             </table>
           </div>
