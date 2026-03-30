@@ -16,10 +16,8 @@ var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractio
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : (a / 1e3).toFixed(0) + 'K'); };
 var fmtP = function(n) { return (n || 0).toFixed(1) + '%'; };
 var SN = { '1': 'Curaçao', 'B': 'Bonaire' };
-var BU_MAP = { 'PASCAL': 'BU-BUILDING MATERIALS', 'HENK': 'BU-FLOORING-SANITARY-KITCHEN', 'JOHN': 'BU-HARDWARE', 'DANIEL': 'BU-HOUSEHOLD-APPLIANCES', 'GIJS': 'BU-FURNITURE-DECORATION' };
 var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
 
-/* ── 3-tier color: green ≤15%, orange 15-25%, red >25% ── */
 function pctColor(pct) {
   var abs = Math.abs(pct || 0);
   if (abs <= 15) return '#16a34a';
@@ -31,7 +29,6 @@ function Pill({ label, active, onClick }) {
   return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
 }
 
-/* ── Visual % bar with 3-tier colors + hover tooltip ── */
 function PctBar({ pct, name, deptCode, actual, budget }) {
   var _h = useState(false), hovered = _h[0], setHovered = _h[1];
   var capped = Math.max(-80, Math.min(80, pct));
@@ -39,30 +36,18 @@ function PctBar({ pct, name, deptCode, actual, budget }) {
   var barColor = pctColor(pct);
   var barWidth = Math.min(Math.abs(capped), 80);
   var label = (pct >= 0 ? '+' : '') + Math.round(pct) + '%';
-
   return (
     <div className="flex items-center gap-2 py-[3px] relative" style={{ minHeight: '28px' }}
-      onMouseEnter={function() { setHovered(true); }}
-      onMouseLeave={function() { setHovered(false); }}>
+      onMouseEnter={function() { setHovered(true); }} onMouseLeave={function() { setHovered(false); }}>
       <div className="w-[180px] text-right text-[10px] text-[#1a0a04] truncate flex-shrink-0 pr-2" title={name}>
         <span className="font-mono text-[#6b5240] mr-1">{deptCode}</span>{name ? name.replace(/^\d+\s*/, '') : ''}
       </div>
       <div className="flex-1 flex items-center relative" style={{ height: '22px' }}>
         <div className="absolute left-1/2 top-0 bottom-0 w-[2px] bg-[#1B3A5C]/40" style={{ zIndex: 2 }}></div>
-        {/* ±15% green zone */}
         <div className="absolute top-0 bottom-0 bg-[#16a34a]/5 border-l border-r border-[#16a34a]/20" style={{ left: 'calc(50% - 7.5%)', width: '15%', zIndex: 0 }}></div>
-        {/* ±25% orange zone edges */}
         <div className="absolute top-0 bottom-0 border-l border-r border-[#d97706]/15" style={{ left: 'calc(50% - 12.5%)', width: '25%', zIndex: 0 }}></div>
-        <div className="absolute top-1 bottom-1 rounded-sm transition-all" style={{
-          backgroundColor: barColor, width: (barWidth / 2) + '%',
-          left: isOver ? '50%' : (50 - barWidth / 2) + '%', zIndex: 1,
-        }}></div>
-        <div className="absolute text-[9px] font-bold font-mono whitespace-nowrap" style={{
-          color: barColor,
-          left: isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined,
-          right: !isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined,
-          top: '3px', zIndex: 3,
-        }}>{label}</div>
+        <div className="absolute top-1 bottom-1 rounded-sm transition-all" style={{ backgroundColor: barColor, width: (barWidth / 2) + '%', left: isOver ? '50%' : (50 - barWidth / 2) + '%', zIndex: 1 }}></div>
+        <div className="absolute text-[9px] font-bold font-mono whitespace-nowrap" style={{ color: barColor, left: isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, right: !isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, top: '3px', zIndex: 3 }}>{label}</div>
       </div>
       {hovered && (
         <div style={{ position: 'absolute', left: '200px', top: '-28px', backgroundColor: '#1B3A5C', color: 'white', fontSize: '10px', fontFamily: 'monospace', padding: '5px 10px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', zIndex: 100, pointerEvents: 'none' }}>
@@ -78,11 +63,10 @@ export default function InventoryDashboard() {
   var _d = _s([]), data = _d[0], setData = _d[1];
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _vw = _s('overview'), view = _vw[0], setView = _vw[1];
+  // Single unified filter state
   var _store = _s('1'), store = _store[0], setStore = _store[1];
   var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
-  var _tStore = _s('1'), trendStore = _tStore[0], setTrendStore = _tStore[1];
-  var _tBum = _s('all'), trendBum = _tBum[0], setTrendBum = _tBum[1];
-  var _tDept = _s('__total__'), trendDept = _tDept[0], setTrendDept = _tDept[1];
+  var _dept = _s('__total__'), selDept = _dept[0], setSelDept = _dept[1];
   var trendRef = useRef(null);
   var chartRef = useRef(null);
 
@@ -118,16 +102,23 @@ export default function InventoryDashboard() {
       d.diff = d.actual - d.budget;
       d.pct = d.budget ? ((d.actual - d.budget) / d.budget) * 100 : 0;
     });
+    if (storeFilter === 'B') {
+      list = list.filter(function(d) { return d.history.some(function(h) { return h.value !== 0; }); });
+    }
     list.sort(function(a, b) { return (parseInt(a.deptCode) || 999) - (parseInt(b.deptCode) || 999); });
     if (bumFilter && bumFilter !== 'all') list = list.filter(function(d) { return d.bum === bumFilter; });
     return list;
   }
 
   var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum]);
-  var trendDepartments = useMemo(function() { return buildDepartments(trendStore, trendBum); }, [data, trendStore, trendBum]);
 
-  var bums = useMemo(function() { var s = {}; data.filter(function(r) { return store === 'all' || r.store_number === store; }).forEach(function(r) { if (r.bum) s[r.bum] = true; }); var l = Object.keys(s); l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); }); return l; }, [data, store]);
-  var trendBums = useMemo(function() { var s = {}; data.filter(function(r) { return trendStore === 'all' || r.store_number === trendStore; }).forEach(function(r) { if (r.bum) s[r.bum] = true; }); var l = Object.keys(s); l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); }); return l; }, [data, trendStore]);
+  var bums = useMemo(function() {
+    var s = {};
+    data.filter(function(r) { return store === 'all' || r.store_number === store; }).forEach(function(r) { if (r.bum) s[r.bum] = true; });
+    var l = Object.keys(s);
+    l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); });
+    return l;
+  }, [data, store]);
 
   var totals = useMemo(function() { var budget = 0, actual = 0; departments.forEach(function(d) { budget += d.budget; actual += d.actual; }); return { budget: budget, actual: actual, diff: actual - budget, pct: budget ? ((actual - budget) / budget) * 100 : 0 }; }, [departments]);
 
@@ -137,33 +128,33 @@ export default function InventoryDashboard() {
 
   /* ── Trend chart data ── */
   var trendChartData = useMemo(function() {
-    if (!trendDepartments.length) return null;
+    if (!departments.length) return null;
     var allDates = {};
-    trendDepartments.forEach(function(d) { d.history.forEach(function(h) { allDates[h.date] = true; }); });
+    departments.forEach(function(d) { d.history.forEach(function(h) { allDates[h.date] = true; }); });
     var sortedDates = Object.keys(allDates).sort();
     if (!sortedDates.length) return null;
     var labels = sortedDates.map(function(dt) { var p = dt.split('-'); return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2); });
     var title = '', values = [], budgetValues = [];
-    if (trendDept === '__total__') {
-      title = trendBum !== 'all' ? ('Totaal ' + trendBum) : ('Totaal ' + (trendStore === '1' ? 'Curaçao' : trendStore === 'B' ? 'Bonaire' : trendStore));
+    if (selDept === '__total__') {
+      title = selBum !== 'all' ? ('Totaal ' + selBum) : ('Totaal ' + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : store));
       var totalBudget = 0;
-      trendDepartments.forEach(function(d) { totalBudget += d.budget; });
-      values = sortedDates.map(function(dt) { var sum = 0; trendDepartments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return sum; });
+      departments.forEach(function(d) { totalBudget += d.budget; });
+      values = sortedDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return sum; });
       budgetValues = sortedDates.map(function() { return totalBudget; });
     } else {
-      var dept = trendDepartments.find(function(d) { return d.deptCode === trendDept; });
+      var dept = departments.find(function(d) { return d.deptCode === selDept; });
       if (!dept) return null;
       title = dept.deptCode + ' — ' + dept.deptName;
       values = sortedDates.map(function(dt) { var h = dept.history.find(function(x) { return x.date === dt; }); return h ? h.value : 0; });
       budgetValues = sortedDates.map(function() { return dept.budget; });
     }
     return { labels: labels, values: values, budgetValues: budgetValues, title: title };
-  }, [trendDepartments, trendDept, trendBum, trendStore]);
+  }, [departments, selDept, selBum, store]);
 
   /* ── Render chart ── */
   useEffect(function() {
     if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
-    if (view !== 'visual' || !trendChartData || !trendRef.current) return;
+    if (view !== 'visual' || !trendChartData) return;
     var raf = requestAnimationFrame(function() {
       if (!trendRef.current) return;
       chartRef.current = new Chart(trendRef.current, {
@@ -200,48 +191,57 @@ export default function InventoryDashboard() {
         <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName + ' · XCG'}</div>
       </div>
 
-      {/* Filters */}
+      {/* Single unified filter block */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
-          <div className="flex gap-1">{stores.map(function(s) { return <Pill key={s} label={s === '1' ? 'Curaçao' : s === 'B' ? 'Bonaire' : s} active={store === s} onClick={function() { setStore(s); setSelBum('all'); }} />; })}</div>
+          <div className="flex gap-1">{stores.map(function(s) { return <Pill key={s} label={s === '1' ? 'Curaçao' : s === 'B' ? 'Bonaire' : s} active={store === s} onClick={function() { setStore(s); setSelBum('all'); setSelDept('__total__'); }} />; })}</div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
           <div className="flex gap-1">
-            <Pill label="Alle" active={selBum === 'all'} onClick={function() { setSelBum('all'); }} />
-            {bums.map(function(b) { return <Pill key={b} label={b} active={selBum === b} onClick={function() { setSelBum(b); }} />; })}
+            <Pill label="Alle" active={selBum === 'all'} onClick={function() { setSelBum('all'); setSelDept('__total__'); }} />
+            {bums.map(function(b) { return <Pill key={b} label={b} active={selBum === b} onClick={function() { setSelBum(b); setSelDept('__total__'); }} />; })}
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
+          <select value={selDept} onChange={function(e) { setSelDept(e.target.value); }}
+            className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[250px]">
+            <option value="__total__">{selBum !== 'all' ? 'Totaal ' + selBum : 'Totaal alle departementen'}</option>
+            {departments.map(function(d) { return <option key={d.deptCode} value={d.deptCode}>{d.deptCode + ' - ' + d.deptName}</option>; })}
+          </select>
         </div>
         {isBonaire && <div className="text-[11px] text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">Bonaire heeft geen richtinggevend budget — alleen actuele voorraad wordt getoond.</div>}
       </div>
 
-      {/* View tabs — only 2 now */}
+      {/* View tabs */}
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
         {[['overview', 'Overzicht'], ['visual', 'Voorraad vs Budget']].map(function(item) {
           return <button key={item[0]} onClick={function() { setView(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
         })}
       </div>
 
-      {/* KPI tiles with 3-tier colors */}
+      {/* KPI tiles — react to all filters */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
         {[
-          { label: 'Budget Voorraad', value: isBonaire ? 'n.v.t.' : fmtK(totals.budget) },
-          { label: 'Actuele Voorraad', value: fmtK(totals.actual) },
-          { label: 'Verschil', value: isBonaire ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: isBonaire ? undefined : pctColor(totals.pct) },
+          { label: 'Budget Voorraad', value: isBonaire ? 'n.v.t.' : fmtK(totals.budget), tooltip: isBonaire ? '' : fmt(Math.round(totals.budget)) },
+          { label: 'Actuele Voorraad', value: fmtK(totals.actual), tooltip: fmt(Math.round(totals.actual)) },
+          { label: 'Verschil', value: isBonaire ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: isBonaire ? undefined : pctColor(totals.pct), tooltip: isBonaire ? '' : fmt(Math.round(totals.diff)) },
           { label: '% vs Budget', value: isBonaire ? 'n.v.t.' : fmtP(totals.pct), color: isBonaire ? undefined : pctColor(totals.pct) },
         ].map(function(k, i) {
           return (
-            <div key={i} className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm">
+            <div key={i} className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm" title={k.tooltip || ''}>
               <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#E84E1B]"></div>
               <p className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[1px]">{k.label}</p>
               <p className="text-[28px] font-semibold font-mono mt-1" style={{ color: k.color || '#1a0a04' }}>{k.value}</p>
+              {k.tooltip && <p className="text-[11px] text-[#a08a74] font-mono mt-0.5">{k.tooltip}</p>}
             </div>
           );
         })}
       </div>
 
-      {/* ═══ OVERVIEW TABLE with 3-tier colors ═══ */}
+      {/* ═══ OVERVIEW TABLE ═══ */}
       {view === 'overview' && (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
           <div className="overflow-x-auto">
@@ -263,7 +263,6 @@ export default function InventoryDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {/* Total row */}
                 <tr className="bg-[#faf7f4]">
                   <td colSpan={2} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td>
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.budget))}</td>
@@ -272,11 +271,10 @@ export default function InventoryDashboard() {
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>
                   {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(sum))}</td>; })}
                 </tr>
-                {/* Department rows */}
                 {departments.map(function(d, i) {
                   var dc = pctColor(d.pct);
                   return (
-                    <tr key={d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setTrendDept(d.deptCode); setTrendStore(store); setTrendBum(selBum); setView('visual'); }}>
+                    <tr key={d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setSelDept(d.deptCode); setView('visual'); }}>
                       <td className="p-2 text-[12px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td>
                       <td className="p-2 text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.budget))}</td>
@@ -293,32 +291,9 @@ export default function InventoryDashboard() {
         </div>
       )}
 
-      {/* ═══ VOORRAAD VS BUDGET (trend chart + bar chart combined) ═══ */}
+      {/* ═══ VOORRAAD VS BUDGET (trend + bar chart) ═══ */}
       {view === 'visual' && (
         <div className="space-y-5 mb-8">
-          {/* Trend filters */}
-          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
-              <div className="flex gap-1">{stores.map(function(s) { return <Pill key={s} label={s === '1' ? 'Curaçao' : s === 'B' ? 'Bonaire' : s} active={trendStore === s} onClick={function() { setTrendStore(s); setTrendBum('all'); setTrendDept('__total__'); }} />; })}</div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
-              <div className="flex gap-1">
-                <Pill label="Alle" active={trendBum === 'all'} onClick={function() { setTrendBum('all'); setTrendDept('__total__'); }} />
-                {trendBums.map(function(b) { return <Pill key={b} label={b} active={trendBum === b} onClick={function() { setTrendBum(b); setTrendDept('__total__'); }} />; })}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
-              <select value={trendDept || '__total__'} onChange={function(e) { setTrendDept(e.target.value); }}
-                className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[250px]">
-                <option value="__total__">{trendBum !== 'all' ? 'Totaal ' + trendBum : 'Totaal alle departementen'}</option>
-                {trendDepartments.map(function(d) { return <option key={d.deptCode} value={d.deptCode}>{d.deptCode + ' - ' + d.deptName}</option>; })}
-              </select>
-            </div>
-          </div>
-
           {/* Trend chart */}
           {trendChartData && (
             <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
@@ -326,7 +301,7 @@ export default function InventoryDashboard() {
                 <div>
                   <h3 className="text-[15px] font-bold">{trendChartData.title}</h3>
                   <p className="text-[12px] text-[#6b5240]">
-                    {'Store: ' + (trendStore === '1' ? 'Curaçao' : trendStore === 'B' ? 'Bonaire' : trendStore) +
+                    {'Store: ' + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : store) +
                     ' · Budget: ' + fmt(Math.round(trendChartData.budgetValues[0] || 0)) +
                     ' · Actual: ' + fmt(Math.round(trendChartData.values[trendChartData.values.length - 1] || 0))}
                   </p>
@@ -344,8 +319,8 @@ export default function InventoryDashboard() {
             </div>
           )}
 
-          {/* Bar chart below trend */}
-          {trendStore !== 'B' && (
+          {/* Bar chart */}
+          {store !== 'B' && (
             <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm p-6" style={{ overflow: 'visible' }}>
               <h3 className="text-[15px] font-bold mb-1">Procentueel verschil per departement</h3>
               <p className="text-[12px] text-[#6b5240] mb-2">t.o.v. budget — hover voor details</p>
@@ -355,14 +330,14 @@ export default function InventoryDashboard() {
                 <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span> Meer dan 25%</span>
               </div>
               <div style={{ overflow: 'visible' }}>
-                {trendDepartments.filter(function(d) { return d.budget > 0; }).map(function(d) {
+                {departments.filter(function(d) { return d.budget > 0; }).map(function(d) {
                   return <PctBar key={d.deptCode} pct={d.pct} name={d.deptName} deptCode={d.deptCode} actual={d.actual} budget={d.budget} />;
                 })}
               </div>
             </div>
           )}
 
-          {trendStore === 'B' && (
+          {store === 'B' && (
             <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-8 shadow-sm text-center">
               <p className="text-[13px] text-amber-600">Bonaire heeft geen budget — visuele vergelijking niet beschikbaar.</p>
             </div>
