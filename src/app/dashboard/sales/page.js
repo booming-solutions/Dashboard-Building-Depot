@@ -227,7 +227,12 @@ export default function SalesDashboard(){
       if(dayFrac.month){budgetFiltered.filter(b=>b.dept_code===r.dept_code&&needsProrate(parseInt(b.month.split('-')[1]))).forEach(b=>{if(b.budget_type===salesType)bd.s-=parseFloat(b.amount)*(1-dayFrac.frac);if(b.budget_type===marginType)bd.g-=parseFloat(b.amount)*(1-dayFrac.frac)})}
       return{...r,ly:conv(lS),varPct:lS?((r.net_sales-lS)/Math.abs(lS)*100):0,gmPct:r.net_sales?r.gross_margin/r.net_sales*100:0,net_sales_conv:conv(r.net_sales),gm_conv:conv(r.gross_margin),budMargin:conv(bd.g),budGmPct:bd.s?bd.g/bd.s*100:0};
     }).filter(r=>!search||r.dept.toLowerCase().includes(search.toLowerCase())||r.bum.toLowerCase().includes(search.toLowerCase()))
-    .sort((a,b)=>sortDir==='desc'?(b[sortCol]||0)-(a[sortCol]||0):(a[sortCol]||0)-(b[sortCol]||0));
+    .sort((a,b)=>{
+      // Always sort 'Other' (dept_code OT) to bottom
+      if(a.dept_code==='OT'&&b.dept_code!=='OT')return 1;
+      if(b.dept_code==='OT'&&a.dept_code!=='OT')return -1;
+      return sortDir==='desc'?(b[sortCol]||0)-(a[sortCol]||0):(a[sortCol]||0)-(b[sortCol]||0);
+    });
   },[filtered,priorFiltered,budgetFiltered,corrFiltered,search,sortCol,sortDir,dayFrac,conv,salesType,marginType]);
 
   function toggleSort(c2){if(sortCol===c2)setSortDir(d=>d==='desc'?'asc':'desc');else{setSortCol(c2);setSortDir('desc')}}
@@ -298,17 +303,17 @@ export default function SalesDashboard(){
             {[['Departement','dept'],['Manager','bum']].map(([l,k])=><th key={k} className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0">{l}</th>)}
             {[['Omzet','net_sales_conv'],['LY','ly'],['Var %','varPct'],['BM','gm_conv'],['Bud BM','budMargin'],['BM %','gmPct'],['Bud BM %','budGmPct']].map(([l,k])=><th key={k} onClick={()=>toggleSort(k)} className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0 cursor-pointer hover:text-[#E84E1B] whitespace-nowrap">{l}{sortCol===k?(sortDir==='desc'?' ↓':' ↑'):''}</th>)}
           </tr></thead><tbody>
-            {tableData.slice(0,tableRows).map((r,i)=>{const gc=r.gmPct>=35?'#16a34a':r.gmPct>=25?'#d97706':'#dc2626';const bc=r.budGmPct>=35?'#16a34a':r.budGmPct>=25?'#d97706':'#dc2626';return(
-              <tr key={i} className="hover:bg-[#faf5f0]">
-                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]">{r.dept}</td>
-                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]">{r.bum}</td>
-                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(r.net_sales_conv/1000))}</td>
-                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(r.ly/1000))}</td>
-                <td className={`p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold ${r.varPct>=0?'text-green-600':'text-red-600'}`}>{r.varPct>=0?'+':''}{fmtP(r.varPct)}</td>
-                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(r.gm_conv/1000))}</td>
-                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(r.budMargin/1000))}</td>
-                <td className="p-2.5 border-b border-[#e5ddd4] text-right"><div className="flex items-center justify-end gap-2"><div className="w-[8px] h-[8px] rounded-full" style={{backgroundColor:gc}}/><span className="font-mono text-[13px] font-semibold" style={{color:gc}}>{fmtP(r.gmPct)}</span></div></td>
-                <td className="p-2.5 border-b border-[#e5ddd4] text-right"><span className="font-mono text-[13px]" style={{color:bc}}>{fmtP(r.budGmPct)}</span></td>
+            {tableData.slice(0,tableRows).map((r,i)=>{const gc=r.gmPct>=35?'#16a34a':r.gmPct>=25?'#d97706':'#dc2626';const bc=r.budGmPct>=35?'#16a34a':r.budGmPct>=25?'#d97706':'#dc2626';const isOther=r.dept_code==='OT';const rowStyle=isOther?{color:'#b0a090',fontStyle:'italic'}:{};return(
+              <tr key={i} className="hover:bg-[#faf5f0]" style={isOther?{backgroundColor:'#f9f7f5'}:{}}>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]" style={rowStyle}>{r.dept}{isOther?' (FA/FB/FC/FF/XX)':''}</td>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]" style={rowStyle}>{r.bum}</td>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.net_sales_conv/1000))}</td>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.ly/1000))}</td>
+                <td className={`p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold`} style={isOther?rowStyle:{color:r.varPct>=0?'#16a34a':'#dc2626'}}>{r.varPct>=0?'+':''}{fmtP(r.varPct)}</td>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.gm_conv/1000))}</td>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.budMargin/1000))}</td>
+                <td className="p-2.5 border-b border-[#e5ddd4] text-right">{isOther?<span className="font-mono text-[13px]" style={rowStyle}>{fmtP(r.gmPct)}</span>:<div className="flex items-center justify-end gap-2"><div className="w-[8px] h-[8px] rounded-full" style={{backgroundColor:gc}}/><span className="font-mono text-[13px] font-semibold" style={{color:gc}}>{fmtP(r.gmPct)}</span></div>}</td>
+                <td className="p-2.5 border-b border-[#e5ddd4] text-right"><span className="font-mono text-[13px]" style={isOther?rowStyle:{color:bc}}>{fmtP(r.budGmPct)}</span></td>
               </tr>)})}
           </tbody></table>
         </div>
