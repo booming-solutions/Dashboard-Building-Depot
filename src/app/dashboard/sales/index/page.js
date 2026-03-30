@@ -264,22 +264,35 @@ export default function IndexDashboard() {
       // Clean dept code: remove ".0" 
       var cleanCode = String(dc).replace(/\.0$/, '');
 
+      // Prorate MTD budget: if we have data through day X of the month, budget = full month × (X / days in month)
+      var mtdBudProrated = mb;
+      if (dayFrac.month === month && dayFrac.year === currentYear && dayFrac.frac < 1) {
+        mtdBudProrated = mb * dayFrac.frac;
+      }
+
+      // Prorate YTD budget: full budget for completed months + prorated current month
+      var ytdBudProrated = yb;
+      if (dayFrac.month === month && dayFrac.year === currentYear && dayFrac.frac < 1) {
+        // YTD full budget minus the unprorated part of current month
+        ytdBudProrated = yb - mb + (mb * dayFrac.frac);
+      }
+
       departments.push({
         deptCode: cleanCode,
         deptName: deptName,
         bum: bumName,
         buName: BU_MAP[bumName] || 'OTHER',
         mtdActual: mtdA,
-        mtdBudget: mb,
-        mtdDiffBud: mtdA - mb,
-        mtdIdxBud: mb ? (mtdA / mb) * 100 : 0,
+        mtdBudget: mtdBudProrated,
+        mtdDiffBud: mtdA - mtdBudProrated,
+        mtdIdxBud: mtdBudProrated ? (mtdA / mtdBudProrated) * 100 : 0,
         mtdLY: ml.s,
         mtdDiffLY: mtdA - ml.s,
         mtdIdxLY: ml.s ? (mtdA / ml.s) * 100 : 0,
         ytdActual: ytdA,
-        ytdBudget: yb,
-        ytdDiffBud: ytdA - yb,
-        ytdIdxBud: yb ? (ytdA / yb) * 100 : 0,
+        ytdBudget: ytdBudProrated,
+        ytdDiffBud: ytdA - ytdBudProrated,
+        ytdIdxBud: ytdBudProrated ? (ytdA / ytdBudProrated) * 100 : 0,
         ytdLY: yl.s,
         ytdDiffLY: ytdA - yl.s,
         ytdIdxLY: yl.s ? (ytdA / yl.s) * 100 : 0,
