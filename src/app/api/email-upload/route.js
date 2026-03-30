@@ -18,8 +18,12 @@ function detectFileType(keys) {
   var hasBudget = keys.some(function(k) { return k.toLowerCase().includes('budget'); });
   var hasNetSales = keys.some(function(k) { return k.toLowerCase().includes('net sales') || k.toLowerCase().includes('net_sales'); });
   var hasGrossMargin = keys.some(function(k) { return k.toLowerCase().includes('gross margin'); });
+  var hasQOH = keys.some(function(k) { return k.toLowerCase().includes('quantity on hand'); });
+  var hasItemNumber = keys.some(function(k) { return k.toLowerCase().includes('item number'); });
+  var hasSalesUnits = keys.some(function(k) { return k.toLowerCase().includes('sales units'); });
 
   if (hasInventory && hasBudget) return 'inventory';
+  if (hasQOH && hasItemNumber && hasSalesUnits) return 'buying';
   if (hasNetSales || hasGrossMargin) return 'sales';
   return 'unknown';
 }
@@ -195,6 +199,68 @@ async function processInventoryData(json, filename) {
   return { type: 'inventory', rows_imported: totalInserted };
 }
 
+/* ── Process buying data (new) ── */
+async function processBuyingData(json, filename) {
+  var keys = Object.keys(json[0] || {});
+  var find = function(patterns) { return keys.find(function(k) { return patterns.some(function(p) { return k.toLowerCase().includes(p); }); }); };
+
+  // Find sales columns
+  var salesCols = keys.filter(function(k) { return k.includes('Sales Units') && !k.includes('Total'); });
+  console.log('Buying: ' + salesCols.length + ' sales columns found');
+
+  var rows = json.map(function(row) {
+    var sales = salesCols.map(function(c) { return parseFloat(row[c]) || 0; });
+    // Pad to 12 if needed
+    while (sales.length < 12) sales.push(0);
+
+    return {
+      store_number: String(row[find(['store number', 'store_number'])] || ''),
+      dept_code: String(row[find(['department code', 'dept_code'])] || '').replace(/\.0$/, ''),
+      dept_name: String(row[find(['department name', 'dept_name'])] || ''),
+      class_code: String(row[find(['class code', 'class_code'])] || ''),
+      class_name: String(row[find(['class name', 'class_name'])] || ''),
+      item_number: String(row[find(['item number', 'item_number'])] || ''),
+      item_description: String(row[find(['item desc', 'item_desc'])] || ''),
+      nos: String(row[find(['nos'])] || ''),
+      min_lead_time: parseFloat(row[find(['min lead', 'min_lead'])]) || 0,
+      max_lead_time: parseFloat(row[find(['max lead', 'max_lead'])]) || 0,
+      qoh: parseFloat(row[find(['quantity on hand', 'qoh'])]) || 0,
+      qty_committed: parseFloat(row[find(['quantity committed', 'qty_committed'])]) || 0,
+      qty_available: parseFloat(row[find(['quantity available', 'qty_available'])]) || 0,
+      qty_on_order: parseFloat(row[find(['quantity on order', 'qty_on_order'])]) || 0,
+      sales_m01: sales[0], sales_m02: sales[1], sales_m03: sales[2], sales_m04: sales[3],
+      sales_m05: sales[4], sales_m06: sales[5], sales_m07: sales[6], sales_m08: sales[7],
+      sales_m09: sales[8], sales_m10: sales[9], sales_m11: sales[10], sales_m12: sales[11],
+      vendor_code: String(row[find(['vendor code'])] || ''),
+      vendor_name: String(row[find(['vendor name'])] || ''),
+      replacement_cost: parseFloat(row[find(['replacement cost', 'replacement_cost'])]) || 0,
+      inv_value_at_cost: parseFloat(row[find(['inventory value', 'inv_value'])]) || 0,
+    };
+  }).filter(function(r) { return r.item_number && r.store_number; });
+
+  console.log('Buying valid rows: ' + rows.length);
+
+  // Get unique dept codes - delete all existing data for these depts
+  var deptCodes = Array.from(new Set(rows.map(function(r) { return r.dept_code; }))).filter(Boolean);
+  console.log('Buying dept codes: ' + deptCodes.join(', '));
+
+  if (deptCodes.length > 0) {
+    var delResult = await supabase.from('buying_data').delete({ count: 'exact' }).in('dept_code', deptCodes);
+    if (delResult.error) console.error('Buying delete error: ' + delResult.error.message);
+    else console.log('Deleted ' + (delResult.count || 0) + ' existing buying rows for depts: ' + deptCodes.join(', '));
+  }
+
+  var totalInserted = 0;
+  for (var i = 0; i < rows.length; i += 500) {
+    var batch = rows.slice(i, i + 500);
+    var insResult = await supabase.from('buying_data').insert(batch);
+    if (insResult.error) { console.error('Buying batch error at ' + i + ': ' + insResult.error.message); continue; }
+    totalInserted += batch.length;
+  }
+
+  return { type: 'buying', rows_imported: totalInserted };
+}
+
 /* ── Main POST handler ── */
 export async function POST(request) {
   try {
@@ -240,6 +306,8 @@ export async function POST(request) {
     var result;
     if (fileType === 'inventory') {
       result = await processInventoryData(json, filename);
+    } else if (fileType === 'buying') {
+      result = await processBuyingData(json, filename);
     } else if (fileType === 'sales') {
       result = await processSalesData(json, filename);
     } else {

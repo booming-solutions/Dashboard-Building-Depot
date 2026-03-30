@@ -170,7 +170,10 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/sales', label: 'Omzet en Marge' },
     { href: '/dashboard/sales/index', label: 'Index Rapport' },
   ];
-  const voorraadItems = [{ href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' }];
+  const voorraadItems = [
+    { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
+    { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel' },
+  ];
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
