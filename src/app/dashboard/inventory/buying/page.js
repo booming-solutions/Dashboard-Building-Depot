@@ -11,7 +11,8 @@ import { createClient } from '@/lib/supabase';
 var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(0) + 'K' : fmt(a)); };
-var fmtC = function(n) { return '$' + (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+var fmtC = function(n) { return 'Cg ' + (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+var XCG_USD = 1.82; // Bonaire data is in USD, multiply by this to get XCG
 
 function Pill({ label, active, onClick }) {
   return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
@@ -78,6 +79,8 @@ export default function BuyingDashboard() {
     var map = {};
     filtered.forEach(function(r) {
       var key = r.item_number;
+      var isBon = !(/^\d+$/.test(r.store_number)); // Bonaire = non-digit store numbers
+      var cFactor = isBon ? XCG_USD : 1; // Convert Bonaire USD to XCG
       if (!map[key]) {
         map[key] = {
           item: r.item_number, desc: r.item_description,
@@ -87,7 +90,7 @@ export default function BuyingDashboard() {
           vendor_code: r.vendor_code,
           min_lt: parseFloat(r.min_lead_time) || 0,
           max_lt: parseFloat(r.max_lead_time) || 3,
-          cost: parseFloat(r.replacement_cost) || 0,
+          cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
           qoh: 0, qc: 0, qa: 0, qoo: 0, inv_value: 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
         };
@@ -97,7 +100,7 @@ export default function BuyingDashboard() {
       m.qc += parseFloat(r.qty_committed) || 0;
       m.qa += parseFloat(r.qty_available) || 0;
       m.qoo += parseFloat(r.qty_on_order) || 0;
-      m.inv_value += parseFloat(r.inv_value_at_cost) || 0;
+      m.inv_value += (parseFloat(r.inv_value_at_cost) || 0) * cFactor;
       for (var i = 0; i < 12; i++) {
         m.sales[i] += parseFloat(r['sales_m' + String(i + 1).padStart(2, '0')]) || 0;
       }
