@@ -162,7 +162,11 @@ export default function SalesDashboard(){
   const priorFiltered=useMemo(()=>data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.bum===bum)&&(dept==='all'||r.dept_code===dept)&&r.year===priorYear&&matchMonth(r.month))),[data,store,priorYear,months,bum,dept,maxDataMonth]);
   const salesType=budgetMode==='target'?'target_sales':'cgf_sales';
   const marginType=budgetMode==='target'?'target_margin':'cgf_margin';
-  const budgetFiltered=useMemo(()=>budgetData.filter(b=>{if(store!=='all'&&b.store_number!==store)return false;if(dept!=='all'&&b.dept_code!==dept)return false;const[by,bm]=b.month.split('-').map(Number);if(by!==currentYear||!matchMonth(bm))return false;return b.budget_type===salesType||b.budget_type===marginType}),[budgetData,store,currentYear,months,dept,budgetMode,maxDataMonth,salesType,marginType]);
+
+  // Build dept_code → bum mapping from sales data so we can filter budget by BUM
+  const deptBumMap=useMemo(()=>{const m={};data.forEach(r=>{if(r.dept_code&&r.bum)m[r.dept_code]=r.bum});return m},[data]);
+
+  const budgetFiltered=useMemo(()=>budgetData.filter(b=>{if(store!=='all'&&b.store_number!==store)return false;if(dept!=='all'&&b.dept_code!==dept)return false;if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;const[by,bm]=b.month.split('-').map(Number);if(by!==currentYear||!matchMonth(bm))return false;return b.budget_type===salesType||b.budget_type===marginType}),[budgetData,store,currentYear,months,dept,bum,deptBumMap,budgetMode,maxDataMonth,salesType,marginType]);
   const corrFiltered=useMemo(()=>corrections.filter(c=>((store==='all'||c.store_number===store)&&(bum==='all'||c.bum===bum)&&(dept==='all'||c.dept_code===dept)&&c.year===currentYear&&matchMonth(c.month))),[corrections,store,currentYear,months,bum,dept,maxDataMonth]);
 
   const sum=(a,k)=>a.reduce((s,r)=>s+parseFloat(r[k]||0),0);

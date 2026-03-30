@@ -26,14 +26,15 @@ function UrgBadge({ level }) {
   return <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-green-100 text-green-700">OK</span>;
 }
 
-/* Mini sparkline bar chart for 12 months */
-function Spark({ sales }) {
+/* Mini sparkline bar chart for 12 months with labels */
+function Spark({ sales, labels }) {
   var max = Math.max.apply(null, sales.concat([1]));
   return (
     <div className="flex items-end gap-px h-[20px]">
       {sales.map(function(v, i) {
         var h = max > 0 ? Math.max(1, (v / max) * 20) : 1;
-        return <div key={i} className="w-[5px] rounded-t-sm" style={{ height: h + 'px', backgroundColor: v > 0 ? '#E84E1B' : '#e5ddd4' }} title={MN[i] + ': ' + fmt(v)}></div>;
+        var lbl = labels && labels[i] ? labels[i] : '';
+        return <div key={i} className="w-[5px] rounded-t-sm" style={{ height: h + 'px', backgroundColor: v > 0 ? '#E84E1B' : '#e5ddd4' }} title={lbl + ': ' + fmt(v)}></div>;
       })}
     </div>
   );
@@ -113,6 +114,25 @@ export default function BuyingDashboard() {
       // Reverse sales to chronological order (m01=newest → m12=oldest becomes [oldest..newest])
       var salesChrono = m.sales.slice().reverse();
       m.salesChrono = salesChrono;
+
+      // Generate labels: m01=MAR 26(newest)...m12=APR 25(oldest), reversed to chronological
+      // The month columns in the data are: m01=most recent, m12=oldest
+      // After reverse: index 0=oldest(m12=APR 25), index 11=newest(m01=MAR 26)
+      // Build labels based on current date minus N months
+      var salesLabels = [];
+      for (var li = 11; li >= 0; li--) {
+        // li=11 is m01 (most recent), li=0 is m12 (oldest)
+        // m01=Mar 26, m02=Feb 26, ... m12=Apr 25
+        var monthsBack = li; // 11=newest(0 back), 0=oldest(11 back)
+        // Use Mar 2026 as reference (m01)
+        var refMonth = 2; // March = index 2 (0-based)
+        var refYear = 2026;
+        var calcMonth = refMonth - monthsBack;
+        var calcYear = refYear;
+        while (calcMonth < 0) { calcMonth += 12; calcYear--; }
+        salesLabels.push(MN[calcMonth] + ' ' + String(calcYear).slice(2));
+      }
+      m.salesLabels = salesLabels;
 
       // Avg monthly (excl 0 months)
       var nonZero = m.sales.filter(function(s) { return s > 0; });
@@ -309,7 +329,7 @@ export default function BuyingDashboard() {
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: p.qoo > 0 ? '#1B3A5C' : '#a08a74' }}>{p.qoo > 0 ? fmt(Math.round(p.qoo)) : '-'}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold">{fmt(p.avg_monthly)}</td>
                     <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5] text-[#6b5240]">{p.active_months + '/12'}</td>
-                    <td className="p-1.5 border-b border-[#f0ebe5] border-r border-[#e5ddd4]"><Spark sales={p.salesChrono} /></td>
+                    <td className="p-1.5 border-b border-[#f0ebe5] border-r border-[#e5ddd4]"><Spark sales={p.salesChrono} labels={p.salesLabels} /></td>
                     <td className="p-1.5 text-[10px] border-b border-[#f0ebe5] truncate max-w-[140px]" title={p.vendor}>{p.vendor}</td>
                     <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]">{p.max_lt > 0 ? (p.min_lt + '-' + p.max_lt + 'm') : '-'}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{fmt(p.reorder_point)}</td>
