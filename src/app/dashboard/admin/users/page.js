@@ -33,6 +33,16 @@ export default function AdminUsersPage() {
   const [editActive, setEditActive] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Password reset
+  const [resetUser, setResetUser] = useState(null);
+  const [resetPw, setResetPw] = useState('');
+  const [resetPw2, setResetPw2] = useState('');
+  const [resetting, setResetting] = useState(false);
+
+  // Delete user
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
   const supabase = createClient();
 
   useEffect(() => { loadData(); }, []);
@@ -131,6 +141,37 @@ export default function AdminUsersPage() {
     await supabase.from('profiles').update({ is_active: newState, updated_at: new Date().toISOString() }).eq('id', u.id);
     showMsg(`${u.full_name} ${newState ? 'geactiveerd' : 'gedeactiveerd'}`);
     await loadData();
+  }
+
+  async function adminApiCall(action, body) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { showMsg('Niet ingelogd', 'error'); return null; }
+    const res = await fetch('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+      body: JSON.stringify({ action, ...body }),
+    });
+    const result = await res.json();
+    if (!res.ok) { showMsg(result.error || 'Fout', 'error'); return null; }
+    return result;
+  }
+
+  async function handleResetPassword() {
+    if (!resetUser) return;
+    if (!resetPw || resetPw.length < 6) { showMsg('Wachtwoord moet minimaal 6 tekens zijn', 'error'); return; }
+    if (resetPw !== resetPw2) { showMsg('Wachtwoorden komen niet overeen', 'error'); return; }
+    setResetting(true);
+    const result = await adminApiCall('reset_password', { userId: resetUser.id, newPassword: resetPw });
+    if (result) { showMsg('Wachtwoord van ' + resetUser.full_name + ' is gereset'); setResetUser(null); setResetPw(''); setResetPw2(''); }
+    setResetting(false);
+  }
+
+  async function handleDeleteUser() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    const result = await adminApiCall('delete_user', { userId: deleteTarget.id });
+    if (result) { showMsg('Gebruiker ' + deleteTarget.full_name + ' is verwijderd'); setDeleteTarget(null); await loadData(); }
+    setDeleting(false);
   }
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Admin Panel laden...</p></div>;
@@ -320,9 +361,17 @@ export default function AdminUsersPage() {
                           className="px-3 py-1 rounded-lg text-[12px] font-semibold text-[#1B3A5C] bg-[#e8eff7] hover:bg-[#d5e2f0] transition-colors">
                           Bewerken
                         </button>
+                        <button onClick={() => { setResetUser(u); setResetPw(''); setResetPw2(''); }}
+                          className="px-3 py-1 rounded-lg text-[12px] font-semibold text-amber-600 bg-amber-50 hover:bg-amber-100 transition-colors">
+                          Wachtwoord
+                        </button>
                         <button onClick={() => toggleActive(u)}
                           className={`px-3 py-1 rounded-lg text-[12px] font-semibold transition-colors ${u.is_active !== false ? 'text-red-600 bg-red-50 hover:bg-red-100' : 'text-green-600 bg-green-50 hover:bg-green-100'}`}>
                           {u.is_active !== false ? 'Deactiveer' : 'Activeer'}
+                        </button>
+                        <button onClick={() => setDeleteTarget(u)}
+                          className="px-3 py-1 rounded-lg text-[12px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors">
+                          Verwijder
                         </button>
                       </div>
                     </td>
@@ -333,6 +382,53 @@ export default function AdminUsersPage() {
           </table>
         </div>
       </div>
+
+      {/* Password Reset Modal */}
+      {resetUser && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={() => setResetUser(null)}>
+          <div className="bg-white rounded-2xl p-7 w-[400px] shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center"><span className="text-amber-600 text-lg">🔑</span></div>
+              <div><h3 className="text-[16px] font-bold">Wachtwoord Resetten</h3><p className="text-[12px] text-[#6b5240]">{resetUser.full_name} — {resetUser.email}</p></div>
+            </div>
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase">Nieuw wachtwoord</label>
+                <input type="password" value={resetPw} onChange={e => setResetPw(e.target.value)}
+                  className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="Min. 6 tekens" />
+              </div>
+              <div>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase">Herhaal wachtwoord</label>
+                <input type="password" value={resetPw2} onChange={e => setResetPw2(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleResetPassword()}
+                  className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="Herhaal wachtwoord" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => { setResetUser(null); setResetPw(''); setResetPw2(''); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
+              <button onClick={handleResetPassword} disabled={resetting} className="flex-1 py-2.5 rounded-lg bg-amber-500 text-white text-[13px] font-semibold disabled:opacity-50">{resetting ? 'Resetten...' : 'Wachtwoord Resetten'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={() => setDeleteTarget(null)}>
+          <div className="bg-white rounded-2xl p-7 w-[400px] shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center"><span className="text-red-600 text-lg">⚠️</span></div>
+              <div><h3 className="text-[16px] font-bold text-red-600">Gebruiker Verwijderen</h3><p className="text-[12px] text-[#6b5240]">Dit kan niet ongedaan worden gemaakt!</p></div>
+            </div>
+            <div className="bg-red-50 rounded-xl p-4 mb-5">
+              <p className="text-[13px] text-red-800">Weet je zeker dat je <strong>{deleteTarget.full_name}</strong> ({deleteTarget.email}) permanent wilt verwijderen? Het account en alle bijbehorende gegevens worden verwijderd.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
+              <button onClick={handleDeleteUser} disabled={deleting} className="flex-1 py-2.5 rounded-lg bg-red-600 text-white text-[13px] font-semibold disabled:opacity-50">{deleting ? 'Verwijderen...' : 'Definitief Verwijderen'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
