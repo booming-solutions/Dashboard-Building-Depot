@@ -61,6 +61,7 @@ function PctBar({ pct, name, deptCode, actual, budget }) {
 export default function InventoryDashboard() {
   var _s = useState;
   var _d = _s([]), data = _d[0], setData = _d[1];
+  var _bd = _s([]), buyingData = _bd[0], setBuyingData = _bd[1];
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _vw = _s('overview'), view = _vw[0], setView = _vw[1];
   // Single unified filter state
@@ -82,7 +83,15 @@ export default function InventoryDashboard() {
       if (r.data.length < step) break;
       from += step;
     }
-    setData(all); setLoading(false);
+    var allB = []; from = 0;
+    while (true) {
+      var r2 = await supabase.from('buying_data').select('dept_code,qty_on_order,min_lead_time,max_lead_time,sales_m01,sales_m02,sales_m03,sales_m04,sales_m05,sales_m06,sales_m07,sales_m08,sales_m09,sales_m10,sales_m11,sales_m12,store_number').range(from, from + step - 1);
+      if (!r2.data || !r2.data.length) break;
+      allB = allB.concat(r2.data);
+      if (r2.data.length < step) break;
+      from += step;
+    }
+    setData(all); setBuyingData(allB); setLoading(false);
   }
 
   var stores = useMemo(function() { var s = {}; data.forEach(function(r) { if (r.store_number) s[r.store_number] = true; }); return Object.keys(s).sort(); }, [data]);
@@ -111,6 +120,32 @@ export default function InventoryDashboard() {
   }
 
   var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum]);
+
+  // Aggregate buying data per dept: QOO, lead times, avg monthly sales
+  var buyingByDept = useMemo(function() {
+    var map = {};
+    var filtered = buyingData;
+    if (store === '1') filtered = buyingData.filter(function(r) { return /^\d+$/.test(r.store_number); });
+    else if (store === 'B') filtered = buyingData.filter(function(r) { return !(/^\d+$/.test(r.store_number)); });
+    filtered.forEach(function(r) {
+      var dc = String(r.dept_code).replace(/\.0$/, '');
+      if (!map[dc]) map[dc] = { qoo: 0, minLT: 99, maxLT: 0, totalSales: 0, activeMonths: 0, itemCount: 0 };
+      var m = map[dc];
+      m.qoo += parseFloat(r.qty_on_order) || 0;
+      var mlt = parseFloat(r.min_lead_time) || 0;
+      var xlt = parseFloat(r.max_lead_time) || 0;
+      if (mlt > 0 && mlt < m.minLT) m.minLT = mlt;
+      if (xlt > m.maxLT) m.maxLT = xlt;
+      var sales = [];
+      for (var i = 1; i <= 12; i++) { sales.push(parseFloat(r['sales_m' + String(i).padStart(2, '0')]) || 0); }
+      var nonZero = sales.filter(function(s) { return s > 0; });
+      if (nonZero.length) { m.totalSales += nonZero.reduce(function(a, b) { return a + b; }, 0) / nonZero.length; }
+      m.itemCount++;
+    });
+    // Clean up minLT
+    Object.values(map).forEach(function(m) { if (m.minLT === 99) m.minLT = 0; });
+    return map;
+  }, [buyingData, store]);
 
   var bums = useMemo(function() {
     var s = {};
@@ -249,17 +284,21 @@ export default function InventoryDashboard() {
               <thead>
                 <tr className="bg-[#1B3A5C]">
                   <th colSpan={2} className="p-0 border-r border-[#2a4f75]"></th>
-                  <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>
-                  <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
+                  <th colSpan={4} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>
+                  <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Inkoop Info</th>
+                  <th colSpan={historyDates.length} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
                 </tr>
                 <tr className="bg-[#f0ebe5]">
-                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">DEP</th>
-                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[160px] border-r border-[#e5ddd4]">Departement</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Actual</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>
-                  {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
+                  <th className="text-left p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">DEP</th>
+                  <th className="text-left p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4]">Departement</th>
+                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>
+                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Actual</th>
+                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>
+                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>
+                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" title="Quantity on Order">QOO</th>
+                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" title="Lead Time (min-max maanden)">LT</th>
+                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]" title="Gemiddelde verkoop per maand in stuks">Gem/mnd</th>
+                  {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
                 </tr>
               </thead>
               <tbody>
@@ -269,18 +308,25 @@ export default function InventoryDashboard() {
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.actual))}</td>
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>
+                  <td className="p-2 text-right font-mono text-[11px] font-bold border-b-2 border-[#c5bfb3] text-[#6b5240]"></td>
+                  <td className="p-2 text-right font-mono text-[11px] font-bold border-b-2 border-[#c5bfb3] text-[#6b5240]"></td>
+                  <td className="p-2 text-right font-mono text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] text-[#6b5240]"></td>
                   {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(sum))}</td>; })}
                 </tr>
                 {departments.map(function(d, i) {
                   var dc = pctColor(d.pct);
+                  var bd = buyingByDept[d.deptCode] || {};
                   return (
                     <tr key={d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setSelDept(d.deptCode); setView('visual'); }}>
                       <td className="p-2 text-[12px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td>
-                      <td className="p-2 text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName}</td>
+                      <td className="p-2 text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[160px]" title={d.deptName}>{d.deptName}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.budget))}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.actual))}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: dc }}>{fmt(Math.round(d.diff))}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: dc }}>{d.budget ? fmtP(d.pct) : '-'}</td>
+                      <td className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#1B3A5C]">{bd.qoo ? fmt(Math.round(bd.qoo)) : '-'}</td>
+                      <td className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{bd.maxLT ? (bd.minLT + '-' + bd.maxLT) : '-'}</td>
+                      <td className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] text-[#6b5240]">{bd.totalSales ? fmt(Math.round(bd.totalSales)) : '-'}</td>
                       {historyDates.map(function(dt) { var h = d.history.find(function(x) { return x.date === dt; }); return <td key={dt} className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{h ? fmt(Math.round(h.value)) : '-'}</td>; })}
                     </tr>
                   );

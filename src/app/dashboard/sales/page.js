@@ -91,8 +91,8 @@ export default function SalesDashboard(){
   const[mgrMetric,setMgrMetric]=useState('sales');
   const[deptMetric,setDeptMetric]=useState('sales');
   const[search,setSearch]=useState('');
-  const[sortCol,setSortCol]=useState('net_sales_conv');
-  const[sortDir,setSortDir]=useState('desc');
+  const[sortCol,setSortCol]=useState('dept_code_num');
+  const[sortDir,setSortDir]=useState('asc');
   const[tableRows,setTableRows]=useState(20);
   const[tab,setTab]=useState('dashboard');
   const[isLoggedIn,setIsLoggedIn]=useState(false);
@@ -229,7 +229,7 @@ export default function SalesDashboard(){
       if(dayFrac.month){priorFiltered.filter(p=>p.dept_name===r.dept&&p.bum===r.bum&&needsProrate(p.month)).forEach(p=>{lS-=parseFloat(p.net_sales)*(1-dayFrac.frac);lG-=parseFloat(p.gross_margin)*(1-dayFrac.frac)})}
       let bd={...bA[r.dept_code]||{s:0,g:0}};
       if(dayFrac.month){budgetFiltered.filter(b=>b.dept_code===r.dept_code&&needsProrate(parseInt(b.month.split('-')[1]))).forEach(b=>{if(b.budget_type===salesType)bd.s-=parseFloat(b.amount)*(1-dayFrac.frac);if(b.budget_type===marginType)bd.g-=parseFloat(b.amount)*(1-dayFrac.frac)})}
-      return{...r,ly:conv(lS),varPct:lS?((r.net_sales-lS)/Math.abs(lS)*100):0,gmPct:r.net_sales?r.gross_margin/r.net_sales*100:0,net_sales_conv:conv(r.net_sales),gm_conv:conv(r.gross_margin),budMargin:conv(bd.g),budGmPct:bd.s?bd.g/bd.s*100:0};
+      return{...r,dept_code_num:parseInt(r.dept_code)||999,ly:conv(lS),varPct:lS?((r.net_sales-lS)/Math.abs(lS)*100):0,gmPct:r.net_sales?r.gross_margin/r.net_sales*100:0,net_sales_conv:conv(r.net_sales),gm_conv:conv(r.gross_margin),budMargin:conv(bd.g),budGmPct:bd.s?bd.g/bd.s*100:0};
     }).filter(r=>!search||r.dept.toLowerCase().includes(search.toLowerCase())||r.bum.toLowerCase().includes(search.toLowerCase()))
     .sort((a,b)=>{
       // Always sort 'Other' (dept_code OT) to bottom

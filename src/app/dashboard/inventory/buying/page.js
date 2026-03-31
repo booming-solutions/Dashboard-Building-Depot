@@ -267,6 +267,53 @@ export default function BuyingDashboard() {
         })}
       </div>
 
+      {/* Department SKU Status Overview */}
+      {(function() {
+        var deptMap = {};
+        proposals.forEach(function(p) {
+          var dc = p.dept_code;
+          if (!deptMap[dc]) deptMap[dc] = { code: dc, name: p.class_name ? p.dept_name : dc, ok: 0, order: 0, critical: 0, total: 0 };
+          deptMap[dc].total++;
+          if (p.urgency === 'critical') deptMap[dc].critical++;
+          else if (p.order_qty > 0) deptMap[dc].order++;
+          else deptMap[dc].ok++;
+        });
+        var deptList = Object.values(deptMap).filter(function(d) { return d.total > 0; });
+        deptList.sort(function(a, b) { return (b.critical / b.total) - (a.critical / a.total); });
+        if (!deptList.length) return null;
+        return (
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
+            <h3 className="text-[15px] font-bold mb-1">SKU Status per Afdeling</h3>
+            <p className="text-[12px] text-[#6b5240] mb-3">Gesorteerd op % kritieke items</p>
+            <div className="flex items-center gap-4 text-[10px] mb-3">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span> OK</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#d97706' }}></span> Bestellen</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span> Kritiek</span>
+            </div>
+            <div className="space-y-2">
+              {deptList.map(function(d) {
+                var pOk = d.total ? (d.ok / d.total * 100) : 0;
+                var pOrd = d.total ? (d.order / d.total * 100) : 0;
+                var pCrit = d.total ? (d.critical / d.total * 100) : 0;
+                return (
+                  <div key={d.code} className="flex items-center gap-2 cursor-pointer hover:bg-[#faf5f0] py-1 px-1 rounded" onClick={function() { setDept(d.code); setFilter('all'); }}>
+                    <div className="w-[140px] text-right text-[10px] text-[#1a0a04] truncate flex-shrink-0">
+                      <span className="font-mono text-[#6b5240] mr-1">{d.code}</span>{d.name ? d.name.replace(/^\d+\s*/, '') : ''}
+                    </div>
+                    <div className="flex-1 flex h-[18px] rounded-sm overflow-hidden bg-[#f0ebe5]">
+                      {pOk > 0 && <div style={{ width: pOk + '%', backgroundColor: '#16a34a' }} title={'OK: ' + d.ok}></div>}
+                      {pOrd > 0 && <div style={{ width: pOrd + '%', backgroundColor: '#d97706' }} title={'Bestellen: ' + d.order}></div>}
+                      {pCrit > 0 && <div style={{ width: pCrit + '%', backgroundColor: '#dc2626' }} title={'Kritiek: ' + d.critical}></div>}
+                    </div>
+                    <div className="w-[70px] text-[10px] font-mono text-[#6b5240] text-right flex-shrink-0">{d.ok + '/' + d.order + '/' + d.critical}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Filter tabs */}
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
         {[['needs_order', 'Te bestellen (' + totals.needs_order + ')'], ['critical', 'Kritiek (' + totals.critical + ')'], ['nos', 'Never Out of Stock'], ['all', 'Alle items (' + totals.total_items + ')']].map(function(item) {
