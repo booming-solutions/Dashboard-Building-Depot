@@ -47,7 +47,7 @@ function PctBar({ pct, name, deptCode, actual, budget }) {
         <div className="absolute top-0 bottom-0 bg-[#16a34a]/5 border-l border-r border-[#16a34a]/20" style={{ left: 'calc(50% - 7.5%)', width: '15%', zIndex: 0 }}></div>
         <div className="absolute top-0 bottom-0 border-l border-r border-[#d97706]/15" style={{ left: 'calc(50% - 12.5%)', width: '25%', zIndex: 0 }}></div>
         <div className="absolute top-1 bottom-1 rounded-sm transition-all" style={{ backgroundColor: barColor, width: (barWidth / 2) + '%', left: isOver ? '50%' : (50 - barWidth / 2) + '%', zIndex: 1 }}></div>
-        <div className="absolute text-[9px] font-bold font-mono whitespace-nowrap" style={{ color: barColor, left: isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, right: !isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, top: '3px', zIndex: 3 }}>{label}</div>
+        <div className="absolute text-[10px] font-bold font-mono whitespace-nowrap" style={{ color: barColor, left: isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, right: !isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, top: '3px', zIndex: 3 }}>{label}</div>
       </div>
       {hovered && (
         <div style={{ position: 'absolute', left: '200px', top: '-28px', backgroundColor: '#1B3A5C', color: 'white', fontSize: '10px', fontFamily: 'monospace', padding: '5px 10px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', zIndex: 100, pointerEvents: 'none' }}>
@@ -284,21 +284,17 @@ export default function InventoryDashboard() {
               <thead>
                 <tr className="bg-[#1B3A5C]">
                   <th colSpan={2} className="p-0 border-r border-[#2a4f75]"></th>
-                  <th colSpan={4} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>
-                  <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Inkoop Info</th>
-                  <th colSpan={historyDates.length} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
+                  <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>
+                  <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
                 </tr>
                 <tr className="bg-[#f0ebe5]">
-                  <th className="text-left p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">DEP</th>
-                  <th className="text-left p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4]">Departement</th>
-                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>
-                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Actual</th>
-                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>
-                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>
-                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" title="Quantity on Order">QOO</th>
-                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" title="Lead Time (min-max maanden)">LT</th>
-                  <th className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]" title="Gemiddelde verkoop per maand in stuks">Gem/mnd</th>
-                  {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
+                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">DEP</th>
+                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4]">Departement</th>
+                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>
+                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Actual</th>
+                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>
+                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>
+                  {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
                 </tr>
               </thead>
               <tbody>
@@ -308,25 +304,18 @@ export default function InventoryDashboard() {
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.actual))}</td>
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>
                   <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>
-                  <td className="p-2 text-right font-mono text-[11px] font-bold border-b-2 border-[#c5bfb3] text-[#6b5240]"></td>
-                  <td className="p-2 text-right font-mono text-[11px] font-bold border-b-2 border-[#c5bfb3] text-[#6b5240]"></td>
-                  <td className="p-2 text-right font-mono text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] text-[#6b5240]"></td>
                   {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(sum))}</td>; })}
                 </tr>
                 {departments.map(function(d, i) {
                   var dc = pctColor(d.pct);
-                  var bd = buyingByDept[d.deptCode] || {};
                   return (
                     <tr key={d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setSelDept(d.deptCode); setView('visual'); }}>
                       <td className="p-2 text-[12px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td>
-                      <td className="p-2 text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[160px]" title={d.deptName}>{d.deptName}</td>
+                      <td className="p-2 text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.budget))}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.actual))}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: dc }}>{fmt(Math.round(d.diff))}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: dc }}>{d.budget ? fmtP(d.pct) : '-'}</td>
-                      <td className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#1B3A5C]">{bd.qoo ? fmt(Math.round(bd.qoo)) : '-'}</td>
-                      <td className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{bd.maxLT ? (bd.minLT + '-' + bd.maxLT) : '-'}</td>
-                      <td className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] text-[#6b5240]">{bd.totalSales ? fmt(Math.round(bd.totalSales)) : '-'}</td>
                       {historyDates.map(function(dt) { var h = d.history.find(function(x) { return x.date === dt; }); return <td key={dt} className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{h ? fmt(Math.round(h.value)) : '-'}</td>; })}
                     </tr>
                   );
