@@ -31,7 +31,7 @@ function detectFileType(keys) {
 /* ── Process sales data (existing logic) ── */
 async function processSalesData(json, filename) {
   var batchId = crypto.randomUUID();
-  var rows = json.map(function(row) {
+  var parsed = json.map(function(row) {
     var keys = Object.keys(row);
     var find = function(patterns) { return keys.find(function(k) { return patterns.some(function(p) { return k.toLowerCase().includes(p); }); }); };
 
@@ -52,9 +52,6 @@ async function processSalesData(json, filename) {
       return k.toLowerCase().includes('gross margin') && !k.toLowerCase().includes('%');
     });
 
-    var gmPct = parseFloat(row[gmPctKey]) || 0;
-    if (Math.abs(gmPct) > 999) gmPct = Math.max(Math.min(gmPct, 999.99), -999.99);
-
     return {
       bum: String(row[find(['bum'])] || ''),
       sale_date: dateVal,
@@ -63,12 +60,39 @@ async function processSalesData(json, filename) {
       dept_name: String(row[find(['department name', 'dept_name'])] || ''),
       net_sales: parseFloat(row[find(['net sales', 'net_sales'])]) || 0,
       gross_margin: parseFloat(row[gmKey]) || 0,
-      gm_percentage: gmPct,
-      upload_batch: batchId,
+      gm_percentage: parseFloat(row[gmPctKey]) || 0,
     };
   }).filter(function(r) { return r.bum && r.sale_date && r.dept_code; });
 
-  console.log('Sales valid rows: ' + rows.length);
+  // Aggregate to department level: sum net_sales and gross_margin per date+store+dept
+  var aggMap = {};
+  parsed.forEach(function(r) {
+    var key = r.sale_date + '|' + r.store_number + '|' + r.dept_code;
+    if (!aggMap[key]) {
+      aggMap[key] = {
+        bum: r.bum,
+        sale_date: r.sale_date,
+        store_number: r.store_number,
+        dept_code: r.dept_code,
+        dept_name: r.dept_name,
+        net_sales: 0,
+        gross_margin: 0,
+        upload_batch: batchId,
+      };
+    }
+    aggMap[key].net_sales += r.net_sales;
+    aggMap[key].gross_margin += r.gross_margin;
+  });
+
+  var rows = Object.values(aggMap);
+  // Recalculate GM% after aggregation
+  rows.forEach(function(r) {
+    r.net_sales = Math.round(r.net_sales * 100) / 100;
+    r.gross_margin = Math.round(r.gross_margin * 100) / 100;
+    r.gm_percentage = r.net_sales ? Math.round((r.gross_margin / r.net_sales) * 10000) / 100 : 0;
+  });
+
+  console.log('Sales parsed: ' + parsed.length + ' rows, aggregated to: ' + rows.length + ' dept-level rows');
 
   var uniqueDates = Array.from(new Set(rows.map(function(r) { return r.sale_date; }))).filter(Boolean);
   console.log('Dates in file: ' + uniqueDates.join(', '));
