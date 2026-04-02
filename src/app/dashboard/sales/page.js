@@ -190,7 +190,7 @@ export default function SalesDashboard(){
   const stores=useMemo(()=>[...new Set(data.map(r=>r.store_number))].sort(),[data]);
   const years=useMemo(()=>[...new Set(data.map(r=>r.year))].sort(),[data]);
   const bums=useMemo(()=>[...new Set(data.filter(r=>r.year===currentYear&&(store==='all'||r.store_number===store)&&r.bum!=='OTHER').map(r=>r.bum))].sort(),[data,currentYear,store]);
-  const depts=useMemo(()=>[...new Set(data.map(r=>r.dept_code+'|'+r.dept_name))].sort((a,b)=>parseInt(a)-parseInt(b)),[data]);
+  const depts=useMemo(()=>[...new Set(data.map(r=>r.dept_code+'|'+r.dept_name))].sort((a,b)=>{const na=parseInt(a),nb=parseInt(b);if(isNaN(na)&&isNaN(nb))return a.localeCompare(b);if(isNaN(na))return 1;if(isNaN(nb))return -1;return na-nb}),[data]);
   const budgetLabel=budgetMode==='target'?'Target':'CGF';
 
   function handleMonthClick(m,e){if(m==='all'||m==='ytd'){setMonths([m]);return}if(e&&e.ctrlKey){setMonths(prev=>{const c=prev.filter(x=>x!=='all'&&x!=='ytd');if(c.includes(m))return c.filter(x=>x!==m).length?c.filter(x=>x!==m):['all'];return[...c,m]})}else setMonths([m])}
