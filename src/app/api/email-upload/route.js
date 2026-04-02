@@ -94,15 +94,18 @@ async function processSalesData(json, filename) {
 
   console.log('Sales parsed: ' + parsed.length + ' rows, aggregated to: ' + rows.length + ' dept-level rows');
 
-  var uniqueDates = Array.from(new Set(rows.map(function(r) { return r.sale_date; }))).filter(Boolean);
-  console.log('Dates in file: ' + uniqueDates.join(', '));
+  var uniqueDates = Array.from(new Set(rows.map(function(r) { return r.sale_date; }))).filter(Boolean).sort();
+  console.log('Dates in file: ' + uniqueDates.length + ' unique dates, from ' + uniqueDates[0] + ' to ' + uniqueDates[uniqueDates.length - 1]);
 
   if (uniqueDates.length > 0) {
-    var delResult = await supabase.from('sales_data').delete({ count: 'exact' }).in('sale_date', uniqueDates);
+    var minDate = uniqueDates[0];
+    var maxDate = uniqueDates[uniqueDates.length - 1];
+    // Delete by range instead of .in() to avoid issues with large date lists
+    var delResult = await supabase.from('sales_data').delete({ count: 'exact' }).gte('sale_date', minDate).lte('sale_date', maxDate);
     if (delResult.error) {
       console.error('Delete error: ' + delResult.error.message);
     } else {
-      console.log('Deleted ' + (delResult.count || 0) + ' existing rows');
+      console.log('Deleted ' + (delResult.count || 0) + ' existing rows for range ' + minDate + ' to ' + maxDate);
     }
   }
 
