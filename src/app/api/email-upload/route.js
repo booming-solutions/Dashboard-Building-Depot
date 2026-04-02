@@ -62,7 +62,7 @@ async function processSalesData(json, filename) {
       gross_margin: parseFloat(row[gmKey]) || 0,
       gm_percentage: parseFloat(row[gmPctKey]) || 0,
     };
-  }).filter(function(r) { return r.bum && r.sale_date && r.dept_code; });
+  }).filter(function(r) { return r.bum && r.sale_date && r.dept_code && r.dept_code !== 'FB'; });
 
   // Aggregate to department level: sum net_sales and gross_margin per date+store+dept
   var aggMap = {};
