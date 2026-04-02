@@ -173,6 +173,7 @@ export default function DashboardLayout({ children }) {
   const voorraadItems = [
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
     { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel' },
+    { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
   ];
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
