@@ -21,9 +21,11 @@ function detectFileType(keys) {
   var hasQOH = keys.some(function(k) { return k.toLowerCase().includes('quantity on hand'); });
   var hasItemNumber = keys.some(function(k) { return k.toLowerCase().includes('item number'); });
   var hasSalesUnits = keys.some(function(k) { return k.toLowerCase().includes('sales units'); });
+  var hasAvgCost = keys.some(function(k) { return k.toLowerCase().includes('average cost per unit'); });
 
   if (hasInventory && hasBudget) return 'inventory';
   if (hasQOH && hasItemNumber && hasSalesUnits) return 'buying';
+  if (hasQOH && hasItemNumber && hasAvgCost && !hasSalesUnits) return 'negative_inventory';
   if (hasNetSales || hasGrossMargin) return 'sales';
   return 'unknown';
 }
@@ -98,15 +100,18 @@ async function processSalesData(json, filename) {
   console.log('Dates in file: ' + uniqueDates.length + ' unique dates, from ' + uniqueDates[0] + ' to ' + uniqueDates[uniqueDates.length - 1]);
 
   if (uniqueDates.length > 0) {
-    var minDate = uniqueDates[0];
-    var maxDate = uniqueDates[uniqueDates.length - 1];
-    // Delete by range instead of .in() to avoid issues with large date lists
-    var delResult = await supabase.from('sales_data').delete({ count: 'exact' }).gte('sale_date', minDate).lte('sale_date', maxDate);
-    if (delResult.error) {
-      console.error('Delete error: ' + delResult.error.message);
-    } else {
-      console.log('Deleted ' + (delResult.count || 0) + ' existing rows for range ' + minDate + ' to ' + maxDate);
+    // Delete in batches of 10 dates to avoid query limits
+    var totalDeleted = 0;
+    for (var di = 0; di < uniqueDates.length; di += 10) {
+      var dateBatch = uniqueDates.slice(di, di + 10);
+      var delResult = await supabase.from('sales_data').delete({ count: 'exact' }).in('sale_date', dateBatch);
+      if (delResult.error) {
+        console.error('Delete error for batch ' + di + ': ' + delResult.error.message);
+      } else {
+        totalDeleted += (delResult.count || 0);
+      }
     }
+    console.log('Deleted ' + totalDeleted + ' existing rows across ' + uniqueDates.length + ' dates');
   }
 
   var totalInserted = 0;
@@ -288,6 +293,56 @@ async function processBuyingData(json, filename) {
   return { type: 'buying', rows_imported: totalInserted };
 }
 
+/* ── Process negative inventory data ── */
+async function processNegativeInventoryData(json, filename) {
+  var today = new Date().toISOString().split('T')[0];
+
+  var rows = json.map(function(row) {
+    var keys = Object.keys(row);
+    var find = function(patterns) { return keys.find(function(k) { return patterns.some(function(p) { return k.toLowerCase().includes(p); }); }); };
+
+    var qty = parseFloat(row[find(['quantity on hand'])]) || 0;
+    var invVal = parseFloat(row[find(['inventory value'])]) || 0;
+    var avgCost = parseFloat(row[find(['average cost per unit'])]) || 0;
+
+    return {
+      bum: String(row[find(['department group', 'bum'])] || ''),
+      dept_code: String(row[find(['department code'])]) || '',
+      dept_name: String(row[find(['department name'])] || ''),
+      class_code: String(row[find(['class code'])] || ''),
+      class_name: String(row[find(['class name'])] || ''),
+      item_number: String(row[find(['item number'])] || ''),
+      item_description: String(row[find(['item description'])] || ''),
+      qty_on_hand: qty,
+      store_number: String(row[find(['store number'])] || ''),
+      store_short_name: String(row[find(['store short name'])] || ''),
+      inv_value: Math.round(invVal * 100) / 100,
+      avg_cost_per_unit: Math.round(avgCost * 1000) / 1000,
+      report_date: today,
+    };
+  }).filter(function(r) { return r.item_number && r.dept_code && r.qty_on_hand < 0; });
+
+  console.log('Negative inventory valid rows: ' + rows.length);
+
+  // Full replace: delete all existing data, insert new
+  var delResult = await supabase.from('negative_inventory').delete({ count: 'exact' }).neq('id', 0);
+  if (delResult.error) {
+    console.error('Negative inventory delete error: ' + delResult.error.message);
+  } else {
+    console.log('Deleted ' + (delResult.count || 0) + ' existing negative inventory rows');
+  }
+
+  var totalInserted = 0;
+  for (var i = 0; i < rows.length; i += 500) {
+    var batch = rows.slice(i, i + 500);
+    var insResult = await supabase.from('negative_inventory').insert(batch);
+    if (insResult.error) { console.error('Neg inv batch error at ' + i + ': ' + insResult.error.message); continue; }
+    totalInserted += batch.length;
+  }
+
+  return { type: 'negative_inventory', rows_imported: totalInserted };
+}
+
 /* ── Main POST handler ── */
 export async function POST(request) {
   try {
@@ -335,6 +390,8 @@ export async function POST(request) {
       result = await processInventoryData(json, filename);
     } else if (fileType === 'buying') {
       result = await processBuyingData(json, filename);
+    } else if (fileType === 'negative_inventory') {
+      result = await processNegativeInventoryData(json, filename);
     } else if (fileType === 'sales') {
       result = await processSalesData(json, filename);
     } else {

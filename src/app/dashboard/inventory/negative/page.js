@@ -22,6 +22,7 @@ export default function NegativeInventoryDashboard() {
   var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
   var _store = useState('all'), store = _store[0], setStore = _store[1];
   var _dept = useState('all'), dept = _dept[0], setDept = _dept[1];
+  var _bum = useState('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _storeView = useState('all'), storeView = _storeView[0], setStoreView = _storeView[1];
   var _sort = useState('value'), sortCol = _sort[0], setSortCol = _sort[1];
   var _sortDir = useState('asc'), sortDir = _sortDir[0], setSortDir = _sortDir[1];
@@ -59,6 +60,7 @@ export default function NegativeInventoryDashboard() {
     return classified.filter(function(r) {
       if (store !== 'all' && r.region !== store) return false;
       if (storeView !== 'all' && String(r.store_number) !== storeView) return false;
+      if (selBum !== 'all' && r.bum !== selBum) return false;
       if (dept !== 'all' && r.dept_code !== dept) return false;
       if (search) {
         var s = search.toLowerCase();
@@ -69,7 +71,7 @@ export default function NegativeInventoryDashboard() {
       }
       return true;
     });
-  }, [classified, store, storeView, dept, search]);
+  }, [classified, store, storeView, selBum, dept, search]);
 
   // Aggregate per item across stores (within region)
   var aggregated = useMemo(function() {
@@ -142,15 +144,29 @@ export default function NegativeInventoryDashboard() {
     return { items: items, qty: qty, value: value };
   }, [filtered]);
 
+  // Unique BUMs
+  var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
+  var bums = useMemo(function() {
+    var s = {};
+    classified.forEach(function(r) {
+      if (store !== 'all' && r.region !== store) return;
+      if (r.bum && r.bum !== 'OTHER') s[r.bum] = true;
+    });
+    var l = Object.keys(s);
+    l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); });
+    return l;
+  }, [classified, store]);
+
   // Unique depts for filter
   var depts = useMemo(function() {
     var s = {};
     classified.forEach(function(r) {
       if (store !== 'all' && r.region !== store) return;
+      if (selBum !== 'all' && r.bum !== selBum) return;
       s[r.dept_code] = r.dept_name;
     });
     return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 999) - (parseInt(b[0]) || 999); });
-  }, [classified, store]);
+  }, [classified, store, selBum]);
 
   // Unique stores for sub-filter
   var storeList = useMemo(function() {
@@ -206,6 +222,13 @@ export default function NegativeInventoryDashboard() {
             </div>
           </div>
         )}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
+          <div className="flex gap-1">
+            <Pill label="Alle" active={selBum === 'all'} onClick={function() { setSelBum('all'); setDept('all'); }} />
+            {bums.map(function(b) { return <Pill key={b} label={b} active={selBum === b} onClick={function() { setSelBum(b); setDept('all'); }} />; })}
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
           <select value={dept} onChange={function(e) { setDept(e.target.value); }}
