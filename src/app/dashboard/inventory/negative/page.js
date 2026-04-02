@@ -244,7 +244,7 @@ export default function NegativeInventoryDashboard() {
         {[
           { label: 'Unieke Items', value: fmt(totals.items), sub: 'met negatieve voorraad' },
           { label: 'Totaal Stuks', value: fmt(Math.abs(totals.qty)), sub: 'negatief in voorraad', color: '#dc2626' },
-          { label: 'Voorraadwaarde', value: fmtC(Math.abs(totals.value)), sub: 'te corrigeren', color: '#dc2626' },
+          { label: 'Voorraadwaarde', value: fmtC(Math.abs(totals.value)), sub: 'te controleren', color: '#dc2626' },
           { label: 'Departementen', value: fmt(deptSummary.length), sub: 'met negatieve items' },
         ].map(function(k, i) {
           return (
