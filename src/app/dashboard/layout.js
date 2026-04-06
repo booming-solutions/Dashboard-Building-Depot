@@ -174,6 +174,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
     { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel' },
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
+    { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden' },
   ];
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
