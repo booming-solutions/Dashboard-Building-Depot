@@ -165,17 +165,32 @@ export default function DashboardLayout({ children }) {
   function handleRefresh() { setRefreshing(true); window.location.reload(); }
 
   const isAdmin = profile?.role === 'admin';
+  const allowedReports = profile?.allowed_reports || [];
+  const hasReport = (id) => isAdmin || allowedReports.includes(id);
 
-  const omzetItems = [
+  const REPORT_MAP = {
+    '/dashboard/sales': 'sales',
+    '/dashboard/sales/index': 'sales_index',
+    '/dashboard/inventory/budget': 'inventory_budget',
+    '/dashboard/inventory/buying': 'inventory_buying',
+    '/dashboard/inventory/negative': 'inventory_negative',
+    '/dashboard/inventory/health': 'inventory_health',
+  };
+
+  const omzetItemsAll = [
     { href: '/dashboard/sales', label: 'Omzet en Marge' },
     { href: '/dashboard/sales/index', label: 'Index Rapport' },
   ];
-  const voorraadItems = [
+  const voorraadItemsAll = [
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
     { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel' },
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden' },
   ];
+
+  // Filter navigation items based on allowed_reports
+  const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
+  const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
@@ -196,8 +211,8 @@ export default function DashboardLayout({ children }) {
             <Link href="/dashboard" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === '/dashboard' ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
               <span className="text-base flex-shrink-0">📊</span>{sidebarOpen && <span>Overzicht</span>}
             </Link>
-            <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />
-            <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />
+            {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             <Link href="/dashboard/reports" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === '/dashboard/reports' ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
               <span className="text-base flex-shrink-0">📋</span>{sidebarOpen && <span>Rapportages</span>}
             </Link>
