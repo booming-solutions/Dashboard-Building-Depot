@@ -37,7 +37,7 @@ function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget}){
   );
 }
 
-function LogoMenu({show,onClose,onCGF,onCorrections,cgfUnlocked}){
+function LogoMenu({show,onClose,onCGF,onCorrections,cgfUnlocked,corrVisible}){
   if(!show)return null;
   return(
     <div className="fixed inset-0 z-50" onClick={onClose}>
@@ -47,8 +47,8 @@ function LogoMenu({show,onClose,onCGF,onCorrections,cgfUnlocked}){
           <div><p className="text-[13px] font-semibold text-[#1a0a04]">CGF Access</p><p className="text-[11px] text-[#6b5240]">{cgfUnlocked?'Ontgrendeld':'Vergrendeld'}</p></div>
         </button>
         <button onClick={onCorrections} className="flex items-center gap-3 w-full px-4 py-3 text-left hover:bg-[#faf7f4]">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs bg-blue-50 text-blue-600">±</div>
-          <div><p className="text-[13px] font-semibold text-[#1a0a04]">Code Display</p><p className="text-[11px] text-[#6b5240]">Correcties invoeren</p></div>
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs ${corrVisible?'bg-green-50 text-green-600':'bg-blue-50 text-blue-600'}`}>{corrVisible?'✓':'🔒'}</div>
+          <div><p className="text-[13px] font-semibold text-[#1a0a04]">Data Source</p><p className="text-[11px] text-[#6b5240]">{corrVisible?'Zichtbaar':'Verborgen'}</p></div>
         </button>
       </div>
     </div>
@@ -100,6 +100,7 @@ export default function SalesDashboard(){
   const[showMenu,setShowMenu]=useState(false);
   const[showCGFModal,setShowCGFModal]=useState(false);
   const[cgfUnlocked,setCgfUnlocked]=useState(false);
+  const[corrVisible,setCorrVisible]=useState(false);
   // Auto-unlock CGF for admins
   useEffect(()=>{if(isAdmin)setCgfUnlocked(true)},[isAdmin]);
   const[corrStore,setCorrStore]=useState('1');
@@ -259,6 +260,7 @@ export default function SalesDashboard(){
   return(
     <div className="max-w-[1520px] mx-auto" style={{fontFamily:"'DM Sans',-apple-system,sans-serif",color:'#1a0a04'}}>
       <CGFModal show={showCGFModal} onClose={()=>setShowCGFModal(false)} onUnlock={()=>{setCgfUnlocked(true);setBudgetMode('cgf')}}/>
+      <LogoMenu show={showMenu} onClose={()=>setShowMenu(false)} onCGF={()=>{setShowMenu(false);setShowCGFModal(true)}} onCorrections={()=>{setShowMenu(false);setCorrVisible(!corrVisible);if(!corrVisible)setTab('correcties')}} cgfUnlocked={cgfUnlocked} corrVisible={corrVisible}/>
 
       <div className="flex items-center justify-between mb-5">
         <div>
@@ -267,13 +269,13 @@ export default function SalesDashboard(){
         </div>
         <div className="flex items-center gap-3">
           <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
-          <button onClick={()=>{if(cgfUnlocked)setBudgetMode(budgetMode==='cgf'?'target':'cgf');else setShowCGFModal(true)}} className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all ${cgfUnlocked?'bg-green-50 text-green-600 border-green-200':'bg-[#faf7f4] text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]'}`}>{cgfUnlocked?'🔓 CGF':'🔒 CGF'}</button>
+          <button onClick={()=>setShowMenu(!showMenu)} className="px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all bg-[#faf7f4] text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]">⚙ CGF</button>
         </div>
       </div>
 
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
         <button onClick={()=>setTab('dashboard')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='dashboard'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Dashboard</button>
-        {isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Correcties</button>}
+        {corrVisible&&isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Data Source</button>}
       </div>
 
       {tab==='dashboard'&&<>
@@ -307,6 +309,18 @@ export default function SalesDashboard(){
             {[['Departement','dept'],['Manager','bum']].map(([l,k])=><th key={k} className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0">{l}</th>)}
             {[['Omzet','net_sales_conv'],['LY','ly'],['Var %','varPct'],['BM','gm_conv'],['Bud BM','budMargin'],['BM %','gmPct'],['Bud BM %','budGmPct']].map(([l,k])=><th key={k} onClick={()=>toggleSort(k)} className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0 cursor-pointer hover:text-[#E84E1B] whitespace-nowrap">{l}{sortCol===k?(sortDir==='desc'?' ↓':' ↑'):''}</th>)}
           </tr></thead><tbody>
+            {(function(){const tSales=tableData.reduce((s,r)=>s+r.net_sales_conv,0);const tLY=tableData.reduce((s,r)=>s+r.ly,0);const tGM=tableData.reduce((s,r)=>s+r.gm_conv,0);const tBudGM=tableData.reduce((s,r)=>s+r.budMargin,0);const tVarPct=tLY?((tSales-tLY)/Math.abs(tLY)*100):0;const tGmPct=tSales?tGM/tSales*100:0;const tBudGmPct=tSales?tBudGM/tSales*100:0;const tgc=tGmPct>=35?'#16a34a':tGmPct>=25?'#d97706':'#dc2626';const tbc=tBudGmPct>=35?'#16a34a':tBudGmPct>=25?'#d97706':'#dc2626';return(
+              <tr className="bg-[#faf7f4] font-bold">
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3]">TOTAAL</td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3]"></td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tSales/1000))}</td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tLY/1000))}</td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono font-semibold" style={{color:tVarPct>=0?'#16a34a':'#dc2626'}}>{tVarPct>=0?'+':''}{fmtP(tVarPct)}</td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tGM/1000))}</td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tBudGM/1000))}</td>
+                <td className="p-2.5 border-b-2 border-[#c5bfb3] text-right"><div className="flex items-center justify-end gap-2"><div className="w-[8px] h-[8px] rounded-full" style={{backgroundColor:tgc}}/><span className="font-mono text-[13px] font-semibold" style={{color:tgc}}>{fmtP(tGmPct)}</span></div></td>
+                <td className="p-2.5 border-b-2 border-[#c5bfb3] text-right"><span className="font-mono text-[13px]" style={{color:tbc}}>{fmtP(tBudGmPct)}</span></td>
+              </tr>)})()}
             {tableData.slice(0,tableRows).map((r,i)=>{const gc=r.gmPct>=35?'#16a34a':r.gmPct>=25?'#d97706':'#dc2626';const bc=r.budGmPct>=35?'#16a34a':r.budGmPct>=25?'#d97706':'#dc2626';const isOther=r.dept_code==='OT';const rowStyle=isOther?{color:'#b0a090',fontStyle:'italic'}:{};return(
               <tr key={i} className="hover:bg-[#faf5f0]" style={isOther?{backgroundColor:'#f9f7f5'}:{}}>
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]" style={rowStyle}>{r.dept}{isOther?' (FA/FB/FC/FF/XX)':''}</td>
