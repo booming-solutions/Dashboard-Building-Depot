@@ -41,6 +41,7 @@ export default function TrafficDashboard() {
   var _d = useState([]), data = _d[0], setData = _d[1];
   var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
   var _yr = useState('all'), yearFilter = _yr[0], setYearFilter = _yr[1];
+  var _st = useState('1'), store = _st[0], setStore = _st[1];
 
   var visitorsRef = useRef(null);
   var conversionRef = useRef(null);
@@ -59,20 +60,24 @@ export default function TrafficDashboard() {
 
   var years = useMemo(function() {
     var s = {};
-    data.forEach(function(r) { s[r.year] = true; });
+    data.filter(function(r) { return r.store_number === store; }).forEach(function(r) { s[r.year] = true; });
     return Object.keys(s).sort();
-  }, [data]);
+  }, [data, store]);
+
+  var storeData = useMemo(function() {
+    return data.filter(function(r) { return r.store_number === store; });
+  }, [data, store]);
 
   var filtered = useMemo(function() {
-    if (yearFilter === 'all') return data;
-    return data.filter(function(r) { return String(r.year) === yearFilter; });
-  }, [data, yearFilter]);
+    if (yearFilter === 'all') return storeData;
+    return storeData.filter(function(r) { return String(r.year) === yearFilter; });
+  }, [storeData, yearFilter]);
 
   // Current year & LY comparison
-  var currentYear = useMemo(function() { return data.length ? Math.max.apply(null, data.map(function(r) { return r.year; })) : 2026; }, [data]);
+  var currentYear = useMemo(function() { return storeData.length ? Math.max.apply(null, storeData.map(function(r) { return r.year; })) : 2026; }, [storeData]);
 
-  var cyData = useMemo(function() { return data.filter(function(r) { return r.year === currentYear; }); }, [data, currentYear]);
-  var lyData = useMemo(function() { return data.filter(function(r) { return r.year === currentYear - 1; }); }, [data, currentYear]);
+  var cyData = useMemo(function() { return storeData.filter(function(r) { return r.year === currentYear; }); }, [storeData, currentYear]);
+  var lyData = useMemo(function() { return storeData.filter(function(r) { return r.year === currentYear - 1; }); }, [storeData, currentYear]);
 
   // YTD totals
   var maxMonth = useMemo(function() { return cyData.length ? Math.max.apply(null, cyData.map(function(r) { return r.month; })) : 0; }, [cyData]);
@@ -91,7 +96,7 @@ export default function TrafficDashboard() {
   useEffect(function() {
     Object.values(chartsRef.current).forEach(function(c) { if (c) c.destroy(); });
     chartsRef.current = {};
-    if (!data.length) return;
+    if (!storeData.length) return;
 
     var labels = [], cyVisitors = [], lyVisitors = [], cyConv = [], lyConv = [], cyAvg = [], lyAvg = [], cyTickets = [], lyTickets = [];
 
@@ -165,7 +170,7 @@ export default function TrafficDashboard() {
     }
 
     return function() { Object.values(chartsRef.current).forEach(function(c) { if (c) c.destroy(); }); };
-  }, [data, cyData, lyData, currentYear]);
+  }, [storeData, cyData, lyData, currentYear]);
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Bezoekers & conversie laden...</p></div>;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen traffic data beschikbaar.</p></div>;
@@ -174,6 +179,8 @@ export default function TrafficDashboard() {
   var lyConvYTD = lyYTD.visitors ? (lyYTD.tickets / lyYTD.visitors * 100) : 0;
   var cyAvgYTD = cyYTD.tickets ? (cyYTD.sales / cyYTD.tickets) : 0;
   var lyAvgYTD = lyYTD.tickets ? (lyYTD.sales / lyYTD.tickets) : 0;
+  var storeName = store === '1' ? 'Curaçao' : 'Bonaire';
+  var hasVisitors = cyYTD.visitors > 0;
 
   return (
     <div className="max-w-[1520px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
@@ -181,15 +188,33 @@ export default function TrafficDashboard() {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Bezoekers & Conversie</h1>
-          <p className="text-[13px] text-[#6b5240]">{'Building Depot — YTD ' + currentYear + ' t/m ' + MN[maxMonth - 1] + ' vs ' + (currentYear - 1)}</p>
+          <p className="text-[13px] text-[#6b5240]">{'Building Depot ' + storeName + ' — YTD ' + currentYear + (maxMonth ? ' t/m ' + MN[maxMonth - 1] : '') + ' vs ' + (currentYear - 1)}</p>
+        </div>
+        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName}</div>
+      </div>
+
+      {/* Store filter */}
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
+          <div className="flex gap-1">
+            <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setYearFilter('all'); }} />
+            <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setYearFilter('all'); }} />
+          </div>
         </div>
       </div>
 
+      {!hasVisitors && store === 'B' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 mb-5 text-[13px] text-amber-700">
+          Bezoekersaantallen voor Bonaire zijn nog niet beschikbaar. Conversiepercentage kan niet worden berekend. Tickets en omzet worden wel getoond.
+        </div>
+      )}
+
       {/* KPI tiles */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
-        <KPI label="Bezoekers YTD" value={fmtK(cyYTD.visitors)} sub={'LY: ' + fmtK(lyYTD.visitors) + ' (' + (pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.visitors, lyYTD.visitors)) + ')'} subColor={pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '#16a34a' : '#dc2626'} icon="👥" />
+      <div className={'grid grid-cols-2 gap-4 mb-5 ' + (hasVisitors ? 'md:grid-cols-5' : 'md:grid-cols-3')}>
+        {hasVisitors && <KPI label="Bezoekers YTD" value={fmtK(cyYTD.visitors)} sub={'LY: ' + fmtK(lyYTD.visitors) + ' (' + (pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.visitors, lyYTD.visitors)) + ')'} subColor={pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '#16a34a' : '#dc2626'} icon="👥" />}
         <KPI label="Tickets YTD" value={fmtK(cyYTD.tickets)} sub={'LY: ' + fmtK(lyYTD.tickets) + ' (' + (pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.tickets, lyYTD.tickets)) + ')'} subColor={pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '#16a34a' : '#dc2626'} icon="🧾" />
-        <KPI label="Conversie YTD" value={fmtP(cyConvYTD)} sub={'LY: ' + fmtP(lyConvYTD) + ' (' + (cyConvYTD - lyConvYTD >= 0 ? '+' : '') + (cyConvYTD - lyConvYTD).toFixed(1) + 'pp)'} subColor={cyConvYTD >= lyConvYTD ? '#16a34a' : '#dc2626'} icon="🎯" />
+        {hasVisitors && <KPI label="Conversie YTD" value={fmtP(cyConvYTD)} sub={'LY: ' + fmtP(lyConvYTD) + ' (' + (cyConvYTD - lyConvYTD >= 0 ? '+' : '') + (cyConvYTD - lyConvYTD).toFixed(1) + 'pp)'} subColor={cyConvYTD >= lyConvYTD ? '#16a34a' : '#dc2626'} icon="🎯" />}
         <KPI label="Gem. Bonbedrag" value={'Cg ' + fmt(Math.round(cyAvgYTD))} sub={'LY: Cg ' + fmt(Math.round(lyAvgYTD)) + ' (' + (pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '+' : '') + fmtP(pctChg(cyAvgYTD, lyAvgYTD)) + ')'} subColor={pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '#16a34a' : '#dc2626'} icon="💰" />
         <KPI label="Omzet YTD" value={fmtK(cyYTD.sales)} sub={'LY: ' + fmtK(lyYTD.sales) + ' (' + (pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.sales, lyYTD.sales)) + ')'} subColor={pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '#16a34a' : '#dc2626'} icon="📊" />
       </div>
