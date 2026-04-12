@@ -171,6 +171,7 @@ export default function DashboardLayout({ children }) {
   const REPORT_MAP = {
     '/dashboard/sales': 'sales',
     '/dashboard/sales/index': 'sales_index',
+    '/dashboard/sales/traffic': 'sales_traffic',
     '/dashboard/inventory/budget': 'inventory_budget',
     '/dashboard/inventory/buying': 'inventory_buying',
     '/dashboard/inventory/negative': 'inventory_negative',
@@ -180,6 +181,7 @@ export default function DashboardLayout({ children }) {
   const omzetItemsAll = [
     { href: '/dashboard/sales', label: 'Omzet en Marge' },
     { href: '/dashboard/sales/index', label: 'Index Rapport' },
+    { href: '/dashboard/sales/traffic', label: 'Bezoekers & Conversie' },
   ];
   const voorraadItemsAll = [
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },

@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase';
 var REPORTS = [
   { id: 'sales', label: 'Omzet en Marge', group: 'Omzet', icon: '📊' },
   { id: 'sales_index', label: 'Index Rapport', group: 'Omzet', icon: '📈' },
+  { id: 'sales_traffic', label: 'Bezoekers & Conversie', group: 'Omzet', icon: '👥' },
   { id: 'inventory_budget', label: 'Voorraad vs Budget', group: 'Voorraad', icon: '📦' },
   { id: 'inventory_buying', label: 'Inkoopvoorstel', group: 'Voorraad', icon: '🛒' },
   { id: 'inventory_negative', label: 'Negatieve Voorraad', group: 'Voorraad', icon: '⚠️' },
