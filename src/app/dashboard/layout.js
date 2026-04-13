@@ -231,6 +231,18 @@ export default function DashboardLayout({ children }) {
                     <span className="text-base flex-shrink-0">{item.icon}</span>{sidebarOpen && <span>{item.label}</span>}
                   </Link>
                 ))}
+                {sidebarOpen && (
+                  <div className="mt-3 pt-3 border-t border-[#c5d4e6]/50 space-y-1">
+                    <button onClick={() => window.dispatchEvent(new Event('toggle-cgf'))}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all text-[#1B3A5C]/40 hover:text-[#1B3A5C] hover:bg-white/50 w-full text-left">
+                      <span className="text-sm flex-shrink-0">🔒</span><span>CGF Modus</span>
+                    </button>
+                    <button onClick={() => window.dispatchEvent(new Event('toggle-corrections'))}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all text-[#1B3A5C]/40 hover:text-[#1B3A5C] hover:bg-white/50 w-full text-left">
+                      <span className="text-sm flex-shrink-0">📋</span><span>Data Source</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}

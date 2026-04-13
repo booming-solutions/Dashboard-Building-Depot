@@ -97,11 +97,17 @@ export default function SalesDashboard(){
   const[tab,setTab]=useState('dashboard');
   const[isLoggedIn,setIsLoggedIn]=useState(false);
   const[isAdmin,setIsAdmin]=useState(false);
-  const[showMenu,setShowMenu]=useState(false);
   const[showCGFModal,setShowCGFModal]=useState(false);
   const[cgfUnlocked,setCgfUnlocked]=useState(false);
   const[corrVisible,setCorrVisible]=useState(false);
-  // Auto-unlock CGF for admins
+  // Listen for CGF toggle from sidebar admin menu
+  useEffect(()=>{
+    function onCGFToggle(){setCgfUnlocked(u=>{const nv=!u;if(!nv)setBudgetMode('target');return nv})}
+    function onCorrToggle(){setCorrVisible(v=>{if(!v)setTab('correcties');return!v})}
+    window.addEventListener('toggle-cgf',onCGFToggle);
+    window.addEventListener('toggle-corrections',onCorrToggle);
+    return()=>{window.removeEventListener('toggle-cgf',onCGFToggle);window.removeEventListener('toggle-corrections',onCorrToggle)}
+  },[]);
   useEffect(()=>{if(isAdmin)setCgfUnlocked(true)},[isAdmin]);
   const[corrStore,setCorrStore]=useState('1');
   const[corrYear,setCorrYear]=useState(2026);
@@ -260,7 +266,6 @@ export default function SalesDashboard(){
   return(
     <div className="max-w-[1520px] mx-auto" style={{fontFamily:"'DM Sans',-apple-system,sans-serif",color:'#1a0a04'}}>
       <CGFModal show={showCGFModal} onClose={()=>setShowCGFModal(false)} onUnlock={()=>{setCgfUnlocked(true);setBudgetMode('cgf')}}/>
-      <LogoMenu show={showMenu} onClose={()=>setShowMenu(false)} onCGF={()=>{setShowMenu(false);setShowCGFModal(true)}} onCorrections={()=>{setShowMenu(false);setCorrVisible(!corrVisible);if(!corrVisible)setTab('correcties')}} cgfUnlocked={cgfUnlocked} corrVisible={corrVisible}/>
 
       <div className="flex items-center justify-between mb-5">
         <div>
@@ -269,7 +274,6 @@ export default function SalesDashboard(){
         </div>
         <div className="flex items-center gap-3">
           <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
-          <button onClick={()=>setShowMenu(!showMenu)} className="px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all bg-[#faf7f4] text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]">⚙ CGF</button>
         </div>
       </div>
 
