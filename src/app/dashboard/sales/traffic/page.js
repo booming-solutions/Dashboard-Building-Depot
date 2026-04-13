@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: page_traffic_v3.js
+   BESTAND: page_traffic_v4.js
    KOPIEER NAAR: src/app/dashboard/sales/traffic/page.js
    (hernoem naar page.js bij het plaatsen)
    ============================================================ */
@@ -12,6 +12,8 @@ import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElemen
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
 
 var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
+var DAYS = ['Ma','Di','Wo','Do','Vr','Za','Zo'];
+var DAYS_FULL = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
 var fmtK = function(n) { var a = Math.abs(n || 0); return a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : fmt(a); };
 var fmtP = function(n) { return (n || 0).toFixed(1) + '%'; };
@@ -39,13 +41,15 @@ function KPI({ label, value, sub, subColor, icon }) {
 export default function TrafficDashboard() {
   var _d = useState([]), data = _d[0], setData = _d[1];
   var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
-  var _st = useState('1'), store = _st[0], setStore = _st[1];
+  var _tab = useState('bd'), tab = _tab[0], setTab = _tab[1];
   var _yr = useState('all'), yearFilter = _yr[0], setYearFilter = _yr[1];
 
   var visitorsRef = useRef(null);
   var conversionRef = useRef(null);
   var ticketRef = useRef(null);
   var comboRef = useRef(null);
+  var dowRef = useRef(null);
+  var dowRef2 = useRef(null);
   var chartsRef = useRef({});
 
   var supabase = createClient();
@@ -63,40 +67,45 @@ export default function TrafficDashboard() {
     setData(all); setLoading(false);
   }
 
-  // Filter by store
+  // Get store data based on tab
+  var storeNumber = tab === 'bonaire' ? 'B' : '1';
   var storeData = useMemo(function() {
-    return data.filter(function(r) { return r.store_number === store; });
-  }, [data, store]);
+    return data.filter(function(r) { return r.store_number === storeNumber; });
+  }, [data, storeNumber]);
 
-  // Determine latest date and current year
+  // Visitor field based on tab
+  var getVisitors = function(r) {
+    if (tab === 'bd') return r.visitors || 0;
+    if (tab === 'multimart') return r.visitors_multimart || 0;
+    if (tab === 'bonaire') return r.visitors || 0;
+    return 0;
+  };
+
   var lastDate = useMemo(function() {
     if (!storeData.length) return null;
     return storeData.reduce(function(max, r) { return r.date > max ? r.date : max; }, storeData[0].date);
   }, [storeData]);
 
   var currentYear = useMemo(function() { return lastDate ? parseInt(lastDate.split('-')[0]) : 2026; }, [lastDate]);
-  var lastMonth = useMemo(function() { return lastDate ? parseInt(lastDate.split('-')[1]) : 1; }, [lastDate]);
-  var lastDay = useMemo(function() { return lastDate ? parseInt(lastDate.split('-')[2]) : 1; }, [lastDate]);
 
-  // Aggregate daily → monthly
+  // Aggregate daily → monthly with correct visitor source
   var monthly = useMemo(function() {
     var map = {};
     storeData.forEach(function(r) {
       var parts = r.date.split('-');
-      var y = parseInt(parts[0]);
-      var m = parseInt(parts[1]);
+      var y = parseInt(parts[0]); var m = parseInt(parts[1]);
       var key = y + '-' + String(m).padStart(2, '0');
-      if (!map[key]) map[key] = { year: y, month: m, visitors: 0, tickets: 0, sales: 0 };
-      map[key].visitors += r.visitors || 0;
+      if (!map[key]) map[key] = { year: y, month: m, visitors: 0, visitors_keuken: 0, tickets: 0, sales: 0 };
+      map[key].visitors += getVisitors(r);
+      if (tab === 'bd') map[key].visitors_keuken += r.visitors_keuken || 0;
       map[key].tickets += r.tickets || 0;
       map[key].sales += parseFloat(r.total_sales) || 0;
     });
-    return Object.values(map).sort(function(a, b) { return (a.year * 100 + a.month) - (b.year * 100 + b.month); });
-  }, [storeData]);
+    return Object.values(map).sort(function(a, b) { return (b.year * 100 + b.month) - (a.year * 100 + a.month); });
+  }, [storeData, tab]);
 
   var years = useMemo(function() {
-    var s = {};
-    monthly.forEach(function(r) { s[r.year] = true; });
+    var s = {}; monthly.forEach(function(r) { s[r.year] = true; });
     return Object.keys(s).sort();
   }, [monthly]);
 
@@ -105,29 +114,57 @@ export default function TrafficDashboard() {
     return monthly.filter(function(r) { return String(r.year) === yearFilter; });
   }, [monthly, yearFilter]);
 
-  // YTD: aggregate t/m exact dezelfde dag als lastDate
-  // TY: alle data van currentYear t/m lastDate
-  // LY: alle data van currentYear-1 t/m dezelfde maand+dag
+  // YTD exact same day comparison
   var cyYTD = useMemo(function() {
     if (!lastDate) return { visitors: 0, tickets: 0, sales: 0 };
-    var cutoff = lastDate; // e.g. 2026-04-11
-    var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear)) && r.date <= cutoff; });
-    return { visitors: d.reduce(function(s, r) { return s + (r.visitors || 0); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
-  }, [storeData, currentYear, lastDate]);
+    var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear)) && r.date <= lastDate; });
+    return { visitors: d.reduce(function(s, r) { return s + getVisitors(r); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
+  }, [storeData, currentYear, lastDate, tab]);
 
   var lyYTD = useMemo(function() {
     if (!lastDate) return { visitors: 0, tickets: 0, sales: 0 };
-    // Same month+day but previous year
-    var lyCutoff = (currentYear - 1) + lastDate.substring(4); // e.g. 2025-04-11
+    var lyCutoff = (currentYear - 1) + lastDate.substring(4);
     var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear - 1)) && r.date <= lyCutoff; });
-    return { visitors: d.reduce(function(s, r) { return s + (r.visitors || 0); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
-  }, [storeData, currentYear, lastDate]);
+    return { visitors: d.reduce(function(s, r) { return s + getVisitors(r); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
+  }, [storeData, currentYear, lastDate, tab]);
+
+  // Day of week analysis for current year
+  var dowData = useMemo(function() {
+    var totals = [0,0,0,0,0,0,0]; var counts = [0,0,0,0,0,0,0];
+    storeData.forEach(function(r) {
+      if (!r.date.startsWith(String(currentYear))) return;
+      var v = getVisitors(r);
+      if (!v) return;
+      var dt = new Date(r.date + 'T12:00:00');
+      var dow = (dt.getDay() + 6) % 7; // Monday=0
+      totals[dow] += v; counts[dow]++;
+    });
+    var total = totals.reduce(function(a, b) { return a + b; }, 0);
+    return DAYS.map(function(d, i) { return { day: d, dayFull: DAYS_FULL[i], total: totals[i], avg: counts[i] ? Math.round(totals[i] / counts[i]) : 0, pct: total ? (totals[i] / total * 100) : 0 }; });
+  }, [storeData, currentYear, tab]);
+
+  // KeukenDepot day of week (only for BD tab)
+  var dowKeuken = useMemo(function() {
+    if (tab !== 'bd') return null;
+    var totals = [0,0,0,0,0,0,0]; var counts = [0,0,0,0,0,0,0];
+    storeData.forEach(function(r) {
+      if (!r.date.startsWith(String(currentYear))) return;
+      var v = r.visitors_keuken || 0;
+      if (!v) return;
+      var dt = new Date(r.date + 'T12:00:00');
+      var dow = (dt.getDay() + 6) % 7;
+      totals[dow] += v; counts[dow]++;
+    });
+    var total = totals.reduce(function(a, b) { return a + b; }, 0);
+    return DAYS.map(function(d, i) { return { day: d, total: totals[i], avg: counts[i] ? Math.round(totals[i] / counts[i]) : 0, pct: total ? (totals[i] / total * 100) : 0 }; });
+  }, [storeData, currentYear, tab]);
 
   var pctChg = function(a, b) { return b ? ((a - b) / Math.abs(b) * 100) : 0; };
 
-  // Chart data: monthly per year
-  var cyMonthly = useMemo(function() { return monthly.filter(function(r) { return r.year === currentYear; }); }, [monthly, currentYear]);
-  var lyMonthly = useMemo(function() { return monthly.filter(function(r) { return r.year === currentYear - 1; }); }, [monthly, currentYear]);
+  // Monthly chart data
+  var monthlyAsc = useMemo(function() { return monthly.slice().sort(function(a, b) { return (a.year * 100 + a.month) - (b.year * 100 + b.month); }); }, [monthly]);
+  var cyMonthly = useMemo(function() { return monthlyAsc.filter(function(r) { return r.year === currentYear; }); }, [monthlyAsc, currentYear]);
+  var lyMonthly = useMemo(function() { return monthlyAsc.filter(function(r) { return r.year === currentYear - 1; }); }, [monthlyAsc, currentYear]);
 
   // Render charts
   useEffect(function() {
@@ -140,14 +177,12 @@ export default function TrafficDashboard() {
       labels.push(MN[m - 1]);
       var cy = cyMonthly.find(function(r) { return r.month === m; });
       var ly = lyMonthly.find(function(r) { return r.month === m; });
-      cyV.push(cy ? cy.visitors : null);
-      lyV.push(ly ? ly.visitors : null);
+      cyV.push(cy ? cy.visitors : null); lyV.push(ly ? ly.visitors : null);
       cyConv.push(cy && cy.visitors ? (cy.tickets / cy.visitors * 100) : null);
       lyConv.push(ly && ly.visitors ? (ly.tickets / ly.visitors * 100) : null);
       cyAvg.push(cy && cy.tickets ? (cy.sales / cy.tickets) : null);
       lyAvg.push(ly && ly.tickets ? (ly.sales / ly.tickets) : null);
-      cyT.push(cy ? cy.tickets : null);
-      lyT.push(ly ? ly.tickets : null);
+      cyT.push(cy ? cy.tickets : null); lyT.push(ly ? ly.tickets : null);
     }
 
     var co = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#f0ebe5' } } } };
@@ -159,7 +194,7 @@ export default function TrafficDashboard() {
       ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(c.raw); } } } }) }) });
     }
 
-    if (conversionRef.current) {
+    if (conversionRef.current && cyConv.some(function(v) { return v !== null; })) {
       chartsRef.current.c = new Chart(conversionRef.current, { type: 'line', data: { labels: labels, datasets: [
         { label: currentYear + ' Conversie %', data: cyConv, borderColor: '#E84E1B', backgroundColor: 'rgba(232,78,27,0.08)', pointBackgroundColor: '#E84E1B', pointRadius: 5, tension: 0.3, fill: true, borderWidth: 2.5 },
         { label: (currentYear - 1) + ' Conversie %', data: lyConv, borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 4, tension: 0.3, fill: false, borderWidth: 2 },
@@ -178,11 +213,25 @@ export default function TrafficDashboard() {
         { label: currentYear + ' Tickets', data: cyT, backgroundColor: 'rgba(232,78,27,0.2)', borderColor: '#E84E1B', borderWidth: 1, borderRadius: 4, yAxisID: 'y', order: 2 },
         { label: (currentYear - 1) + ' Tickets', data: lyT, backgroundColor: 'rgba(136,136,136,0.15)', borderColor: '#888', borderWidth: 1, borderRadius: 4, yAxisID: 'y', order: 3 },
         { label: currentYear + ' Gem. Bon', data: cyAvg, type: 'line', borderColor: '#1B3A5C', pointBackgroundColor: '#1B3A5C', pointRadius: 4, tension: 0.3, fill: false, borderWidth: 2.5, yAxisID: 'y1', order: 1 },
-      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } }, tooltip: { callbacks: { label: function(c) { return c.dataset.label.includes('Bon') ? c.dataset.label + ': Cg ' + fmt(Math.round(c.raw)) : c.dataset.label + ': ' + fmt(c.raw); } } } }, scales: { x: { grid: { display: false } }, y: { position: 'left', ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } }, y1: { position: 'right', ticks: { callback: function(v) { return 'Cg ' + v; } }, grid: { display: false } } } } });
+      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: co.plugins, scales: { x: { grid: { display: false } }, y: { position: 'left', ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } }, y1: { position: 'right', ticks: { callback: function(v) { return 'Cg ' + v; } }, grid: { display: false } } } } });
+    }
+
+    // Day of week chart
+    if (dowRef.current && dowData.some(function(d) { return d.total > 0; })) {
+      chartsRef.current.dow = new Chart(dowRef.current, { type: 'bar', data: { labels: dowData.map(function(d) { return d.day; }), datasets: [
+        { data: dowData.map(function(d) { return d.pct; }), backgroundColor: dowData.map(function(d, i) { return i === 5 ? '#E84E1B' : i === 6 ? '#d4a574' : 'rgba(27,58,92,0.3)'; }), borderColor: dowData.map(function(d, i) { return i === 5 ? '#E84E1B' : i === 6 ? '#c4956a' : '#1B3A5C'; }), borderWidth: 1, borderRadius: 4 },
+      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(c) { var d = dowData[c.dataIndex]; return d.dayFull + ': ' + fmtP(d.pct) + ' (gem. ' + fmt(d.avg) + '/dag)'; } } } }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return v + '%'; } }, grid: { color: '#f0ebe5' } } } } });
+    }
+
+    // KeukenDepot day of week
+    if (dowRef2.current && dowKeuken && dowKeuken.some(function(d) { return d.total > 0; })) {
+      chartsRef.current.dow2 = new Chart(dowRef2.current, { type: 'bar', data: { labels: dowKeuken.map(function(d) { return d.day; }), datasets: [
+        { data: dowKeuken.map(function(d) { return d.pct; }), backgroundColor: dowKeuken.map(function(d, i) { return i === 5 ? '#16a34a' : i === 6 ? '#a3d9a5' : 'rgba(22,163,74,0.25)'; }), borderColor: dowKeuken.map(function(d, i) { return i === 5 ? '#16a34a' : i === 6 ? '#6bc06d' : '#16a34a'; }), borderWidth: 1, borderRadius: 4 },
+      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(c) { var d = dowKeuken[c.dataIndex]; return DAYS_FULL[c.dataIndex] + ': ' + fmtP(d.pct) + ' (gem. ' + fmt(d.avg) + '/dag)'; } } } }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return v + '%'; } }, grid: { color: '#f0ebe5' } } } } });
     }
 
     return function() { Object.values(chartsRef.current).forEach(function(c) { if (c) c.destroy(); }); };
-  }, [storeData, cyMonthly, lyMonthly, currentYear]);
+  }, [storeData, cyMonthly, lyMonthly, currentYear, dowData, dowKeuken, tab]);
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Bezoekers & conversie laden...</p></div>;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen traffic data beschikbaar.</p></div>;
@@ -191,9 +240,9 @@ export default function TrafficDashboard() {
   var lyConvYTD = lyYTD.visitors ? (lyYTD.tickets / lyYTD.visitors * 100) : 0;
   var cyAvgYTD = cyYTD.tickets ? (cyYTD.sales / cyYTD.tickets) : 0;
   var lyAvgYTD = lyYTD.tickets ? (lyYTD.sales / lyYTD.tickets) : 0;
-  var storeName = store === '1' ? 'Curaçao' : 'Bonaire';
   var hasVisitors = cyYTD.visitors > 0;
   var dateLabel = lastDate ? parseInt(lastDate.split('-')[2]) + ' ' + MN[parseInt(lastDate.split('-')[1]) - 1] + ' ' + lastDate.split('-')[0] : '';
+  var tabNames = { bd: 'Building Depot', multimart: 'MultiMart', bonaire: 'Bonaire' };
 
   return (
     <div className="max-w-[1520px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
@@ -201,26 +250,19 @@ export default function TrafficDashboard() {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Bezoekers & Conversie</h1>
-          <p className="text-[13px] text-[#6b5240]">{'Building Depot ' + storeName + ' — data t/m ' + dateLabel + ' vs ' + (currentYear - 1)}</p>
-        </div>
-        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName}</div>
-      </div>
-
-      {/* Store filter */}
-      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 shadow-sm">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
-          <div className="flex gap-1">
-            <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setYearFilter('all'); }} />
-            <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setYearFilter('all'); }} />
-          </div>
+          <p className="text-[13px] text-[#6b5240]">{tabNames[tab] + ' — data t/m ' + dateLabel + ' vs ' + (currentYear - 1)}</p>
         </div>
       </div>
 
-      {!hasVisitors && store === 'B' && (
-        <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 mb-5 text-[13px] text-amber-700">
-          Bezoekersaantallen voor Bonaire zijn nog niet beschikbaar. Conversie kan niet worden berekend.
-        </div>
+      {/* Store tabs */}
+      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
+        {[['bd', 'Building Depot'], ['multimart', 'MultiMart'], ['bonaire', 'Bonaire']].map(function(item) {
+          return <button key={item[0]} onClick={function() { setTab(item[0]); setYearFilter('all'); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (tab === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
+        })}
+      </div>
+
+      {!hasVisitors && (tab === 'bonaire') && (
+        <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 mb-5 text-[13px] text-amber-700">Bezoekersaantallen voor Bonaire zijn nog niet beschikbaar.</div>
       )}
 
       {/* KPI tiles */}
@@ -232,19 +274,40 @@ export default function TrafficDashboard() {
         <KPI label="Omzet YTD" value={fmtK(cyYTD.sales)} sub={'LY: ' + fmtK(lyYTD.sales) + ' (' + (pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.sales, lyYTD.sales)) + ')'} subColor={pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '#16a34a' : '#dc2626'} icon="📊" />
       </div>
 
+      {/* Visitor overview + day-of-week */}
+      {hasVisitors && (
+        <div className={'grid gap-4 mb-5 ' + (tab === 'bd' ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 lg:grid-cols-2')}>
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+            <h3 className="text-[15px] font-bold mb-2">{tab === 'bd' ? 'Building Depot' : tab === 'multimart' ? 'MultiMart' : 'Bonaire'} — Bezoekers {currentYear}</h3>
+            <p className="text-[12px] text-[#6b5240] mb-3">Verdeling over weekdagen</p>
+            <div style={{ height: '220px' }}><canvas ref={dowRef}></canvas></div>
+            <div className="mt-3 text-[10px] text-[#6b5240]">
+              {dowData.map(function(d) { return d.total > 0 ? (d.dayFull + ': gem. ' + fmt(d.avg) + '/dag') : null; }).filter(Boolean).join(' · ')}
+            </div>
+          </div>
+          {tab === 'bd' && dowKeuken && (
+            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+              <h3 className="text-[15px] font-bold mb-2">KeukenDepot — Bezoekers {currentYear}</h3>
+              <p className="text-[12px] text-[#6b5240] mb-3">Verdeling over weekdagen</p>
+              <div style={{ height: '220px' }}><canvas ref={dowRef2}></canvas></div>
+              <div className="mt-3 text-[10px] text-[#6b5240]">
+                {dowKeuken.map(function(d) { return d.total > 0 ? (DAYS_FULL[dowKeuken.indexOf(d)] + ': gem. ' + fmt(d.avg) + '/dag') : null; }).filter(Boolean).join(' · ')}
+              </div>
+            </div>
+          )}
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+            <h3 className="text-[15px] font-bold mb-4">Bezoekers per maand</h3>
+            <div style={{ height: '250px' }}><canvas ref={visitorsRef}></canvas></div>
+          </div>
+        </div>
+      )}
+
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
-        {hasVisitors && <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-          <h3 className="text-[15px] font-bold mb-4">Bezoekers per maand</h3>
-          <div style={{ height: '280px' }}><canvas ref={visitorsRef}></canvas></div>
-        </div>}
         {hasVisitors && <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
           <h3 className="text-[15px] font-bold mb-4">Conversie % (tickets / bezoekers)</h3>
           <div style={{ height: '280px' }}><canvas ref={conversionRef}></canvas></div>
         </div>}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
           <h3 className="text-[15px] font-bold mb-4">Gemiddeld bonbedrag (Cg)</h3>
           <div style={{ height: '280px' }}><canvas ref={ticketRef}></canvas></div>
@@ -255,7 +318,7 @@ export default function TrafficDashboard() {
         </div>
       </div>
 
-      {/* Monthly table */}
+      {/* Monthly table — newest first */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
         <div className="flex items-center justify-between p-4 border-b border-[#e5ddd4]">
           <h3 className="text-[15px] font-bold">Maandelijks Overzicht</h3>
@@ -268,25 +331,23 @@ export default function TrafficDashboard() {
           <table className="w-full border-collapse text-[12px]">
             <thead>
               <tr className="bg-[#f0ebe5]">
-                {['Maand', hasVisitors ? 'Bezoekers' : null, 'Tickets', hasVisitors ? 'Conversie' : null, 'Omzet', 'Gem. Bon', hasVisitors ? 'vs LY Bezoekers' : null, hasVisitors ? 'vs LY Conversie' : null, 'vs LY Gem. Bon'].filter(Boolean).map(function(h) {
+                {['Maand', hasVisitors ? 'Bezoekers' : null, 'Tickets', hasVisitors ? 'Conversie' : null, 'Omzet', 'Gem. Bon', hasVisitors ? 'vs LY Bez.' : null, hasVisitors ? 'vs LY Conv.' : null, 'vs LY Bon'].filter(Boolean).map(function(h) {
                   return <th key={h} className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right first:text-left">{h}</th>;
                 })}
               </tr>
             </thead>
             <tbody>
               {filteredMonthly.map(function(r, i) {
-                var ly = monthly.find(function(d) { return d.year === r.year - 1 && d.month === r.month; });
+                var ly = monthlyAsc.find(function(d) { return d.year === r.year - 1 && d.month === r.month; });
                 var conv = r.visitors ? (r.tickets / r.visitors * 100) : 0;
                 var lyConv = ly && ly.visitors ? (ly.tickets / ly.visitors * 100) : 0;
                 var avg = r.tickets ? (r.sales / r.tickets) : 0;
-                var lyAvg = ly && ly.tickets ? (ly.sales / ly.tickets) : 0;
-                var vChg = ly ? pctChg(r.visitors, ly.visitors) : null;
+                var lyAvgV = ly && ly.tickets ? (ly.sales / ly.tickets) : 0;
+                var vChg = ly && ly.visitors ? pctChg(r.visitors, ly.visitors) : null;
                 var cChg = ly && r.visitors && ly.visitors ? (conv - lyConv) : null;
-                var aChg = ly ? pctChg(avg, lyAvg) : null;
-                var cells = [
-                  <td key="m" className="p-2.5 text-[13px] border-b border-[#e5ddd4] font-semibold">{MN[r.month - 1] + ' ' + r.year}</td>,
-                ];
-                if (hasVisitors) cells.push(<td key="v" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmt(r.visitors)}</td>);
+                var aChg = ly && ly.tickets ? pctChg(avg, lyAvgV) : null;
+                var cells = [<td key="m" className="p-2.5 text-[13px] border-b border-[#e5ddd4] font-semibold">{MN[r.month - 1] + ' ' + r.year}</td>];
+                if (hasVisitors) cells.push(<td key="v" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{r.visitors ? fmt(r.visitors) : '-'}</td>);
                 cells.push(<td key="t" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmt(r.tickets)}</td>);
                 if (hasVisitors) cells.push(<td key="c" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: conv >= 50 ? '#16a34a' : '#d97706' }}>{r.visitors ? fmtP(conv) : '-'}</td>);
                 cells.push(<td key="s" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmtK(r.sales)}</td>);
@@ -304,9 +365,8 @@ export default function TrafficDashboard() {
       {/* Legend */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
         <div className="text-[10px] text-[#6b5240] space-y-1">
-          <p><strong>Conversie</strong> = aantal tickets ÷ aantal bezoekers × 100%.</p>
-          <p><strong>Gem. Bonbedrag</strong> = totale omzet ÷ aantal tickets.</p>
-          <p><strong>YTD vergelijking</strong> is t/m exact dezelfde datum vorig jaar ({dateLabel ? dateLabel.replace(String(currentYear), String(currentYear - 1)) : ''}).</p>
+          <p><strong>Conversie</strong> = tickets ÷ bezoekers × 100%. <strong>Gem. Bonbedrag</strong> = omzet ÷ tickets.</p>
+          <p><strong>YTD vergelijking</strong> is t/m exact {dateLabel} vs {dateLabel ? dateLabel.replace(String(currentYear), String(currentYear - 1)) : ''}.</p>
         </div>
       </div>
     </div>
