@@ -45,6 +45,7 @@ export default function BuyingDashboard() {
   var _d = _s([]), data = _d[0], setData = _d[1];
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _store = _s('all'), store = _store[0], setStore = _store[1];
+  var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = _s('all'), dept = _dept[0], setDept = _dept[1];
   var _vendor = _s('all'), vendor = _vendor[0], setVendor = _vendor[1];
   var _filter = _s('needs_order'), filter = _filter[0], setFilter = _filter[1];
@@ -88,7 +89,7 @@ export default function BuyingDashboard() {
           dept_code: r.dept_code, dept_name: r.dept_name,
           class_code: r.class_code, class_name: r.class_name,
           nos: r.nos === 'N', vendor: r.vendor_name || 'ONBEKEND',
-          vendor_code: r.vendor_code,
+          vendor_code: r.vendor_code, bum: r.bum || '',
           min_lt: parseFloat(r.min_lead_time) || 0,
           max_lt: parseFloat(r.max_lead_time) || 3,
           cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
@@ -161,11 +162,13 @@ export default function BuyingDashboard() {
 
     // Filter by dept
     if (dept !== 'all') list = list.filter(function(m) { return m.dept_code === dept; });
+    // Filter by BUM
+    if (selBum !== 'all') list = list.filter(function(m) { return m.bum === selBum; });
     // Filter by vendor
     if (vendor !== 'all') list = list.filter(function(m) { return m.vendor === vendor; });
 
     return list;
-  }, [data, store, dept, vendor, safetyPct]);
+  }, [data, store, dept, selBum, vendor, safetyPct]);
 
   /* Filter and sort */
   var displayed = useMemo(function() {
@@ -182,7 +185,9 @@ export default function BuyingDashboard() {
     return list;
   }, [proposals, filter, sortCol, sortDir]);
 
-  var depts = useMemo(function() { var s = {}; data.forEach(function(r) { s[r.dept_code] = r.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [data]);
+  var depts = useMemo(function() { var s = {}; data.forEach(function(r) { if (selBum !== 'all' && r.bum !== selBum) return; s[r.dept_code] = r.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [data, selBum]);
+  var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
+  var bums = useMemo(function() { var s = {}; data.forEach(function(r) { if (r.bum) s[r.bum] = true; }); var l = Object.keys(s); l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); }); return l; }, [data]);
   var vendors = useMemo(function() { var s = {}; proposals.forEach(function(p) { if (p.vendor) s[p.vendor] = true; }); return Object.keys(s).sort(); }, [proposals]);
 
   /* Totals */
@@ -226,15 +231,22 @@ export default function BuyingDashboard() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
           <div className="flex gap-1">
-            <Pill label="Alle" active={dept === 'all'} onClick={function() { setDept('all'); }} />
-            {depts.map(function(d) { return <Pill key={d[0]} label={d[0] + ' ' + d[1].replace(/^\d+\s*/, '')} active={dept === d[0]} onClick={function() { setDept(d[0]); }} />; })}
+            <Pill label="Alle" active={selBum === 'all'} onClick={function() { setSelBum('all'); setDept('all'); }} />
+            {bums.map(function(b) { return <Pill key={b} label={b} active={selBum === b} onClick={function() { setSelBum(b); setDept('all'); }} />; })}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
+          <select value={dept} onChange={function(e) { setDept(e.target.value); }} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[250px]">
+            <option value="all">Alle Afdelingen</option>
+            {depts.map(function(d) { return <option key={d[0]} value={d[0]}>{d[0] + ' — ' + d[1].replace(/^\d+\s*/, '')}</option>; })}
+          </select>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Vendor</span>
-          <select value={vendor} onChange={function(e) { setVendor(e.target.value); }} className="bg-white border border-[#e5ddd4] text-[13px] px-3 py-1.5 rounded-lg">
+          <select value={vendor} onChange={function(e) { setVendor(e.target.value); }} className="bg-white border border-[#e5ddd4] text-[13px] px-3 py-1.5 rounded-lg min-w-[250px]">
             <option value="all">Alle vendors</option>
             {vendors.map(function(v) { return <option key={v} value={v}>{v}</option>; })}
           </select>
