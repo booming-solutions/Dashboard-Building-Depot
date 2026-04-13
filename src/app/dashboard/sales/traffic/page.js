@@ -50,6 +50,7 @@ export default function TrafficDashboard() {
   var comboRef = useRef(null);
   var dowRef = useRef(null);
   var dowRef2 = useRef(null);
+  var keukenMonthRef = useRef(null);
   var chartsRef = useRef({});
 
   var supabase = createClient();
@@ -159,6 +160,21 @@ export default function TrafficDashboard() {
     return DAYS.map(function(d, i) { return { day: d, total: totals[i], avg: counts[i] ? Math.round(totals[i] / counts[i]) : 0, pct: total ? (totals[i] / total * 100) : 0 }; });
   }, [storeData, currentYear, tab]);
 
+  // KeukenDepot monthly data (only for BD tab)
+  var keukenMonthly = useMemo(function() {
+    if (tab !== 'bd') return { cy: [], ly: [] };
+    var map = {};
+    storeData.forEach(function(r) {
+      var parts = r.date.split('-');
+      var y = parseInt(parts[0]); var m = parseInt(parts[1]);
+      var key = y + '-' + String(m).padStart(2, '0');
+      if (!map[key]) map[key] = { year: y, month: m, visitors: 0 };
+      map[key].visitors += r.visitors_keuken || 0;
+    });
+    var all = Object.values(map).sort(function(a, b) { return (a.year * 100 + a.month) - (b.year * 100 + b.month); });
+    return { cy: all.filter(function(r) { return r.year === currentYear; }), ly: all.filter(function(r) { return r.year === currentYear - 1; }) };
+  }, [storeData, currentYear, tab]);
+
   var pctChg = function(a, b) { return b ? ((a - b) / Math.abs(b) * 100) : 0; };
 
   // Monthly chart data
@@ -216,6 +232,21 @@ export default function TrafficDashboard() {
       ] }, options: { responsive: true, maintainAspectRatio: false, plugins: co.plugins, scales: { x: { grid: { display: false } }, y: { position: 'left', ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } }, y1: { position: 'right', ticks: { callback: function(v) { return 'Cg ' + v; } }, grid: { display: false } } } } });
     }
 
+    // KeukenDepot monthly chart
+    if (keukenMonthRef.current && tab === 'bd') {
+      var kcV = [], klV = [];
+      for (var mk = 1; mk <= 12; mk++) {
+        var kcy = keukenMonthly.cy.find(function(r) { return r.month === mk; });
+        var kly = keukenMonthly.ly.find(function(r) { return r.month === mk; });
+        kcV.push(kcy ? kcy.visitors : null);
+        klV.push(kly ? kly.visitors : null);
+      }
+      chartsRef.current.km = new Chart(keukenMonthRef.current, { type: 'bar', data: { labels: labels, datasets: [
+        { label: currentYear + ' Bezoekers', data: kcV, backgroundColor: 'rgba(22,163,74,0.25)', borderColor: '#16a34a', borderWidth: 1, borderRadius: 4, order: 2 },
+        { label: (currentYear - 1) + ' Bezoekers', data: klV, type: 'line', borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 4, tension: 0.3, fill: false, order: 1 },
+      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(c.raw); } } } }) }) });
+    }
+
     // Day of week chart
     if (dowRef.current && dowData.some(function(d) { return d.total > 0; })) {
       chartsRef.current.dow = new Chart(dowRef.current, { type: 'bar', data: { labels: dowData.map(function(d) { return d.day; }), datasets: [
@@ -231,7 +262,7 @@ export default function TrafficDashboard() {
     }
 
     return function() { Object.values(chartsRef.current).forEach(function(c) { if (c) c.destroy(); }); };
-  }, [storeData, cyMonthly, lyMonthly, currentYear, dowData, dowKeuken, tab]);
+  }, [storeData, cyMonthly, lyMonthly, currentYear, dowData, dowKeuken, keukenMonthly, tab]);
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Bezoekers & conversie laden...</p></div>;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen traffic data beschikbaar.</p></div>;
@@ -261,11 +292,8 @@ export default function TrafficDashboard() {
         })}
       </div>
 
-      {!hasVisitors && (tab === 'bonaire') && (
-        <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 mb-5 text-[13px] text-amber-700">Bezoekersaantallen voor Bonaire zijn nog niet beschikbaar.</div>
-      )}
-
-      {/* KPI tiles */}
+      {/* KPI tiles - hide for multimart */}
+      {tab !== 'multimart' && (
       <div className={'grid grid-cols-2 gap-4 mb-5 ' + (hasVisitors ? 'md:grid-cols-5' : 'md:grid-cols-3')}>
         {hasVisitors && <KPI label="Bezoekers YTD" value={fmtK(cyYTD.visitors)} sub={'LY: ' + fmtK(lyYTD.visitors) + ' (' + (pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.visitors, lyYTD.visitors)) + ')'} subColor={pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '#16a34a' : '#dc2626'} icon="👥" />}
         <KPI label="Tickets YTD" value={fmtK(cyYTD.tickets)} sub={'LY: ' + fmtK(lyYTD.tickets) + ' (' + (pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.tickets, lyYTD.tickets)) + ')'} subColor={pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '#16a34a' : '#dc2626'} icon="🧾" />
@@ -273,36 +301,69 @@ export default function TrafficDashboard() {
         <KPI label="Gem. Bonbedrag" value={'Cg ' + fmt(Math.round(cyAvgYTD))} sub={'LY: Cg ' + fmt(Math.round(lyAvgYTD)) + ' (' + (pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '+' : '') + fmtP(pctChg(cyAvgYTD, lyAvgYTD)) + ')'} subColor={pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '#16a34a' : '#dc2626'} icon="💰" />
         <KPI label="Omzet YTD" value={fmtK(cyYTD.sales)} sub={'LY: ' + fmtK(lyYTD.sales) + ' (' + (pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.sales, lyYTD.sales)) + ')'} subColor={pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '#16a34a' : '#dc2626'} icon="📊" />
       </div>
+      )}
 
       {/* Visitor overview + day-of-week */}
-      {hasVisitors && (
-        <div className={'grid gap-4 mb-5 ' + (tab === 'bd' ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 lg:grid-cols-2')}>
-          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-            <h3 className="text-[15px] font-bold mb-2">{tab === 'bd' ? 'Building Depot' : tab === 'multimart' ? 'MultiMart' : 'Bonaire'} — Bezoekers {currentYear}</h3>
-            <p className="text-[12px] text-[#6b5240] mb-3">Verdeling over weekdagen</p>
-            <div style={{ height: '220px' }}><canvas ref={dowRef}></canvas></div>
-            <div className="mt-3 text-[10px] text-[#6b5240]">
-              {dowData.map(function(d) { return d.total > 0 ? (d.dayFull + ': gem. ' + fmt(d.avg) + '/dag') : null; }).filter(Boolean).join(' · ')}
+      {tab === 'bd' && hasVisitors && (
+        <div className="space-y-4 mb-5">
+          {/* Row 1: Building Depot */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+              <h3 className="text-[15px] font-bold mb-4">Building Depot — Bezoekers per maand</h3>
+              <div style={{ height: '250px' }}><canvas ref={visitorsRef}></canvas></div>
+            </div>
+            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+              <h3 className="text-[15px] font-bold mb-2">Building Depot — Verdeling per weekdag</h3>
+              <p className="text-[12px] text-[#6b5240] mb-3">{currentYear + ' — hover voor gemiddelde per dag'}</p>
+              <div style={{ height: '220px' }}><canvas ref={dowRef}></canvas></div>
             </div>
           </div>
-          {tab === 'bd' && dowKeuken && (
-            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-              <h3 className="text-[15px] font-bold mb-2">KeukenDepot — Bezoekers {currentYear}</h3>
-              <p className="text-[12px] text-[#6b5240] mb-3">Verdeling over weekdagen</p>
-              <div style={{ height: '220px' }}><canvas ref={dowRef2}></canvas></div>
-              <div className="mt-3 text-[10px] text-[#6b5240]">
-                {dowKeuken.map(function(d) { return d.total > 0 ? (DAYS_FULL[dowKeuken.indexOf(d)] + ': gem. ' + fmt(d.avg) + '/dag') : null; }).filter(Boolean).join(' · ')}
+          {/* Row 2: KeukenDepot */}
+          {dowKeuken && dowKeuken.some(function(d) { return d.total > 0; }) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+                <h3 className="text-[15px] font-bold mb-4">KeukenDepot — Bezoekers per maand</h3>
+                <div style={{ height: '250px' }}><canvas ref={keukenMonthRef}></canvas></div>
+              </div>
+              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+                <h3 className="text-[15px] font-bold mb-2">KeukenDepot — Verdeling per weekdag</h3>
+                <p className="text-[12px] text-[#6b5240] mb-3">{currentYear + ' — hover voor gemiddelde per dag'}</p>
+                <div style={{ height: '220px' }}><canvas ref={dowRef2}></canvas></div>
               </div>
             </div>
           )}
-          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-            <h3 className="text-[15px] font-bold mb-4">Bezoekers per maand</h3>
-            <div style={{ height: '250px' }}><canvas ref={visitorsRef}></canvas></div>
+        </div>
+      )}
+
+      {/* MultiMart: only visitors, no tickets/bonbedrag */}
+      {tab === 'multimart' && (
+        <div className="space-y-4 mb-5">
+          {hasVisitors && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+                <h3 className="text-[15px] font-bold mb-4">MultiMart — Bezoekers per maand</h3>
+                <div style={{ height: '250px' }}><canvas ref={visitorsRef}></canvas></div>
+              </div>
+              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+                <h3 className="text-[15px] font-bold mb-2">MultiMart — Verdeling per weekdag</h3>
+                <p className="text-[12px] text-[#6b5240] mb-3">{currentYear + ' — hover voor gemiddelde per dag'}</p>
+                <div style={{ height: '220px' }}><canvas ref={dowRef}></canvas></div>
+              </div>
+            </div>
+          )}
+          <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 text-[13px] text-amber-700">
+            Voor MultiMart zijn op dit moment alleen bezoekersaantallen beschikbaar. Aantal facturen en bonbedragen zijn nog niet gekoppeld.
           </div>
         </div>
       )}
 
-      {/* Charts */}
+      {/* Bonaire: no visitors */}
+      {tab === 'bonaire' && !hasVisitors && (
+        <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 mb-5 text-[13px] text-amber-700">Bezoekersaantallen voor Bonaire zijn nog niet beschikbaar.</div>
+      )}
+
+      {/* Charts - only for BD and Bonaire */}
+      {tab !== 'multimart' && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
         {hasVisitors && <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
           <h3 className="text-[15px] font-bold mb-4">Conversie % (tickets / bezoekers)</h3>
@@ -317,8 +378,10 @@ export default function TrafficDashboard() {
           <div style={{ height: '280px' }}><canvas ref={comboRef}></canvas></div>
         </div>
       </div>
+      )}
 
-      {/* Monthly table — newest first */}
+      {/* Monthly table — newest first, not for multimart */}
+      {tab !== 'multimart' && (
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
         <div className="flex items-center justify-between p-4 border-b border-[#e5ddd4]">
           <h3 className="text-[15px] font-bold">Maandelijks Overzicht</h3>
@@ -361,6 +424,7 @@ export default function TrafficDashboard() {
           </table>
         </div>
       </div>
+      )}
 
       {/* Legend */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
