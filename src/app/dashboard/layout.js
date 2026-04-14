@@ -11,7 +11,7 @@ import { createClient } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 
-const APP_VERSION = 'v3.27.03';
+const APP_VERSION = 'v3.27.02';
 
 function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
   const isAnyActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
@@ -176,7 +176,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/buying': 'inventory_buying',
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
-    '/dashboard/hr/salary': 'hr_salary',
+    '/dashboard/hr/payroll': 'hr_payroll',
   };
 
   const omzetItemsAll = [
@@ -190,14 +190,14 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden' },
   ];
-  const personnelItemsAll = [
-    { href: '/dashboard/hr/salary', label: 'Salariskosten' },
+  const hrItemsAll = [
+    { href: '/dashboard/hr/payroll', label: 'Salariskosten' },
   ];
 
   // Filter navigation items based on allowed_reports
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
-  const personnelItems = personnelItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
+  const hrItems = hrItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
@@ -220,7 +220,7 @@ export default function DashboardLayout({ children }) {
             </Link>
             {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {personnelItems.length > 0 && <NavDropdown icon="👥" label="Personeel" items={personnelItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             <Link href="/dashboard/reports" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === '/dashboard/reports' ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
               <span className="text-base flex-shrink-0">📋</span>{sidebarOpen && <span>Rapportages</span>}
             </Link>

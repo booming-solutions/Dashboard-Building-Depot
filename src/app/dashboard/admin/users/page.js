@@ -17,13 +17,14 @@ var REPORTS = [
   { id: 'inventory_buying', label: 'Inkoopvoorstel', group: 'Voorraad', icon: '🛒' },
   { id: 'inventory_negative', label: 'Negatieve Voorraad', group: 'Voorraad', icon: '⚠️' },
   { id: 'inventory_health', label: 'Gezondheid Voorraden', group: 'Voorraad', icon: '🏥' },
+  { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
 ];
 
 var ROLE_PRESETS = {
   admin: { label: 'Admin — Volledige toegang', reports: REPORTS.map(function(r) { return r.id; }) },
-  manager: { label: 'Manager — Dashboard + exports', reports: ['sales', 'sales_index', 'inventory_budget', 'inventory_buying', 'inventory_negative', 'inventory_health'] },
+  manager: { label: 'Manager — Dashboard + exports', reports: ['sales', 'sales_index', 'sales_traffic', 'inventory_budget', 'inventory_buying', 'inventory_negative', 'inventory_health', 'hr_payroll'] },
   buyer: { label: 'Buyer — Inkoop & voorraad', reports: ['inventory_budget', 'inventory_buying', 'inventory_negative', 'inventory_health'] },
-  finance: { label: 'Finance — Omzet & marge', reports: ['sales', 'sales_index'] },
+  finance: { label: 'Finance — Omzet & marge', reports: ['sales', 'sales_index', 'sales_traffic', 'hr_payroll'] },
   viewer: { label: 'Viewer — Alleen basis', reports: ['sales'] },
 };
 
