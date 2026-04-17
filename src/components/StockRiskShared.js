@@ -165,10 +165,16 @@ export default function StockRiskShared({ bumFilter }) {
       // Value at risk (inventory value of items that will run out)
       m.value_at_risk = (m.risk === 'critical' || m.risk === 'urgent') ? m.inv_value : 0;
 
-      // Suggested order qty
-      var target = m.avg_monthly * Math.max(m.max_lt * 1.5, 3); // Target: 1.5x lead time or 3 months min
-      m.suggested_qty = Math.max(0, Math.round(target - m.available));
-      m.suggested_value = m.suggested_qty * m.cost;
+      // Suggested order qty - only for items at risk
+      if (m.risk === 'critical' || m.risk === 'urgent') {
+        // Target: enough to cover until next delivery (lead time) + 1 month buffer
+        var target = m.avg_monthly * (m.max_lt + 1);
+        m.suggested_qty = Math.max(0, Math.round(target - m.available));
+        m.suggested_value = m.suggested_qty * m.cost;
+      } else {
+        m.suggested_qty = 0;
+        m.suggested_value = 0;
+      }
     });
 
     // Only items with sales history (avg > 0)
