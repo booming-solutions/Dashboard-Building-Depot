@@ -13,6 +13,46 @@ import Link from 'next/link';
 
 const APP_VERSION = 'v3.27.02';
 
+function NavSubItem({ item, pathname, sidebarOpen }) {
+  const hasChildren = item.children && item.children.length > 0;
+  const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
+  const isSelfActive = pathname === item.href && !isChildActive;
+  const isActive = isSelfActive || isChildActive;
+  const [subOpen, setSubOpen] = useState(isChildActive);
+  useEffect(() => { if (isChildActive) setSubOpen(true); }, [isChildActive]);
+
+  if (!hasChildren) {
+    return (
+      <Link href={item.href}
+        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
+        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: pathname === item.href ? '#1B3A5C' : 'transparent', border: pathname === item.href ? 'none' : '1px solid rgba(27,58,92,0.25)' }} />
+        {item.label}
+      </Link>
+    );
+  }
+
+  return (
+    <div>
+      <button onClick={() => setSubOpen(!subOpen)}
+        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all w-full ${isActive ? 'text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
+        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isActive ? '#1B3A5C' : 'transparent', border: isActive ? 'none' : '1px solid rgba(27,58,92,0.25)' }} />
+        <span className="flex-1 text-left">{item.label}</span>
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className={`transition-transform duration-200 ${subOpen ? 'rotate-180' : ''}`}><path d="M3 4.5L6 7.5L9 4.5" /></svg>
+      </button>
+      {subOpen && (
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-[#1B3A5C]/10 pl-2">
+          {item.children.map(child => (
+            <Link key={child.href} href={child.href}
+              className={`flex items-center gap-2 px-2 py-1.5 rounded text-[12px] transition-all ${pathname === child.href ? 'text-[#1B3A5C] font-semibold bg-[#1B3A5C]/5' : 'text-[#1B3A5C]/40 hover:text-[#1B3A5C] hover:bg-white/30'}`}>
+              {child.label}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
   const isAnyActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
   const [open, setOpen] = useState(isAnyActive);
@@ -24,11 +64,21 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
         <div className={`flex items-center justify-center px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${isAnyActive ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
           <span className="text-base flex-shrink-0">{icon}</span>
         </div>
-        <div className="absolute left-full top-0 ml-2 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[200px] hidden group-hover:block z-50">
+        <div className="absolute left-full top-0 ml-2 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[220px] hidden group-hover:block z-50">
           <p className="px-3 py-1.5 text-[10px] font-bold text-[#1B3A5C]/40 uppercase tracking-wider">{label}</p>
-          {items.map(item => (
-            <Link key={item.href} href={item.href} className={`block px-3 py-2 text-sm transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{item.label}</Link>
-          ))}
+          {items.map(item => {
+            if (item.children) {
+              return (
+                <div key={item.href}>
+                  <p className="px-3 pt-2 pb-1 text-[9px] font-bold text-[#1B3A5C]/30 uppercase">{item.label}</p>
+                  {item.children.map(child => (
+                    <Link key={child.href} href={child.href} className={`block px-4 py-1.5 text-[13px] transition-all ${pathname === child.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-500 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{child.label}</Link>
+                  ))}
+                </div>
+              );
+            }
+            return <Link key={item.href} href={item.href} className={`block px-3 py-2 text-sm transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{item.label}</Link>;
+          })}
         </div>
       </div>
     );
@@ -45,11 +95,7 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
       {open && (
         <div className="ml-5 mt-0.5 space-y-0.5 border-l-2 border-[#1B3A5C]/10 pl-3">
           {items.map(item => (
-            <Link key={item.href} href={item.href}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: pathname === item.href ? '#1B3A5C' : 'transparent', border: pathname === item.href ? 'none' : '1px solid rgba(27,58,92,0.25)' }} />
-              {item.label}
-            </Link>
+            <NavSubItem key={item.href} item={item} pathname={pathname} sidebarOpen={sidebarOpen} />
           ))}
         </div>
       )}
@@ -186,9 +232,23 @@ export default function DashboardLayout({ children }) {
   ];
   const voorraadItemsAll = [
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
-    { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel' },
+    { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel', children: [
+      { href: '/dashboard/inventory/buying', label: 'Totaaloverzicht' },
+      { href: '/dashboard/inventory/buying/pascal', label: 'PASCAL' },
+      { href: '/dashboard/inventory/buying/henk', label: 'HENK' },
+      { href: '/dashboard/inventory/buying/john', label: 'JOHN' },
+      { href: '/dashboard/inventory/buying/daniel', label: 'DANIEL' },
+      { href: '/dashboard/inventory/buying/gijs', label: 'GIJS' },
+    ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
-    { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden' },
+    { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
+      { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
+      { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
+      { href: '/dashboard/inventory/health/henk', label: 'HENK' },
+      { href: '/dashboard/inventory/health/john', label: 'JOHN' },
+      { href: '/dashboard/inventory/health/daniel', label: 'DANIEL' },
+      { href: '/dashboard/inventory/health/gijs', label: 'GIJS' },
+    ]},
   ];
   const hrItemsAll = [
     { href: '/dashboard/hr/payroll', label: 'Salariskosten' },
