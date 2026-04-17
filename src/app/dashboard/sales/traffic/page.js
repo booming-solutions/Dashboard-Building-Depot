@@ -87,6 +87,19 @@ export default function TrafficDashboard() {
     return storeData.reduce(function(max, r) { return r.date > max ? r.date : max; }, storeData[0].date);
   }, [storeData]);
 
+  // Separate "last updated" dates for visitors vs tickets
+  var lastVisitorDate = useMemo(function() {
+    var withVisitors = storeData.filter(function(r) { return (getVisitors(r)) > 0; });
+    if (!withVisitors.length) return null;
+    return withVisitors.reduce(function(max, r) { return r.date > max ? r.date : max; }, withVisitors[0].date);
+  }, [storeData, tab]);
+
+  var lastTicketDate = useMemo(function() {
+    var withTickets = storeData.filter(function(r) { return (r.tickets || 0) > 0; });
+    if (!withTickets.length) return null;
+    return withTickets.reduce(function(max, r) { return r.date > max ? r.date : max; }, withTickets[0].date);
+  }, [storeData]);
+
   var currentYear = useMemo(function() { return lastDate ? parseInt(lastDate.split('-')[0]) : 2026; }, [lastDate]);
 
   // Aggregate daily → monthly with correct visitor source
@@ -272,7 +285,8 @@ export default function TrafficDashboard() {
   var cyAvgYTD = cyYTD.tickets ? (cyYTD.sales / cyYTD.tickets) : 0;
   var lyAvgYTD = lyYTD.tickets ? (lyYTD.sales / lyYTD.tickets) : 0;
   var hasVisitors = cyYTD.visitors > 0;
-  var dateLabel = lastDate ? parseInt(lastDate.split('-')[2]) + ' ' + MN[parseInt(lastDate.split('-')[1]) - 1] + ' ' + lastDate.split('-')[0] : '';
+  var fmtDate = function(d) { if (!d) return '—'; var p = d.split('-'); return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + ' ' + p[0]; };
+  var dateLabel = fmtDate(lastDate);
   var tabNames = { bd: 'Building Depot', multimart: 'MultiMart', bonaire: 'Bonaire' };
 
   return (
@@ -281,7 +295,11 @@ export default function TrafficDashboard() {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Bezoekers & Conversie</h1>
-          <p className="text-[13px] text-[#6b5240]">{tabNames[tab] + ' — data t/m ' + dateLabel + ' vs ' + (currentYear - 1)}</p>
+          <p className="text-[13px] text-[#6b5240]">{tabNames[tab] + ' vs ' + (currentYear - 1)}</p>
+          <div className="flex gap-4 mt-1">
+            <span className="text-[11px] text-[#a08a74]">{'Bezoekers t/m ' + fmtDate(lastVisitorDate)}</span>
+            <span className="text-[11px] text-[#a08a74]">{'Facturen & bonbedrag t/m ' + fmtDate(lastTicketDate)}</span>
+          </div>
         </div>
       </div>
 
