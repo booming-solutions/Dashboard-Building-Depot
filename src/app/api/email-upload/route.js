@@ -291,8 +291,8 @@ async function processTickets(json) {
     var sales = parseFloat(row[findCol(keys, ['net sales'])] || 0);
     if (!store || !dateVal) return;
 
-    // Map store: digit stores = Curacao (CUR), letter stores = Bonaire (BON)
-    var storeKey = /^\d+$/.test(store) ? 'CUR' : 'BON';
+    // Map store: digit stores = Curacao (1), letter stores = Bonaire (B)
+    var storeKey = /^\d+$/.test(store) ? '1' : 'B';
     var key = storeKey + '|' + dateVal;
 
     if (!agg[key]) agg[key] = { store_number: storeKey, date: dateVal, tickets: 0, total_sales: 0 };
