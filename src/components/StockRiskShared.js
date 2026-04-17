@@ -40,14 +40,23 @@ function CoverBar({ months, maxLT }) {
   );
 }
 
-/* Mini sparkline */
+/* Mini sparkline with hover tooltips */
 function Spark({ sales }) {
+  var MN2 = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
   var max = Math.max.apply(null, sales.concat([1]));
+  // Build labels: sales is chronological (oldest first = index 0)
+  // 12 months back from now: index 0 = 12 months ago, index 11 = current month
+  var now = new Date();
+  var labels = sales.map(function(v, i) {
+    var monthsBack = sales.length - 1 - i;
+    var d = new Date(now.getFullYear(), now.getMonth() - monthsBack, 1);
+    return MN2[d.getMonth()] + " '" + String(d.getFullYear()).slice(2);
+  });
   return (
     <div className="flex items-end gap-px h-[18px]">
       {sales.map(function(v, i) {
         var h = max > 0 ? Math.max(1, (v / max) * 18) : 1;
-        return <div key={i} className="w-[4px] rounded-t-sm" style={{ height: h + 'px', backgroundColor: v > 0 ? '#E84E1B' : '#e5ddd4' }}></div>;
+        return <div key={i} className="w-[4px] rounded-t-sm cursor-default" style={{ height: h + 'px', backgroundColor: v > 0 ? '#E84E1B' : '#e5ddd4' }} title={labels[i] + ': ' + fmt(Math.round(v))}></div>;
       })}
     </div>
   );
@@ -64,6 +73,7 @@ export default function StockRiskShared({ bumFilter }) {
   var _vendor = _s('all'), vendor = _vendor[0], setVendor = _vendor[1];
   var _filter = _s('urgent'), filter = _filter[0], setFilter = _filter[1];
   var _nos = _s('all'), nosFilter = _nos[0], setNosFilter = _nos[1];
+  var _qoh = _s('all'), qohFilter = _qoh[0], setQohFilter = _qoh[1];
   var _sort = _s('months_cover'), sortCol = _sort[0], setSortCol = _sort[1];
   var _dir = _s('asc'), sortDir = _dir[0], setSortDir = _dir[1];
   var _rows = _s(100), tableRows = _rows[0], setTableRows = _rows[1];
@@ -198,6 +208,9 @@ export default function StockRiskShared({ bumFilter }) {
     if (nosFilter === 'yes') list = list.filter(function(m) { return m.nos; });
     else if (nosFilter === 'no') list = list.filter(function(m) { return !m.nos; });
 
+    // QOH filter
+    if (qohFilter === 'positive') list = list.filter(function(m) { return m.qoh > 0; });
+
     // Dept filter
     if (dept !== 'all') list = list.filter(function(m) { return m.dept_code === dept; });
 
@@ -222,20 +235,21 @@ export default function StockRiskShared({ bumFilter }) {
     });
 
     return list;
-  }, [items, filter, nosFilter, dept, vendor, search, sortCol, sortDir]);
+  }, [items, filter, nosFilter, qohFilter, dept, vendor, search, sortCol, sortDir]);
 
   var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
   var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
 
-  /* KPI totals - respond to NOS, dept, vendor filters */
+  /* KPI totals - respond to NOS, dept, vendor, QOH filters */
   var filteredBase = useMemo(function() {
     var src = items;
     if (nosFilter === 'yes') src = src.filter(function(m) { return m.nos; });
     else if (nosFilter === 'no') src = src.filter(function(m) { return !m.nos; });
+    if (qohFilter === 'positive') src = src.filter(function(m) { return m.qoh > 0; });
     if (dept !== 'all') src = src.filter(function(m) { return m.dept_code === dept; });
     if (vendor !== 'all') src = src.filter(function(m) { return m.vendor === vendor; });
     return src;
-  }, [items, nosFilter, dept, vendor]);
+  }, [items, nosFilter, qohFilter, dept, vendor]);
 
   var totals = useMemo(function() {
     var src = filteredBase;
@@ -324,6 +338,11 @@ export default function StockRiskShared({ bumFilter }) {
             <Pill label="Ja" active={nosFilter === 'yes'} onClick={function() { setNosFilter('yes'); }} />
             <Pill label="Nee" active={nosFilter === 'no'} onClick={function() { setNosFilter('no'); }} />
           </div>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-4">QOH</span>
+          <div className="flex gap-1">
+            <Pill label="Alle" active={qohFilter === 'all'} onClick={function() { setQohFilter('all'); }} />
+            <Pill label="> 0" active={qohFilter === 'positive'} onClick={function() { setQohFilter('positive'); }} />
+          </div>
           <input value={search} onChange={function(e) { setSearch(e.target.value); }} placeholder="Zoek item..." className="px-3 py-1.5 border border-[#e5ddd4] rounded-lg text-[13px] w-[180px] ml-auto" />
         </div>
       </div>
@@ -332,8 +351,8 @@ export default function StockRiskShared({ bumFilter }) {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
         {[
           { label: 'Kritiek', value: fmt(totals.critical), sub: '< 1 maand dekking', color: totals.critical > 0 ? '#dc2626' : '#16a34a' },
-          { label: 'Urgent', value: fmt(totals.urgent), sub: '< lead time dekking', color: totals.urgent > 0 ? '#f97316' : '#16a34a' },
-          { label: 'Aandacht', value: fmt(totals.watch), sub: '< 1.5× lead time', color: totals.watch > 0 ? '#d97706' : '#16a34a' },
+          { label: 'Urgent', value: fmt(totals.urgent), sub: '< max lead time dekking', color: totals.urgent > 0 ? '#f97316' : '#16a34a' },
+          { label: 'Aandacht', value: fmt(totals.watch), sub: '< 1.5× max lead time', color: totals.watch > 0 ? '#d97706' : '#16a34a' },
           { label: 'NOS at Risk', value: fmt(totals.nos_at_risk), sub: 'kritiek + urgent', color: totals.nos_at_risk > 0 ? '#dc2626' : '#16a34a' },
           { label: 'Inkoopwaarde Nodig', value: fmtC(totals.suggested_value), sub: 'geschatte bestelling', color: '#1B3A5C' },
         ].map(function(k, i) {
@@ -429,7 +448,7 @@ export default function StockRiskShared({ bumFilter }) {
                   ['Gem/mnd', 'avg_monthly', 'text-right'],
                   ['Actief', 'active_months', 'text-right'],
                   ['Trend', '', 'text-center border-r border-[#e5ddd4]'],
-                  ['Lead Time', 'max_lt', 'text-right'],
+                  ['Max Lead Time', 'max_lt', 'text-right'],
                   ['Bestel qty', 'suggested_qty', 'text-right'],
                   ['Waarde', 'suggested_value', 'text-right'],
                 ].map(function(h) {
@@ -475,11 +494,11 @@ export default function StockRiskShared({ bumFilter }) {
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
         <div className="flex flex-wrap gap-5 text-[10px] text-[#6b5240]">
           <span><b>Dekking</b> = (QOH + QOO) ÷ gem. maandverkoop</span>
-          <span><b>Lead Time</b> = max levertijd leverancier</span>
-          <span><b>Verticale lijn</b> in dekkingsbalk = lead time drempel</span>
+          <span><b>Max Lead Time</b> = maximale levertijd leverancier</span>
+          <span><b>Verticale lijn</b> in dekkingsbalk = max lead time drempel</span>
           <span><RiskBadge level="critical" /> &lt;1 mnd dekking</span>
-          <span><RiskBadge level="urgent" /> dekking &lt; lead time</span>
-          <span><RiskBadge level="watch" /> dekking &lt; 1.5× lead time</span>
+          <span><RiskBadge level="urgent" /> dekking &lt; max lead time</span>
+          <span><RiskBadge level="watch" /> dekking &lt; 1.5× max lead time</span>
           <span className="text-[8px] px-1 py-0.5 rounded bg-blue-50 text-blue-600 font-bold">NOS</span> <span>Never Out of Stock items</span>
         </div>
       </div>
