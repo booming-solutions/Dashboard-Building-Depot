@@ -196,26 +196,13 @@ export default function StockRiskShared({ bumFilter }) {
 
   /* Apply filters */
   var displayed = useMemo(function() {
-    var list = items;
+    var list = filteredBase;
 
     // Filter by risk level
     if (filter === 'critical') list = list.filter(function(m) { return m.risk === 'critical'; });
     else if (filter === 'urgent') list = list.filter(function(m) { return m.risk === 'critical' || m.risk === 'urgent'; });
     else if (filter === 'watch') list = list.filter(function(m) { return m.risk !== 'ok'; });
     // 'all' shows everything
-
-    // NOS filter
-    if (nosFilter === 'yes') list = list.filter(function(m) { return m.nos; });
-    else if (nosFilter === 'no') list = list.filter(function(m) { return !m.nos; });
-
-    // QOH filter
-    if (qohFilter === 'positive') list = list.filter(function(m) { return m.qoh > 0; });
-
-    // Dept filter
-    if (dept !== 'all') list = list.filter(function(m) { return m.dept_code === dept; });
-
-    // Vendor filter
-    if (vendor !== 'all') list = list.filter(function(m) { return m.vendor === vendor; });
 
     // Search
     if (search) {
@@ -235,7 +222,7 @@ export default function StockRiskShared({ bumFilter }) {
     });
 
     return list;
-  }, [items, filter, nosFilter, qohFilter, dept, vendor, search, sortCol, sortDir]);
+  }, [filteredBase, filter, search, sortCol, sortDir]);
 
   var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
   var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
@@ -428,16 +415,17 @@ export default function StockRiskShared({ bumFilter }) {
       {/* Main table */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1300px' }}>
+          <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1400px' }}>
             <thead>
               <tr className="bg-[#1B3A5C]">
-                <th colSpan={3} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
+                <th colSpan={4} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
                 <th colSpan={4} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Verkoop</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2">Actie</th>
               </tr>
               <tr className="bg-[#f0ebe5]">
                 {[
+                  ['Dept', 'dept_code', 'text-left min-w-[50px]'],
                   ['', 'item', 'text-left min-w-[80px]'],
                   ['Omschrijving', 'desc', 'text-left min-w-[180px]'],
                   ['Status', 'risk', 'text-center border-r border-[#e5ddd4]'],
@@ -458,14 +446,35 @@ export default function StockRiskShared({ bumFilter }) {
               </tr>
             </thead>
             <tbody>
+              {/* Totals row */}
+              {(function() {
+                var tQoh = 0, tQoo = 0, tQty = 0, tVal = 0;
+                displayed.forEach(function(m) { tQoh += m.qoh; tQoo += m.qoo; tQty += m.suggested_qty; tVal += m.suggested_value; });
+                return (
+                  <tr className="bg-[#faf7f4] sticky top-0 z-10">
+                    <td colSpan={4} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">{'TOTAAL (' + displayed.length + ' items)'}</td>
+                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoh))}</td>
+                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoo))}</td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
+                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: '#E84E1B' }}>{fmt(Math.round(tQty))}</td>
+                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: '#E84E1B' }}>{fmtC(tVal)}</td>
+                  </tr>
+                );
+              })()}
               {displayed.length === 0 && (
-                <tr><td colSpan={13} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
+                <tr><td colSpan={14} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
               )}
               {displayed.slice(0, tableRows).map(function(m, i) {
                 var bg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
                 var coverColor = m.months_cover < 1 ? '#dc2626' : m.months_cover < m.max_lt ? '#f97316' : m.months_cover < m.max_lt * 1.5 ? '#d97706' : '#16a34a';
                 return (
                   <tr key={m.item} className={bg + ' hover:bg-[#faf5f0]'}>
+                    <td className="p-1.5 text-[10px] font-mono text-[#6b5240] border-b border-[#f0ebe5]">{m.dept_code}</td>
                     <td className="p-1.5 text-[11px] font-mono text-[#6b5240] border-b border-[#f0ebe5]">{m.item}</td>
                     <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] truncate max-w-[200px]" title={m.desc}>
                       {m.desc}
@@ -482,6 +491,7 @@ export default function StockRiskShared({ bumFilter }) {
                     <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5]">{m.max_lt > 0 ? m.max_lt + 'm' : '-'}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-bold" style={{ color: m.suggested_qty > 0 ? '#E84E1B' : '#16a34a' }}>{m.suggested_qty > 0 ? fmt(m.suggested_qty) : '-'}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-bold" style={{ color: m.suggested_value > 0 ? '#E84E1B' : '#1a0a04' }}>{m.suggested_value > 0 ? fmtC(m.suggested_value) : '-'}</td>
+                  </tr>
                   </tr>
                 );
               })}
