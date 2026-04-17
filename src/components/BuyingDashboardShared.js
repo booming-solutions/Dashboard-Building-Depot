@@ -98,7 +98,6 @@ export default function BuyingDashboardShared({ bumFilter }) {
           vendor_code: r.vendor_code, bum: r.bum || '',
           min_lt: parseFloat(r.min_lead_time) || 0,
           max_lt: parseFloat(r.max_lead_time) || 3,
-          cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
           qoh: 0, qc: 0, qa: 0, qoo: 0, inv_value: 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
         };
@@ -117,6 +116,9 @@ export default function BuyingDashboardShared({ bumFilter }) {
     var list = Object.values(map);
 
     list.forEach(function(m) {
+      // Unit cost = total inventory value / qty on hand
+      m.cost = m.qoh > 0 ? m.inv_value / m.qoh : 0;
+
       var salesChrono = m.sales.slice().reverse();
       m.salesChrono = salesChrono;
       var salesLabels = [];
