@@ -63,7 +63,7 @@ export default function StockRiskShared({ bumFilter }) {
   var _dept = _s('all'), dept = _dept[0], setDept = _dept[1];
   var _vendor = _s('all'), vendor = _vendor[0], setVendor = _vendor[1];
   var _filter = _s('urgent'), filter = _filter[0], setFilter = _filter[1];
-  var _nos = _s(false), nosOnly = _nos[0], setNosOnly = _nos[1];
+  var _nos = _s('all'), nosFilter = _nos[0], setNosFilter = _nos[1];
   var _sort = _s('months_cover'), sortCol = _sort[0], setSortCol = _sort[1];
   var _dir = _s('asc'), sortDir = _dir[0], setSortDir = _dir[1];
   var _rows = _s(100), tableRows = _rows[0], setTableRows = _rows[1];
@@ -188,7 +188,8 @@ export default function StockRiskShared({ bumFilter }) {
     // 'all' shows everything
 
     // NOS filter
-    if (nosOnly) list = list.filter(function(m) { return m.nos; });
+    if (nosFilter === 'yes') list = list.filter(function(m) { return m.nos; });
+    else if (nosFilter === 'no') list = list.filter(function(m) { return !m.nos; });
 
     // Dept filter
     if (dept !== 'all') list = list.filter(function(m) { return m.dept_code === dept; });
@@ -214,20 +215,25 @@ export default function StockRiskShared({ bumFilter }) {
     });
 
     return list;
-  }, [items, filter, nosOnly, dept, vendor, search, sortCol, sortDir]);
+  }, [items, filter, nosFilter, dept, vendor, search, sortCol, sortDir]);
 
   var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
   var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
 
-  /* KPI totals */
+  /* KPI totals - respond to NOS filter */
   var totals = useMemo(function() {
-    var critical = items.filter(function(m) { return m.risk === 'critical'; });
-    var urgent = items.filter(function(m) { return m.risk === 'urgent'; });
-    var watch = items.filter(function(m) { return m.risk === 'watch'; });
-    var nosCritical = items.filter(function(m) { return m.nos && (m.risk === 'critical' || m.risk === 'urgent'); });
+    var src = items;
+    if (nosFilter === 'yes') src = items.filter(function(m) { return m.nos; });
+    else if (nosFilter === 'no') src = items.filter(function(m) { return !m.nos; });
+    
+    var critical = src.filter(function(m) { return m.risk === 'critical'; });
+    var urgent = src.filter(function(m) { return m.risk === 'urgent'; });
+    var watch = src.filter(function(m) { return m.risk === 'watch'; });
+    var nosCritical = src.filter(function(m) { return m.nos && (m.risk === 'critical' || m.risk === 'urgent'); });
     var valueAtRisk = critical.concat(urgent).reduce(function(s, m) { return s + m.inv_value; }, 0);
     var suggestedValue = critical.concat(urgent).reduce(function(s, m) { return s + m.suggested_value; }, 0);
     return {
+      total_items: src.length,
       critical: critical.length,
       urgent: urgent.length,
       watch: watch.length,
@@ -236,12 +242,16 @@ export default function StockRiskShared({ bumFilter }) {
       value_at_risk: valueAtRisk,
       suggested_value: suggestedValue,
     };
-  }, [items]);
+  }, [items, nosFilter]);
 
   /* Department risk summary */
   var deptRisk = useMemo(function() {
+    var src = items;
+    if (nosFilter === 'yes') src = items.filter(function(m) { return m.nos; });
+    else if (nosFilter === 'no') src = items.filter(function(m) { return !m.nos; });
+    
     var map = {};
-    items.forEach(function(m) {
+    src.forEach(function(m) {
       var dc = m.dept_code;
       if (!map[dc]) map[dc] = { code: dc, name: m.dept_name, bum: m.bum, total: 0, critical: 0, urgent: 0, watch: 0, ok: 0, nos_risk: 0, value_at_risk: 0 };
       map[dc].total++;
@@ -250,7 +260,7 @@ export default function StockRiskShared({ bumFilter }) {
       if (m.risk === 'critical' || m.risk === 'urgent') map[dc].value_at_risk += m.inv_value;
     });
     return Object.values(map).sort(function(a, b) { return (b.critical + b.urgent) - (a.critical + a.urgent); });
-  }, [items]);
+  }, [items, nosFilter]);
 
   function toggleSort(col) { if (sortCol === col) setSortDir(function(d) { return d === 'desc' ? 'asc' : 'desc'; }); else { setSortCol(col); setSortDir(col === 'months_cover' || col === 'stockout_months' ? 'asc' : 'desc'); } }
   var arrow = function(col) { return sortCol === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''; };
@@ -300,7 +310,11 @@ export default function StockRiskShared({ bumFilter }) {
             {vendors.map(function(v) { return <option key={v} value={v}>{v}</option>; })}
           </select>
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-4">NOS</span>
-          <Pill label={nosOnly ? 'NOS actief ✓' : 'Alleen NOS'} active={nosOnly} onClick={function() { setNosOnly(!nosOnly); }} />
+          <div className="flex gap-1">
+            <Pill label="Alle" active={nosFilter === 'all'} onClick={function() { setNosFilter('all'); }} />
+            <Pill label="Ja" active={nosFilter === 'yes'} onClick={function() { setNosFilter('yes'); }} />
+            <Pill label="Nee" active={nosFilter === 'no'} onClick={function() { setNosFilter('no'); }} />
+          </div>
           <input value={search} onChange={function(e) { setSearch(e.target.value); }} placeholder="Zoek item..." className="px-3 py-1.5 border border-[#e5ddd4] rounded-lg text-[13px] w-[180px] ml-auto" />
         </div>
       </div>
@@ -369,7 +383,7 @@ export default function StockRiskShared({ bumFilter }) {
           ['critical', 'Kritiek (' + totals.critical + ')'],
           ['urgent', 'Kritiek + Urgent (' + (totals.critical + totals.urgent) + ')'],
           ['watch', 'Alle risico (' + (totals.critical + totals.urgent + totals.watch) + ')'],
-          ['all', 'Alle items (' + items.length + ')'],
+          ['all', 'Alle items (' + totals.total_items + ')'],
         ].map(function(item) {
           return <button key={item[0]} onClick={function() { setFilter(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (filter === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
         })}
