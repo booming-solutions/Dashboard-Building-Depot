@@ -66,7 +66,7 @@ export default function InventoryDashboard() {
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _vw = _s('overview'), view = _vw[0], setView = _vw[1];
   // Single unified filter state
-  var _store = _s('all'), store = _store[0], setStore = _store[1];
+  var _store = _s('1'), store = _store[0], setStore = _store[1];
   var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = _s('__total__'), selDept = _dept[0], setSelDept = _dept[1];
   var trendRef = useRef(null);
@@ -291,10 +291,10 @@ export default function InventoryDashboard() {
       {/* KPI tiles — react to all filters */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
         {[
-          { label: 'Budget Voorraad', value: isBonaire ? 'n.v.t.' : fmtK(totals.budget), tooltip: isBonaire ? '' : fmt(Math.round(totals.budget)) },
+          { label: 'Budget Voorraad', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtK(totals.budget), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.budget)) },
           { label: 'Actuele Voorraad', value: fmtK(totals.actual), tooltip: fmt(Math.round(totals.actual)) },
-          { label: 'Verschil', value: isBonaire ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: isBonaire ? undefined : pctColor(totals.pct), tooltip: isBonaire ? '' : fmt(Math.round(totals.diff)) },
-          { label: '% vs Budget', value: isBonaire ? 'n.v.t.' : fmtP(totals.pct), color: isBonaire ? undefined : pctColor(totals.pct) },
+          { label: 'Verschil', value: (isBonaire || isTotaal) ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.diff)) },
+          { label: '% vs Budget', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtP(totals.pct), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct) },
         ].map(function(k, i) {
           return (
             <div key={i} className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm" title={k.tooltip || ''}>
@@ -308,33 +308,37 @@ export default function InventoryDashboard() {
       </div>
 
       {/* ═══ OVERVIEW TABLE ═══ */}
-      {view === 'overview' && (
+      {view === 'overview' && (function() {
+        var noBudget = isBonaire || isTotaal;
+        var dataCols = noBudget ? 1 : 4;
+        return (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-[12px]" style={{ minWidth: '900px' }}>
               <thead>
                 <tr className="bg-[#1B3A5C]">
                   <th colSpan={2} className="p-0 border-r border-[#2a4f75]"></th>
-                  <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>
+                  {!noBudget && <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>}
+                  {noBudget && <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual</th>}
                   <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
                 </tr>
                 <tr className="bg-[#f0ebe5]">
                   <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">DEP</th>
                   <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4]">Departement</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Actual</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>}
+                  <th className={"text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>Actual</th>
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>}
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>}
                   {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
                 </tr>
               </thead>
               <tbody>
                 <tr className="bg-[#faf7f4]">
                   <td colSpan={2} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td>
-                  <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.budget))}</td>
-                  <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.actual))}</td>
-                  <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>
-                  <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.budget))}</td>}
+                  <td className={"p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(totals.actual))}</td>
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>}
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>}
                   {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(sum))}</td>; })}
                 </tr>
                 {departments.map(function(d, i) {
@@ -343,10 +347,10 @@ export default function InventoryDashboard() {
                     <tr key={d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setSelDept(d.deptCode); setView('visual'); }}>
                       <td className="p-2 text-[12px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td>
                       <td className="p-2 text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName}</td>
-                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.budget))}</td>
-                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.actual))}</td>
-                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: dc }}>{fmt(Math.round(d.diff))}</td>
-                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: dc }}>{d.budget ? fmtP(d.pct) : '-'}</td>
+                      {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.budget))}</td>}
+                      <td className={"p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(d.actual))}</td>
+                      {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: dc }}>{fmt(Math.round(d.diff))}</td>}
+                      {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: dc }}>{d.budget ? fmtP(d.pct) : '-'}</td>}
                       {historyDates.map(function(dt) { var h = d.history.find(function(x) { return x.date === dt; }); return <td key={dt} className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{h ? fmt(Math.round(h.value)) : '-'}</td>; })}
                     </tr>
                   );
@@ -355,7 +359,8 @@ export default function InventoryDashboard() {
             </table>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ═══ VOORRAAD VS BUDGET (trend + bar chart) ═══ */}
       {view === 'visual' && (
@@ -385,8 +390,8 @@ export default function InventoryDashboard() {
             </div>
           )}
 
-          {/* Bar chart */}
-          {store !== 'B' && (
+          {/* Bar chart - only for Curacao (has budget) */}
+          {store === '1' && (
             <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm p-6" style={{ overflow: 'visible' }}>
               <h3 className="text-[15px] font-bold mb-1">Procentueel verschil per departement</h3>
               <p className="text-[12px] text-[#6b5240] mb-2">t.o.v. budget — hover voor details</p>
@@ -403,9 +408,9 @@ export default function InventoryDashboard() {
             </div>
           )}
 
-          {store === 'B' && (
+          {store !== '1' && (
             <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-8 shadow-sm text-center">
-              <p className="text-[13px] text-amber-600">Bonaire heeft geen budget — visuele vergelijking niet beschikbaar.</p>
+              <p className="text-[13px] text-amber-600">{store === 'B' ? 'Bonaire heeft geen budget — visuele vergelijking niet beschikbaar.' : 'Budget vergelijking alleen beschikbaar voor Curaçao.'}</p>
             </div>
           )}
         </div>
