@@ -222,6 +222,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/buying': 'inventory_buying',
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
+    '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
     '/dashboard/hr/payroll': 'hr_payroll',
   };
 
@@ -232,6 +233,14 @@ export default function DashboardLayout({ children }) {
   ];
   const voorraadItemsAll = [
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
+    { href: '/dashboard/inventory/stockrisk', label: 'Stock Risk Alert', children: [
+      { href: '/dashboard/inventory/stockrisk', label: 'Totaaloverzicht' },
+      { href: '/dashboard/inventory/stockrisk/pascal', label: 'PASCAL' },
+      { href: '/dashboard/inventory/stockrisk/henk', label: 'HENK' },
+      { href: '/dashboard/inventory/stockrisk/john', label: 'JOHN' },
+      { href: '/dashboard/inventory/stockrisk/daniel', label: 'DANIEL' },
+      { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
+    ]},
     { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel', children: [
       { href: '/dashboard/inventory/buying', label: 'Totaaloverzicht' },
       { href: '/dashboard/inventory/buying/pascal', label: 'PASCAL' },
