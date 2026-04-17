@@ -48,7 +48,14 @@ function detectFileType(columns) {
     return 'negative_inventory';
   }
 
-  // Sales data: has "net sales" or "bum" + "date"
+  // Ticket/traffic data: has "Transaction Time" + "Net Sales" + "Date" (individual receipts)
+  if (cols.some(function(c) { return c.includes('transaction time') || c.includes('transaction'); }) &&
+      cols.some(function(c) { return c.includes('net sales'); }) &&
+      cols.some(function(c) { return c.includes('date'); })) {
+    return 'tickets';
+  }
+
+  // Sales data: has "net sales" + "date" + "bum" (aggregated department data)
   if (cols.some(function(c) { return c.includes('net sales') || c.includes('net_sales'); }) &&
       cols.some(function(c) { return c.includes('date'); })) {
     return 'sales';
@@ -261,6 +268,90 @@ async function processNegativeInventory(json) {
   return { table: 'negative_inventory', rows_imported: totalInserted };
 }
 
+/* ── Process TICKET data (aggregate to traffic_data) ── */
+async function processTickets(json) {
+  var keys = Object.keys(json[0] || {});
+
+  // Aggregate: per store per date → tickets (count) + total_sales (sum)
+  var agg = {};
+  json.forEach(function(row) {
+    var store = String(row[findCol(keys, ['store number', 'store'])] || '').trim();
+    var dateVal = row[findCol(keys, ['date'])];
+
+    // Parse date
+    if (dateVal instanceof Date) {
+      dateVal = dateVal.toISOString().split('T')[0];
+    } else if (typeof dateVal === 'number') {
+      dateVal = new Date((dateVal - 25569) * 86400000).toISOString().split('T')[0];
+    } else if (typeof dateVal === 'string') {
+      var d = new Date(dateVal);
+      if (!isNaN(d.getTime())) dateVal = d.toISOString().split('T')[0];
+    }
+
+    var sales = parseFloat(row[findCol(keys, ['net sales'])] || 0);
+    if (!store || !dateVal) return;
+
+    // Map store: digit stores = Curacao (CUR), letter stores = Bonaire (BON)
+    var storeKey = /^\d+$/.test(store) ? 'CUR' : 'BON';
+    var key = storeKey + '|' + dateVal;
+
+    if (!agg[key]) agg[key] = { store_number: storeKey, date: dateVal, tickets: 0, total_sales: 0 };
+    agg[key].tickets++;
+    agg[key].total_sales += sales;
+  });
+
+  var rows = Object.values(agg);
+  console.log('Ticket aggregation: ' + rows.length + ' store/date combinations');
+  rows.forEach(function(r) {
+    console.log('  ' + r.store_number + ' ' + r.date + ': ' + r.tickets + ' tickets, ' + r.total_sales.toFixed(2) + ' sales');
+  });
+
+  // Smart replace: delete existing traffic_data for these dates, then insert
+  // Only update tickets and total_sales, preserve visitors if they exist
+  var uniqueDates = [...new Set(rows.map(function(r) { return r.date; }))];
+  console.log('Dates: ' + uniqueDates.join(', '));
+
+  for (var di = 0; di < uniqueDates.length; di++) {
+    var dt = uniqueDates[di];
+
+    for (var ri = 0; ri < rows.length; ri++) {
+      var row = rows[ri];
+      if (row.date !== dt) continue;
+
+      // Check if a row already exists (might have visitor data)
+      var existing = await supabase.from('traffic_data')
+        .select('*')
+        .eq('store_number', row.store_number)
+        .eq('date', row.date)
+        .maybeSingle();
+
+      if (existing.data) {
+        // Update existing row: keep visitors, update tickets + sales
+        var upd = await supabase.from('traffic_data')
+          .update({ tickets: row.tickets, total_sales: row.total_sales })
+          .eq('store_number', row.store_number)
+          .eq('date', row.date);
+        if (upd.error) console.error('Update error: ' + upd.error.message);
+      } else {
+        // Insert new row
+        var ins = await supabase.from('traffic_data')
+          .insert({
+            store_number: row.store_number,
+            date: row.date,
+            tickets: row.tickets,
+            total_sales: row.total_sales,
+            visitors: 0,
+            visitors_keuken: 0,
+            visitors_multimart: 0,
+          });
+        if (ins.error) console.error('Insert error: ' + ins.error.message);
+      }
+    }
+  }
+
+  return { table: 'traffic_data', rows_imported: rows.length };
+}
+
 /* ── Process BUYING data (per BUM, full replace) ── */
 async function processBuying(json) {
   var keys = Object.keys(json[0] || {});
@@ -409,6 +500,8 @@ export async function POST(request) {
 
     if (fileType === 'inventory') {
       result = await processInventory(json);
+    } else if (fileType === 'tickets') {
+      result = await processTickets(json);
     } else if (fileType === 'buying') {
       result = await processBuying(json);
     } else if (fileType === 'negative_inventory') {
