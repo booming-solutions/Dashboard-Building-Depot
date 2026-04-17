@@ -33,6 +33,14 @@ function detectFileType(columns) {
     return 'inventory';
   }
 
+  // Buying data: has "Item Number" + "Quantity on Hand" + "Sales Units" + "Department Group"
+  if (cols.some(function(c) { return c.includes('item number'); }) &&
+      cols.some(function(c) { return c.includes('quantity on hand'); }) &&
+      cols.some(function(c) { return c.includes('sales units'); }) &&
+      cols.some(function(c) { return c.includes('department group'); })) {
+    return 'buying';
+  }
+
   // Negative inventory: has columns like "qty on hand" or "qoh" with negative values context
   if (cols.some(function(c) { return c.includes('qty') || c.includes('qoh'); }) &&
       cols.some(function(c) { return c.includes('item'); }) &&
@@ -253,6 +261,104 @@ async function processNegativeInventory(json) {
   return { table: 'negative_inventory', rows_imported: totalInserted };
 }
 
+/* ── Process BUYING data (per BUM, full replace) ── */
+async function processBuying(json) {
+  var keys = Object.keys(json[0] || {});
+
+  // Detect BUM from data
+  var bumCol = findCol(keys, ['department group']);
+  var allBums = {};
+  json.forEach(function(row) { var b = String(row[bumCol] || '').trim().toUpperCase(); if (b) allBums[b] = true; });
+  var bumList = Object.keys(allBums);
+  if (!bumList.length) throw new Error('No BUM (Department Group) found in buying data');
+  console.log('BUM(s) in file: ' + bumList.join(', '));
+
+  // Find the 12 sales columns (they contain "Sales Units")
+  var salesCols = keys.filter(function(k) { return k.toLowerCase().includes('sales units') && !k.toLowerCase().includes('total') && !k.toLowerCase().includes('period'); });
+  // Sort them: first col = most recent (m01), last = oldest (m12)
+  // They come from Compass in order: newest first
+  console.log('Sales columns found: ' + salesCols.length);
+
+  // Map rows to buying_data format, filtering dead stock
+  var rows = [];
+  var skippedDead = 0;
+  json.forEach(function(row) {
+    var qoh = parseFloat(row[findCol(keys, ['quantity on hand'])] || 0);
+
+    // Check dead stock: QOH=0 AND no sales in first 6 months (most recent)
+    var recentSales = 0;
+    for (var si = 0; si < Math.min(6, salesCols.length); si++) {
+      recentSales += parseFloat(row[salesCols[si]] || 0);
+    }
+    if (qoh === 0 && recentSales === 0) {
+      skippedDead++;
+      return; // Skip dead stock
+    }
+
+    // Build sales_m01..sales_m12
+    var salesObj = {};
+    for (var i = 0; i < Math.min(12, salesCols.length); i++) {
+      salesObj['sales_m' + String(i + 1).padStart(2, '0')] = parseFloat(row[salesCols[i]] || 0);
+    }
+    // Fill remaining if less than 12 sales columns
+    for (var j = salesCols.length; j < 12; j++) {
+      salesObj['sales_m' + String(j + 1).padStart(2, '0')] = 0;
+    }
+
+    var r = {
+      store_number: String(row[findCol(keys, ['store number'])] || ''),
+      dept_code: String(row[findCol(keys, ['department code'])] || ''),
+      dept_name: String(row[findCol(keys, ['department name'])] || ''),
+      class_code: String(row[findCol(keys, ['class code'])] || ''),
+      class_name: String(row[findCol(keys, ['class name'])] || ''),
+      item_number: String(row[findCol(keys, ['item number'])] || ''),
+      item_description: String(row[findCol(keys, ['item description'])] || ''),
+      nos: String(row[findCol(keys, ['nos'])] || ''),
+      min_lead_time: parseFloat(row[findCol(keys, ['min lead'])] || 0),
+      max_lead_time: parseFloat(row[findCol(keys, ['max lead'])] || 0),
+      qoh: qoh,
+      qty_committed: parseFloat(row[findCol(keys, ['quantity committed'])] || 0),
+      qty_available: parseFloat(row[findCol(keys, ['quantity available'])] || 0),
+      qty_on_order: parseFloat(row[findCol(keys, ['quantity on order'])] || 0),
+      vendor_code: String(row[findCol(keys, ['vendor code'])] || ''),
+      vendor_name: String(row[findCol(keys, ['vendor name'])] || ''),
+      replacement_cost: parseFloat(row[findCol(keys, ['replacement cost'])] || 0),
+      inv_value_at_cost: parseFloat(row[findCol(keys, ['inventory value', 'inv value'])] || 0),
+      bum: String(row[bumCol] || '').trim().toUpperCase(),
+      upload_date: new Date().toISOString().split('T')[0],
+    };
+    Object.assign(r, salesObj);
+    rows.push(r);
+  });
+
+  console.log('Active rows: ' + rows.length + ', dead stock skipped: ' + skippedDead);
+
+  // Delete existing data for this BUM (full replace per BUM)
+  for (var bi = 0; bi < bumList.length; bi++) {
+    var bum = bumList[bi];
+    var delResult = await supabase.from('buying_data').delete({ count: 'exact' }).eq('bum', bum);
+    if (delResult.error) {
+      console.error('Delete error for BUM ' + bum + ': ' + delResult.error.message);
+    } else {
+      console.log('Deleted ' + (delResult.count || 0) + ' existing rows for BUM ' + bum);
+    }
+  }
+
+  // Insert in batches
+  var totalInserted = 0;
+  for (var i = 0; i < rows.length; i += 500) {
+    var batch = rows.slice(i, i + 500);
+    var res = await supabase.from('buying_data').insert(batch);
+    if (res.error) {
+      console.error('Buying batch error at ' + i + ': ' + res.error.message);
+      continue;
+    }
+    totalInserted += batch.length;
+  }
+
+  return { table: 'buying_data', rows_imported: totalInserted, bums: bumList };
+}
+
 /* ══════════════════════════════════════════════
    MAIN HANDLER
    ══════════════════════════════════════════════ */
@@ -303,6 +409,8 @@ export async function POST(request) {
 
     if (fileType === 'inventory') {
       result = await processInventory(json);
+    } else if (fileType === 'buying') {
+      result = await processBuying(json);
     } else if (fileType === 'negative_inventory') {
       result = await processNegativeInventory(json);
     } else if (fileType === 'sales') {

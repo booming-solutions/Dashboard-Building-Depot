@@ -44,6 +44,7 @@ export default function BuyingDashboardShared({ bumFilter }) {
   var _s = useState;
   var _d = _s([]), data = _d[0], setData = _d[1];
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
+  var _upd = _s(null), lastUpdate = _upd[0], setLastUpdate = _upd[1];
   var _store = _s('all'), store = _store[0], setStore = _store[1];
   var _dept = _s('all'), dept = _dept[0], setDept = _dept[1];
   var _vendor = _s('all'), vendor = _vendor[0], setVendor = _vendor[1];
@@ -67,6 +68,12 @@ export default function BuyingDashboardShared({ bumFilter }) {
       all = all.concat(r.data);
       if (r.data.length < step) break;
       from += step;
+    }
+    // Get latest upload_date
+    if (all.length && all[0].upload_date) {
+      var dates = all.map(function(r) { return r.upload_date; }).filter(Boolean);
+      dates.sort(); 
+      setLastUpdate(dates[dates.length - 1]);
     }
     setData(all); setLoading(false);
   }
@@ -179,6 +186,7 @@ export default function BuyingDashboardShared({ bumFilter }) {
   var subtitle = bumFilter 
     ? 'Buying proposal voor ' + bumFilter + ' op basis van verkoophistorie, voorraad en lead times'
     : 'Alle BUMs — dit overzicht kan langer laden';
+  var updateLabel = lastUpdate ? 'Data t/m ' + (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Inkoopvoorstel laden{bumFilter ? ' (' + bumFilter + ')' : ''}...</p></div>;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen buying data beschikbaar{bumFilter ? ' voor ' + bumFilter : ''}.</p></div>;
@@ -189,7 +197,7 @@ export default function BuyingDashboardShared({ bumFilter }) {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>{title}</h1>
-          <p className="text-[13px] text-[#6b5240]">{subtitle}</p>
+          <p className="text-[13px] text-[#6b5240]">{subtitle}{updateLabel ? ' — ' + updateLabel : ''}</p>
         </div>
         {bumFilter && <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{bumFilter}</div>}
       </div>

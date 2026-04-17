@@ -49,6 +49,7 @@ function HealthBadge({ category }) {
 export default function HealthDashboardShared({ bumFilter }) {
   var _d = useState([]), data = _d[0], setData = _d[1];
   var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
+  var _upd = useState(null), lastUpdate = _upd[0], setLastUpdate = _upd[1];
   var _store = useState('1'), store = _store[0], setStore = _store[1];
   var _bum = useState('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = useState('all'), selDept = _dept[0], setSelDept = _dept[1];
@@ -74,6 +75,11 @@ export default function HealthDashboardShared({ bumFilter }) {
       all = all.concat(r.data);
       if (r.data.length < step) break;
       from += step;
+    }
+    if (all.length && all[0].upload_date) {
+      var dates = all.map(function(r) { return r.upload_date; }).filter(Boolean);
+      dates.sort();
+      setLastUpdate(dates[dates.length - 1]);
     }
     setData(all); setLoading(false);
   }
@@ -280,13 +286,15 @@ export default function HealthDashboardShared({ bumFilter }) {
 
   var storeName = store === '1' ? 'Curaçao' : 'Bonaire';
 
+  var updateLabel = lastUpdate ? 'Data t/m ' + (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
+
   return (
     <div className="max-w-[1600px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
 
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>{bumFilter ? 'Gezondheid — ' + bumFilter : 'Gezondheid Voorraden — Totaaloverzicht'}</h1>
-          <p className="text-[13px] text-[#6b5240]">{bumFilter ? 'Voorraad gezondheid voor ' + bumFilter + ' — ' + storeName : 'Alle BUMs — ' + storeName + ' — dit overzicht kan langer laden'}</p>
+          <p className="text-[13px] text-[#6b5240]">{bumFilter ? 'Voorraad gezondheid voor ' + bumFilter + ' — ' + storeName : 'Alle BUMs — ' + storeName + ' — dit overzicht kan langer laden'}{updateLabel ? ' — ' + updateLabel : ''}</p>
         </div>
         <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{bumFilter ? bumFilter + ' · ' + storeName : storeName}</div>
       </div>
