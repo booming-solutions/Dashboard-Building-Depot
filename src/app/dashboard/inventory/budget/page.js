@@ -17,6 +17,7 @@ var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (
 var fmtP = function(n) { return (n || 0).toFixed(1) + '%'; };
 var SN = { '1': 'Curaçao', 'B': 'Bonaire' };
 var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
+var XCG_USD = 1.82;
 
 function pctColor(pct) {
   var abs = Math.abs(pct || 0);
@@ -65,7 +66,7 @@ export default function InventoryDashboard() {
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _vw = _s('overview'), view = _vw[0], setView = _vw[1];
   // Single unified filter state
-  var _store = _s('1'), store = _store[0], setStore = _store[1];
+  var _store = _s('all'), store = _store[0], setStore = _store[1];
   var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = _s('__total__'), selDept = _dept[0], setSelDept = _dept[1];
   var trendRef = useRef(null);
@@ -94,26 +95,49 @@ export default function InventoryDashboard() {
     setData(all); setBuyingData(allB); setLoading(false);
   }
 
-  var stores = useMemo(function() { var s = {}; data.forEach(function(r) { if (r.store_number) s[r.store_number] = true; }); return Object.keys(s).sort(); }, [data]);
+  // Store pills are now fixed: Totaal, Curaçao, Bonaire
 
   function buildDepartments(storeFilter, bumFilter) {
-    var filtered = data.filter(function(r) { return storeFilter === 'all' || r.store_number === storeFilter; });
+    // For 'all': combine CUR + BON, converting BON to XCG
+    // For '1': CUR only (already XCG)
+    // For 'B': BON only in USD
+    var cFactor = 1; // multiplier for BON values
+    if (storeFilter === 'all') cFactor = XCG_USD; // BON→XCG in combined view
+
     var map = {};
-    filtered.forEach(function(r) {
+    data.forEach(function(r) {
+      if (storeFilter !== 'all' && r.store_number !== storeFilter) return;
       var key = r.dept_code;
-      if (!map[key]) map[key] = { deptCode: r.dept_code, deptName: r.dept_name, bum: r.bum, budget: parseFloat(r.budget) || 0, history: [] };
-      map[key].history.push({ date: r.inventory_date, value: parseFloat(r.inventory_value) || 0 });
+      var isBon = r.store_number === 'B';
+      var valMultiplier = (storeFilter === 'all' && isBon) ? XCG_USD : 1;
+
+      if (!map[key]) {
+        map[key] = { deptCode: r.dept_code, deptName: r.dept_name, bum: r.bum, budget: 0, history: {} };
+      }
+      // Budget: only CUR has budget, don't convert
+      if (!isBon) map[key].budget = parseFloat(r.budget) || 0;
+
+      var dt = r.inventory_date;
+      if (!map[key].history[dt]) map[key].history[dt] = 0;
+      map[key].history[dt] += (parseFloat(r.inventory_value) || 0) * valMultiplier;
     });
+
     var list = Object.values(map);
     list.forEach(function(d) {
-      d.history.sort(function(a, b) { return a.date.localeCompare(b.date); });
-      d.actual = d.history.length ? d.history[d.history.length - 1].value : 0;
+      // Convert history object to sorted array
+      var histArr = Object.entries(d.history).map(function(e) { return { date: e[0], value: e[1] }; });
+      histArr.sort(function(a, b) { return a.date.localeCompare(b.date); });
+      d.history = histArr;
+      d.actual = histArr.length ? histArr[histArr.length - 1].value : 0;
       d.diff = d.actual - d.budget;
       d.pct = d.budget ? ((d.actual - d.budget) / d.budget) * 100 : 0;
     });
+
+    // For BON standalone: filter out depts with all-zero history
     if (storeFilter === 'B') {
       list = list.filter(function(d) { return d.history.some(function(h) { return h.value !== 0; }); });
     }
+
     list.sort(function(a, b) { return (parseInt(a.deptCode) || 999) - (parseInt(b.deptCode) || 999); });
     if (bumFilter && bumFilter !== 'all') list = list.filter(function(d) { return d.bum === bumFilter; });
     return list;
@@ -159,7 +183,6 @@ export default function InventoryDashboard() {
 
   var dates = useMemo(function() { var s = {}; departments.forEach(function(d) { d.history.forEach(function(h) { s[h.date] = true; }); }); return Object.keys(s).sort(); }, [departments]);
   var historyDates = useMemo(function() { if (dates.length <= 1) return []; return dates.slice(0, -1).reverse(); }, [dates]);
-  var isBonaire = store === 'B';
 
   /* ── Trend chart data ── */
   var trendChartData = useMemo(function() {
@@ -171,7 +194,7 @@ export default function InventoryDashboard() {
     var labels = sortedDates.map(function(dt) { var p = dt.split('-'); return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2); });
     var title = '', values = [], budgetValues = [];
     if (selDept === '__total__') {
-      title = selBum !== 'all' ? ('Totaal ' + selBum) : ('Totaal ' + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : store));
+      title = selBum !== 'all' ? ('Totaal ' + selBum) : ('Totaal ' + (store === 'all' ? 'Building Depot' : store === '1' ? 'Curaçao' : 'Bonaire'));
       var totalBudget = 0;
       departments.forEach(function(d) { totalBudget += d.budget; });
       values = sortedDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return sum; });
@@ -213,7 +236,10 @@ export default function InventoryDashboard() {
   var latestDate = dates.length ? dates[dates.length - 1] : '';
   var dateParts = latestDate.split('-');
   var dateLabel = dateParts.length === 3 ? (parseInt(dateParts[2]) + ' ' + MN[parseInt(dateParts[1]) - 1] + ' ' + dateParts[0]) : '';
-  var storeName = SN[store] || store;
+  var storeName = store === 'all' ? 'Totaal' : store === '1' ? 'Curaçao' : 'Bonaire';
+  var currencyLabel = store === 'B' ? 'USD' : 'XCG';
+  var isBonaire = store === 'B';
+  var isTotaal = store === 'all';
 
   return (
     <div className="max-w-[1600px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
@@ -223,14 +249,18 @@ export default function InventoryDashboard() {
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Voorraad vs Budget</h1>
           <p className="text-[13px] text-[#6b5240]">{'Building Depot — ' + storeName + (dateLabel ? ' — data t/m ' + dateLabel : '')}</p>
         </div>
-        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName + ' · XCG'}</div>
+        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName + ' · ' + currencyLabel}</div>
       </div>
 
       {/* Single unified filter block */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
-          <div className="flex gap-1">{stores.map(function(s) { return <Pill key={s} label={s === '1' ? 'Curaçao' : s === 'B' ? 'Bonaire' : s} active={store === s} onClick={function() { setStore(s); setSelBum('all'); setSelDept('__total__'); }} />; })}</div>
+          <div className="flex gap-1">
+            <Pill label="Totaal" active={store === 'all'} onClick={function() { setStore('all'); setSelBum('all'); setSelDept('__total__'); }} />
+            <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setSelBum('all'); setSelDept('__total__'); }} />
+            <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setSelBum('all'); setSelDept('__total__'); }} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
@@ -247,7 +277,8 @@ export default function InventoryDashboard() {
             {departments.map(function(d) { return <option key={d.deptCode} value={d.deptCode}>{d.deptCode + ' - ' + d.deptName}</option>; })}
           </select>
         </div>
-        {isBonaire && <div className="text-[11px] text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">Bonaire heeft geen richtinggevend budget — alleen actuele voorraad wordt getoond.</div>}
+        {isBonaire && <div className="text-[11px] text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">Bonaire wordt weergegeven in USD. Budget is nog niet beschikbaar voor Bonaire.</div>}
+        {isTotaal && <div className="text-[11px] text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">Totaaloverzicht: Bonaire waarden zijn omgerekend naar XCG (×1.82). Budget geldt alleen voor Curaçao.</div>}
       </div>
 
       {/* View tabs */}
@@ -336,7 +367,7 @@ export default function InventoryDashboard() {
                 <div>
                   <h3 className="text-[15px] font-bold">{trendChartData.title}</h3>
                   <p className="text-[12px] text-[#6b5240]">
-                    {'Store: ' + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : store) +
+                    {'Store: ' + (store === 'all' ? 'Totaal' : store === '1' ? 'Curaçao' : 'Bonaire') +
                     ' · Budget: ' + fmt(Math.round(trendChartData.budgetValues[0] || 0)) +
                     ' · Actual: ' + fmt(Math.round(trendChartData.values[trendChartData.values.length - 1] || 0))}
                   </p>
