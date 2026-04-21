@@ -194,9 +194,23 @@ export default function StockRiskShared({ bumFilter }) {
     return list;
   }, [data, store]);
 
+  var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
+  var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
+
+  /* KPI totals - respond to NOS, dept, vendor, QOH filters */
+  var filteredBase = useMemo(function() {
+    var src = items;
+    if (nosFilter === 'yes') src = src.filter(function(m) { return m.nos; });
+    else if (nosFilter === 'no') src = src.filter(function(m) { return !m.nos; });
+    if (qohFilter === 'positive') src = src.filter(function(m) { return m.qoh > 0; });
+    if (dept !== 'all') src = src.filter(function(m) { return m.dept_code === dept; });
+    if (vendor !== 'all') src = src.filter(function(m) { return m.vendor === vendor; });
+    return src;
+  }, [items, nosFilter, qohFilter, dept, vendor]);
+
   /* Apply filters */
   var displayed = useMemo(function() {
-    var list = filteredBase;
+    var list = filteredBase || [];
 
     // Filter by risk level
     if (filter === 'critical') list = list.filter(function(m) { return m.risk === 'critical'; });
@@ -224,22 +238,8 @@ export default function StockRiskShared({ bumFilter }) {
     return list;
   }, [filteredBase, filter, search, sortCol, sortDir]);
 
-  var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
-  var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
-
-  /* KPI totals - respond to NOS, dept, vendor, QOH filters */
-  var filteredBase = useMemo(function() {
-    var src = items;
-    if (nosFilter === 'yes') src = src.filter(function(m) { return m.nos; });
-    else if (nosFilter === 'no') src = src.filter(function(m) { return !m.nos; });
-    if (qohFilter === 'positive') src = src.filter(function(m) { return m.qoh > 0; });
-    if (dept !== 'all') src = src.filter(function(m) { return m.dept_code === dept; });
-    if (vendor !== 'all') src = src.filter(function(m) { return m.vendor === vendor; });
-    return src;
-  }, [items, nosFilter, qohFilter, dept, vendor]);
-
   var totals = useMemo(function() {
-    var src = filteredBase;
+    var src = filteredBase || [];
     var critical = src.filter(function(m) { return m.risk === 'critical'; });
     var urgent = src.filter(function(m) { return m.risk === 'urgent'; });
     var watch = src.filter(function(m) { return m.risk === 'watch'; });
@@ -261,7 +261,7 @@ export default function StockRiskShared({ bumFilter }) {
   /* Department risk summary */
   var deptRisk = useMemo(function() {
     var map = {};
-    filteredBase.forEach(function(m) {
+    (filteredBase || []).forEach(function(m) {
       var dc = m.dept_code;
       if (!map[dc]) map[dc] = { code: dc, name: m.dept_name, bum: m.bum, total: 0, critical: 0, urgent: 0, watch: 0, ok: 0, nos_risk: 0, value_at_risk: 0 };
       map[dc].total++;
