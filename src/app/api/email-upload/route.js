@@ -89,9 +89,9 @@ async function processSales(json, batchId) {
     var gmPct = parseFloat(row[gmPctKey]) || 0;
     if (Math.abs(gmPct) > 999) gmPct = Math.max(Math.min(gmPct, 999.99), -999.99);
 
-    // Filter out FB rows
+    // Filter out FB and FC rows (financial charges + gift certificates)
     var dept = String(row[findCol(keys, ['department code', 'dept_code'])] || '');
-    if (dept === 'FB') return null;
+    if (dept === 'FB' || dept === 'FC') return null;
 
     return {
       bum: String(row[findCol(keys, ['bum'])] || ''),
