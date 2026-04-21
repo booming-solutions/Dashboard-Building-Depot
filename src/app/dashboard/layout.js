@@ -241,14 +241,6 @@ export default function DashboardLayout({ children }) {
       { href: '/dashboard/inventory/stockrisk/daniel', label: 'DANIEL' },
       { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
     ]},
-    { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel', children: [
-      { href: '/dashboard/inventory/buying', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/buying/pascal', label: 'PASCAL' },
-      { href: '/dashboard/inventory/buying/henk', label: 'HENK' },
-      { href: '/dashboard/inventory/buying/john', label: 'JOHN' },
-      { href: '/dashboard/inventory/buying/daniel', label: 'DANIEL' },
-      { href: '/dashboard/inventory/buying/gijs', label: 'GIJS' },
-    ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
