@@ -223,7 +223,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
-    '/dashboard/hr/payroll': 'hr_payroll',
+    '/dashboard/hr/salary': 'hr_payroll',
   };
 
   const omzetItemsAll = [
@@ -252,7 +252,7 @@ export default function DashboardLayout({ children }) {
     ]},
   ];
   const hrItemsAll = [
-    { href: '/dashboard/hr/payroll', label: 'Salariskosten' },
+    { href: '/dashboard/hr/salary', label: 'Salariskosten' },
   ];
 
   // Filter navigation items based on allowed_reports
