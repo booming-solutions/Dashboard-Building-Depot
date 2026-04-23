@@ -190,7 +190,19 @@ export default function BuyingDashboardShared({ bumFilter }) {
     : 'Alle BUMs — dit overzicht kan langer laden';
   var updateLabel = lastUpdate ? 'Data t/m ' + (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
 
-  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Inkoopvoorstel laden{bumFilter ? ' (' + bumFilter + ')' : ''}...</p></div>;
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center h-[60vh] gap-6">
+      <style>{`
+        @keyframes logoPulse { 0%, 100% { opacity: 1; filter: brightness(1); } 50% { opacity: 0.3; filter: brightness(2); } }
+        @keyframes barGrow { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
+      `}</style>
+      <img src="/logo.png" alt="Loading" className="h-16 w-16 rounded-xl" style={{ animation: 'logoPulse 2s ease-in-out infinite' }} />
+      <div className="w-48 h-1.5 bg-[#e5ddd4] rounded-full overflow-hidden">
+        <div className="h-full bg-[#E84E1B] rounded-full" style={{ animation: 'barGrow 2s ease-in-out infinite' }}></div>
+      </div>
+      <p className="text-[13px] text-[#6b5240]">{'Inkoopvoorstel laden' + (bumFilter ? ' (' + bumFilter + ')' : '') + '...'}</p>
+    </div>
+  );
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen buying data beschikbaar{bumFilter ? ' voor ' + bumFilter : ''}.</p></div>;
 
   return (
