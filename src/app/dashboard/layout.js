@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
+import PageTracker from '@/components/PageTracker';
 
 const APP_VERSION = 'v3.27.02';
 
@@ -262,11 +263,13 @@ export default function DashboardLayout({ children }) {
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
+    { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <LoginModal show={showLogin} onClose={() => setShowLogin(false)} supabase={supabase} onSuccess={getUser} />
+      <PageTracker />
 
       <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col transition-all duration-300 fixed h-full z-40`} style={{ background: 'linear-gradient(180deg, #e8eff7 0%, #dce6f1 100%)' }}>
         <div className="p-4 flex items-center gap-3 border-b border-[#c5d4e6]">
