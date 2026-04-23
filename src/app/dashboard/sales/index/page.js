@@ -283,6 +283,15 @@ export default function IndexDashboard() {
         ytdBudProrated = yb - mb + (mb * dayFrac.frac);
       }
 
+      // Prorate LY: same logic as budget - scale LY down to same fraction of month
+      var mtdLYProrated = ml.s;
+      var ytdLYProrated = yl.s;
+      if (dayFrac.month === month && dayFrac.year === currentYear && dayFrac.frac < 1) {
+        mtdLYProrated = ml.s * dayFrac.frac;
+        // YTD LY: full months are fine, only prorate the current month's LY equivalent
+        ytdLYProrated = yl.s - ml.s + (ml.s * dayFrac.frac);
+      }
+
       departments.push({
         deptCode: cleanCode,
         deptName: deptName,
@@ -292,16 +301,16 @@ export default function IndexDashboard() {
         mtdBudget: mtdBudProrated,
         mtdDiffBud: mtdA - mtdBudProrated,
         mtdIdxBud: mtdBudProrated ? (mtdA / mtdBudProrated) * 100 : 0,
-        mtdLY: ml.s,
-        mtdDiffLY: mtdA - ml.s,
-        mtdIdxLY: ml.s ? (mtdA / ml.s) * 100 : 0,
+        mtdLY: mtdLYProrated,
+        mtdDiffLY: mtdA - mtdLYProrated,
+        mtdIdxLY: mtdLYProrated ? (mtdA / mtdLYProrated) * 100 : 0,
         ytdActual: ytdA,
         ytdBudget: ytdBudProrated,
         ytdDiffBud: ytdA - ytdBudProrated,
         ytdIdxBud: ytdBudProrated ? (ytdA / ytdBudProrated) * 100 : 0,
-        ytdLY: yl.s,
-        ytdDiffLY: ytdA - yl.s,
-        ytdIdxLY: yl.s ? (ytdA / yl.s) * 100 : 0,
+        ytdLY: ytdLYProrated,
+        ytdDiffLY: ytdA - ytdLYProrated,
+        ytdIdxLY: ytdLYProrated ? (ytdA / ytdLYProrated) * 100 : 0,
         budMonth: budMonthFull[dc] || 0,
         budYTD: budYTDFull[dc] || 0,
       });
