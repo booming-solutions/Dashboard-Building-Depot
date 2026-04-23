@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createClient } from '@/lib/supabase';
+import LoadingLogo from '@/components/LoadingLogo';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
