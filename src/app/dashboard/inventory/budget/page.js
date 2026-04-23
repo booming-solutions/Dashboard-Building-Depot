@@ -179,7 +179,13 @@ export default function InventoryDashboard() {
     return l;
   }, [data, store]);
 
-  var totals = useMemo(function() { var budget = 0, actual = 0; departments.forEach(function(d) { budget += d.budget; actual += d.actual; }); return { budget: budget, actual: actual, diff: actual - budget, pct: budget ? ((actual - budget) / budget) * 100 : 0 }; }, [departments]);
+  var totals = useMemo(function() { 
+    var src = departments;
+    if (selDept !== '__total__') src = departments.filter(function(d) { return d.deptCode === selDept; });
+    var budget = 0, actual = 0; 
+    src.forEach(function(d) { budget += d.budget; actual += d.actual; }); 
+    return { budget: budget, actual: actual, diff: actual - budget, pct: budget ? ((actual - budget) / budget) * 100 : 0 }; 
+  }, [departments, selDept]);
 
   var dates = useMemo(function() { var s = {}; departments.forEach(function(d) { d.history.forEach(function(h) { s[h.date] = true; }); }); return Object.keys(s).sort(); }, [departments]);
   var historyDates = useMemo(function() { if (dates.length <= 1) return []; return dates.slice(0, -1).reverse(); }, [dates]);
