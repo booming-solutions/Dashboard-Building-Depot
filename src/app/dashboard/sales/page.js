@@ -258,19 +258,7 @@ export default function SalesDashboard(){
   async function deleteCorrection(id){await supabase.from('corrections').delete().eq('id',id);setCorrections(p=>p.filter(c=>c.id!==id))}
   async function clearAll(){if(!confirm('Weet je zeker dat je alle correcties wilt wissen?'))return;await supabase.from('corrections').delete().neq('id','00000000-0000-0000-0000-000000000000');setCorrections([])}
 
-  if(loading)return(
-    <div className="flex flex-col items-center justify-center h-[60vh] gap-6">
-      <style>{`
-        @keyframes logoPulse { 0%, 100% { opacity: 1; filter: brightness(1); } 50% { opacity: 0.3; filter: brightness(2); } }
-        @keyframes barGrow { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
-      `}</style>
-      <img src="/logo.png" alt="Loading" className="h-16 w-16 rounded-xl" style={{ animation: 'logoPulse 2s ease-in-out infinite' }} />
-      <div className="w-48 h-1.5 bg-[#e5ddd4] rounded-full overflow-hidden">
-        <div className="h-full bg-[#E84E1B] rounded-full" style={{ animation: 'barGrow 2s ease-in-out infinite' }}></div>
-      </div>
-      <p className="text-[13px] text-[#6b5240]">Dashboard laden...</p>
-    </div>
-  );
+  if(loading)return <LoadingLogo text="Dashboard laden..." />;
   if(!data.length)return<div className="text-center py-16"><p className="text-[#6b5240]">Geen data beschikbaar.</p></div>;
   const storeName=store==='all'?'Alle':SN[store]||store;
   const currLabel=isBonaire?`${storeName} · US$`:`${storeName} · XCG`;

@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
+import LoadingLogo from '@/components/LoadingLogo';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
@@ -277,19 +278,7 @@ export default function TrafficDashboard() {
     return function() { Object.values(chartsRef.current).forEach(function(c) { if (c) c.destroy(); }); };
   }, [storeData, cyMonthly, lyMonthly, currentYear, dowData, dowKeuken, keukenMonthly, tab]);
 
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center h-[60vh] gap-6">
-      <style>{`
-        @keyframes logoPulse { 0%, 100% { opacity: 1; filter: brightness(1); } 50% { opacity: 0.3; filter: brightness(2); } }
-        @keyframes barGrow { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
-      `}</style>
-      <img src="/logo.png" alt="Loading" className="h-16 w-16 rounded-xl" style={{ animation: 'logoPulse 2s ease-in-out infinite' }} />
-      <div className="w-48 h-1.5 bg-[#e5ddd4] rounded-full overflow-hidden">
-        <div className="h-full bg-[#E84E1B] rounded-full" style={{ animation: 'barGrow 2s ease-in-out infinite' }}></div>
-      </div>
-      <p className="text-[13px] text-[#6b5240]">Bezoekers & conversie laden...</p>
-    </div>
-  );
+  if (loading) return <LoadingLogo text="Bezoekers & conversie laden..." />;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen traffic data beschikbaar.</p></div>;
 
   var cyConvYTD = cyYTD.visitors ? (cyYTD.tickets / cyYTD.visitors * 100) : 0;

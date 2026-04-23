@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
+import LoadingLogo from '@/components/LoadingLogo';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend);
@@ -236,7 +237,7 @@ export default function InventoryDashboard() {
     return function() { cancelAnimationFrame(raf); };
   }, [trendChartData, view]);
 
-  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Voorraad rapport laden...</p></div>;
+  if (loading) return <LoadingLogo text="Voorraad rapport laden..." />;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen inventory data beschikbaar.</p></div>;
 
   var latestDate = dates.length ? dates[dates.length - 1] : '';
