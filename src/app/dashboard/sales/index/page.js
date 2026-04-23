@@ -134,6 +134,7 @@ export default function IndexDashboard() {
   var _vw = _s('bu'), view = _vw[0], setView = _vw[1];
   var _sc = _s('mtdActual'), sortCol = _sc[0], setSortCol = _sc[1];
   var _sd = _s('desc'), sortDir = _sd[0], setSortDir = _sd[1];
+  var _expanded = _s({}), expanded = _expanded[0], setExpanded = _expanded[1];
 
   var supabase = createClient();
   _e(function() { loadData(); checkAuth(); }, []);
@@ -399,82 +400,58 @@ export default function IndexDashboard() {
         </div>
       </div>
 
-      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        {[['bu', 'Per BU'], ['dept', 'Per Departement'], ['bum', 'Per Manager']].map(function(item) {
-          return <button key={item[0]} onClick={function() { setView(item[0]); }}
-            className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
-        })}
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1400px' }}>
+            <THead {...theadProps} sortable={false} sortCol="" sortDir="" onSort={null} />
+            <tbody>
+              {/* TOTAAL row */}
+              {gt && <tr className="bg-[#faf7f4]"><td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td><RowCells d={gt} bold /></tr>}
+              <tr><td colSpan={COLS} className="h-2 bg-[#faf7f4]"></td></tr>
+              {/* Per Manager rows - clickable to expand */}
+              {bumGroups.map(function(g) {
+                var isOpen = expanded[g.bum] || false;
+                var rows = [];
+                // Manager total row (clickable)
+                rows.push(
+                  <tr key={'mgr-' + g.bum} className="bg-[#1B3A5C]/5 cursor-pointer hover:bg-[#1B3A5C]/10" onClick={function() { setExpanded(function(prev) { var n = Object.assign({}, prev); n[g.bum] = !n[g.bum]; return n; }); }}>
+                    <td colSpan={2} className="p-2 border-b border-[#c5d4e6] border-r border-[#e5ddd4]">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] select-none" style={{ display: 'inline-block', width: '16px', textAlign: 'center', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                        <span className="w-7 h-7 rounded-full bg-[#E84E1B] text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0">{g.bum.charAt(0)}</span>
+                        <span className="text-[13px] font-bold text-[#1B3A5C]">{g.bum}</span>
+                        {g.buName ? <span className="text-[10px] text-[#6b5240]">{'— ' + g.buName}</span> : null}
+                        <span className="ml-auto text-[10px] text-[#6b5240]">{g.departments.length + ' dept.'}</span>
+                      </div>
+                    </td>
+                    <RowCells d={g.total} bold />
+                  </tr>
+                );
+                // Department detail rows (only when expanded)
+                if (isOpen) {
+                  g.departments.forEach(function(d, i) {
+                    rows.push(
+                      <tr key={'dept-' + d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}>
+                        <td className="p-1.5 text-[11px] text-[#6b5240] border-b border-[#f0ebe5] font-mono pl-10">{d.deptCode}</td>
+                        <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName ? d.deptName.replace(/^\d+\s*/, '') : ''}</td>
+                        <RowCells d={d} />
+                      </tr>
+                    );
+                  });
+                  // Subtotal row
+                  if (g.total) rows.push(
+                    <tr key={'sub-' + g.bum} className="bg-[#f5f0ea]">
+                      <td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] italic text-[#6b5240] pl-10">{'TOTAAL ' + g.bum.toUpperCase()}</td>
+                      <RowCells d={g.total} bold />
+                    </tr>
+                  );
+                }
+                return rows;
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
-
-      {/* ═══ BU VIEW ═══ */}
-      {view === 'bu' && (
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1400px' }}>
-              <THead {...theadProps} sortable={false} sortCol="" sortDir="" onSort={null} />
-              <tbody>
-                {gt && <tr className="bg-[#faf7f4]"><td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td><RowCells d={gt} bold /></tr>}
-                {buGroups.map(function(g) {
-                  if (!g.total) return null;
-                  return <tr key={'bs-' + g.bum} className="bg-[#f5f0ea]"><td colSpan={2} className="p-1.5 text-[11px] border-b border-[#e5ddd4] border-r border-[#e5ddd4]"><span className="font-semibold">{g.buName}</span><span className="text-[#6b5240]">{' — ' + g.bum}</span></td><RowCells d={g.total} /></tr>;
-                })}
-                <tr><td colSpan={COLS} className="h-3 bg-[#faf7f4]"></td></tr>
-                {buGroups.map(function(g) {
-                  var rows = [];
-                  rows.push(<tr key={'hdr-' + g.bum} className="bg-[#1B3A5C]/5"><td colSpan={COLS} className="p-2.5 border-b border-[#c5d4e6] border-t-2 border-[#1B3A5C]/20"><span className="text-[13px] font-bold text-[#1B3A5C]">{g.buName}</span><span className="text-[11px] text-[#6b5240] ml-3">{'Responsible: ' + g.bum}</span></td></tr>);
-                  g.departments.forEach(function(d, i) {
-                    rows.push(<tr key={'d-' + d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}><td className="p-1.5 text-[11px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td><td className="p-1.5 text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName ? d.deptName.replace(/^\d+\s*/, '') : ''}</td><RowCells d={d} /></tr>);
-                  });
-                  if (g.total) rows.push(<tr key={'tot-' + g.bum} className="bg-[#f5f0ea]"><td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] italic text-[#6b5240]">{'TOTAAL ' + g.buName.replace('BU-', '')}</td><RowCells d={g.total} bold /></tr>);
-                  return rows;
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ DEPT VIEW ═══ */}
-      {view === 'dept' && (
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1400px' }}>
-              <THead {...theadProps} sortable sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
-              <tbody>
-                {gt && <tr className="bg-[#faf7f4]"><td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td><RowCells d={gt} bold /></tr>}
-                {sortedDepts.map(function(d, i) {
-                  return <tr key={d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}><td className="p-1.5 text-[11px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td><td className="p-1.5 text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" title={d.deptName}><div className="flex items-center gap-1"><span className="truncate max-w-[140px]">{d.deptName ? d.deptName.replace(/^\d+\s*/, '') : ''}</span><span className="text-[9px] text-[#a08a74]">{'(' + d.bum + ')'}</span></div></td><RowCells d={d} /></tr>;
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ BUM VIEW ═══ */}
-      {view === 'bum' && (
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1400px' }}>
-              <THead {...theadProps} sortable={false} sortCol="" sortDir="" onSort={null} />
-              <tbody>
-                {gt && <tr className="bg-[#faf7f4]"><td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL ALLE MANAGERS</td><RowCells d={gt} bold /></tr>}
-                <tr><td colSpan={COLS} className="h-3 bg-[#faf7f4]"></td></tr>
-                {bumGroups.map(function(g) {
-                  var rows = [];
-                  rows.push(<tr key={'bh-' + g.bum} className="bg-[#1B3A5C]/5"><td colSpan={COLS} className="p-2.5 border-b border-[#c5d4e6] border-t-2 border-[#1B3A5C]/20"><div className="flex items-center gap-3"><span className="w-7 h-7 rounded-full bg-[#E84E1B] text-white flex items-center justify-center text-[11px] font-bold">{g.bum.charAt(0)}</span><span className="text-[13px] font-bold text-[#1B3A5C]">{g.bum}</span>{g.buName ? <span className="text-[10px] text-[#6b5240]">{'— ' + g.buName}</span> : null}<span className="ml-auto text-[10px] text-[#6b5240]">{g.departments.length + ' dept.'}</span><span className={'ml-2 font-bold font-mono text-[11px] ' + (g.total.mtdIdxBud < 100 ? 'text-red-600' : 'text-green-700')}>{'Idx: ' + Math.round(g.total.mtdIdxBud)}</span></div></td></tr>);
-                  rows.push(<tr key={'bt-' + g.bum} className="bg-[#f5f0ea]"><td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">{'TOTAAL ' + g.bum.toUpperCase()}</td><RowCells d={g.total} bold /></tr>);
-                  g.departments.forEach(function(d, i) {
-                    rows.push(<tr key={'bd-' + d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}><td className="p-1.5 text-[11px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td><td className="p-1.5 text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName ? d.deptName.replace(/^\d+\s*/, '') : ''}</td><RowCells d={d} /></tr>);
-                  });
-                  rows.push(<tr key={'bs2-' + g.bum}><td colSpan={COLS} className="h-2"></td></tr>);
-                  return rows;
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
         <div className="flex flex-wrap gap-5 text-[10px] text-[#6b5240]">
