@@ -137,7 +137,12 @@ export default function IndexDashboard() {
 
   var supabase = createClient();
   _e(function() { loadData(); checkAuth(); }, []);
-  _e(function() { if (isAdmin) setCgfUnlocked(true); }, [isAdmin]);
+  // CGF is only unlocked via the admin menu toggle
+  _e(function() {
+    function onCGFToggle() { setCgfUnlocked(function(u) { var nv = !u; if (!nv) setBudgetMode('target'); return nv; }); }
+    window.addEventListener('toggle-cgf', onCGFToggle);
+    return function() { window.removeEventListener('toggle-cgf', onCGFToggle); };
+  }, []);
 
   async function loadData() {
     var allSales = [], allBudget = [], from = 0, step = 1000;
