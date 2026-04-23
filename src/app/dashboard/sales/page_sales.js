@@ -108,7 +108,7 @@ export default function SalesDashboard(){
     window.addEventListener('toggle-corrections',onCorrToggle);
     return()=>{window.removeEventListener('toggle-cgf',onCGFToggle);window.removeEventListener('toggle-corrections',onCorrToggle)}
   },[]);
-  useEffect(()=>{if(isAdmin)setCgfUnlocked(true)},[isAdmin]);
+  // CGF is only unlocked via the admin menu toggle, never automatically
   const[corrStore,setCorrStore]=useState('1');
   const[corrYear,setCorrYear]=useState(2026);
   const[corrMonth,setCorrMonth]=useState(1);
