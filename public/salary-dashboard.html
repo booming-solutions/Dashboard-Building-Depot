@@ -60,7 +60,10 @@ h1{font-size:22px;font-weight:700;letter-spacing:-.3px;margin-bottom:2px}
 <p style="font-size:13px;color:var(--tx3);margin:0">Building Depot Trading B.V. — mrt 2025 t/m mrt 2026</p>
 </div>
 </div>
-<div style="border:1.5px solid var(--ac);border-radius:20px;padding:6px 16px;font-size:13px;font-weight:500;color:var(--ac)">Cura\u00e7ao \u00b7 XCG</div>
+<div style="display:flex;gap:6px;background:var(--sf2);border-radius:22px;padding:3px">
+<button id="loc-cur" style="padding:7px 18px;border-radius:19px;border:none;background:var(--ac);color:#fff;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(214,59,26,.25)">Curacao</button>
+<button id="loc-bon" style="padding:7px 18px;border-radius:19px;border:none;background:transparent;color:var(--tx3);font-family:inherit;font-size:13px;font-weight:500;cursor:not-allowed;opacity:0.5" title="Binnenkort beschikbaar" disabled>Bonaire</button>
+</div>
 </div>
 <div style="margin-bottom:24px"><span style="font-size:14px;font-weight:600;color:var(--ac);padding-bottom:6px;border-bottom:2.5px solid var(--ac)">Dashboard</span></div>
 <div class="kr" id="kpis"></div>
@@ -283,7 +286,7 @@ function renderKPIs(){
     `<div class="k"><div class="kl">${lbl} — 12 maanden</div><div class="kv">ANG ${fk(t)}</div><div class="ks">Gem. ANG ${fk(Math.round(a))} / mnd</div></div>`+
     `<div class="k"><div class="kl">Laatste 3 maanden</div><div class="kv">ANG ${fk(Math.round(l3))}</div><div class="ks">per maand gemiddeld</div></div>`+
     `<div class="k"><div class="kl">Trend laatste 3 mnd</div><div class="kv ${pv>0?'up':'dn'}">${pv>0?'+':''}${pv.toFixed(1)}%</div><div class="ks">vs. 3 mnd daarvoor</div></div>`+
-    `<div class="k"><div class="kl">${sel&&mode==='dept'?lbl+' ':''} headcount</div><div class="kv">${hcS.toFixed(0)} → ${hcE.toFixed(0)}</div><div class="ks ${hcD>0?'up':'dn'}" title="${stagInfo}">${hcD>0?'+':''}${hcD.toFixed(1)} FTE (mrt→feb) · ${stagInfo}</div></div>`;
+    `<div class="k"><div class="kl">${sel&&mode==='dept'?lbl+' ':''} headcount</div><div class="kv">${hcS.toFixed(0)} → ${hcE.toFixed(0)}</div><div class="ks ${hcD>0?'up':'dn'}" title="${stagInfo}">${hcD>0?'+':''}${hcD.toFixed(1)} FTE (mrt-25 → mrt-26) · ${stagInfo}</div></div>`;
 }
 
 function renderTg(){document.getElementById('tg').innerHTML=['dept','type'].map(m=>`<button class="tb ${mode===m?'a':''}" onclick="mode='${m}';sel=null;render()">${m==='dept'?'Per afdeling':'Per kostensoort'}</button>`).join('')}
@@ -328,11 +331,11 @@ function renderCharts(){
     wf=Object.entries(SD[sel]).map(([k,v])=>({n:k,d:v.d})).filter(x=>Math.abs(x.d)>=0.1).sort((a,b)=>b.d-a.d);
     const td=Object.values(SD[sel]).reduce((s,v)=>s+v.d,0);
     wf.push({n:'TOTAAL',d:Math.round(td*10)/10});
-    wfT=sel+' — FTE mutatie per subafdeling';wfS='Gem. mrt-aug \'25 → feb \'26';
+    wfT=sel+' — FTE mutatie per subafdeling';wfS='mrt \'25 → mrt \'26';
   }else{
     wf=Object.entries(HC.byDept).map(([k,v])=>({n:k,d:Math.round((v[N-1]-v[0])*10)/10})).filter(x=>Math.abs(x.d)>=0.1).sort((a,b)=>b.d-a.d);
     wf.push({n:'TOTAAL',d:Math.round((HC.total[N-1]-HC.total[0])*10)/10});
-    wfT='Headcount mutatie per afdeling';wfS='mrt-25 → feb-26';
+    wfT='Headcount mutatie per afdeling';wfS='mrt-25 → mrt-26';
   }
   document.getElementById('t3').textContent=wfT;document.getElementById('s3').textContent=wfS;
   document.getElementById('ww').style.height=Math.max(200,wf.length*42+60)+'px';
@@ -353,9 +356,9 @@ function renderCharts(){
   }else{
     fc.style.display='block';
     document.getElementById('t4').textContent='FTE-overzicht alle afdelingen';
-    document.getElementById('s4').textContent='mrt \'25 vs feb \'26 (geschat)';
+    document.getElementById('s4').textContent='mrt \'25 vs mrt \'26';
     const it=Object.entries(HC.byDept).sort((a,b)=>b[1][N-1]-a[1][N-1]);
-    let h='<table class="tbl"><thead><tr><th>Afdeling</th><th class="n">mrt-25</th><th class="n">feb-26</th><th class="n">Mutatie</th></tr></thead><tbody>';
+    let h='<table class="tbl"><thead><tr><th>Afdeling</th><th class="n">mrt-25</th><th class="n">mrt-26</th><th class="n">Mutatie</th></tr></thead><tbody>';
     it.forEach(([k,v])=>{const d=Math.round((v[N-1]-v[0])*10)/10;h+=`<tr><td>${k}</td><td class="n">${v[0].toFixed(1)}</td><td class="n">${v[N-1].toFixed(1)}</td><td class="n ${d>0?'p':d<0?'ng':''}">${d>0?'+':''}${d.toFixed(1)}</td></tr>`});
     const tS=HC.total[0],tE=HC.total[N-1],tD=Math.round((tE-tS)*10)/10;
     h+=`<tr><td>Totaal</td><td class="n">${tS.toFixed(1)}</td><td class="n">${tE.toFixed(1)}</td><td class="n ${tD>0?'p':tD<0?'ng':''}">${tD>0?'+':''}${tD.toFixed(1)}</td></tr></tbody></table>`;
@@ -367,7 +370,7 @@ function renderCharts(){
 
 function actiefAccordion(){
   const deptOrder=Object.entries(HC.byDept).sort((a,b)=>b[1][N-1]-a[1][N-1]).map(x=>x[0]);
-  let h='<div style="margin-top:28px"><div style="font-size:15px;font-weight:600;margin-bottom:4px">Personeelsoverzicht per afdeling</div><div style="font-size:12px;color:var(--tx3);margin-bottom:16px">Mutatieoverzicht mrt 2025 → feb 2026 — klik op + om details te zien</div>';
+  let h='<div style="margin-top:28px"><div style="font-size:15px;font-weight:600;margin-bottom:4px">Personeelsoverzicht per afdeling</div><div style="font-size:12px;color:var(--tx3);margin-bottom:16px">Mutatieoverzicht mrt 2025 → mrt 2026 — klik op + om details te zien</div>';
   let gS=0,gL=0,gN=0,gE=0,gSf=0,gLf=0,gNf=0,gEf=0;
   deptOrder.forEach((dept,di)=>{
     const afds=FLOW[dept];if(!afds)return;
@@ -410,7 +413,7 @@ function actiefAccordion(){
         h+=miniTable(data.new,false,true);
       }
       // Eindsituatie
-      h+=`<div style="margin-top:10px;padding:8px 12px;background:var(--sf2);border-radius:6px;font-size:12px;font-weight:600">Bezetting 28 feb 2026: ${data.end.length} medewerkers, ${ef.toFixed(1)} FTE</div>`;
+      h+=`<div style="margin-top:10px;padding:8px 12px;background:var(--sf2);border-radius:6px;font-size:12px;font-weight:600">Bezetting 31 mrt 2026: ${data.end.length} medewerkers, ${ef.toFixed(1)} FTE</div>`;
       h+=`</div>`;
     });
     h+='</div></div>';

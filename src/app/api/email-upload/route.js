@@ -1,7 +1,10 @@
 /* ============================================================
-   BESTAND: route_email_v2.js
+   BESTAND: route_email_v3.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v3: processNegativeInventory maakt nu automatisch
+   een dagelijkse snapshot per department/regio in
+   negative_inventory_snapshots tabel.
    ============================================================ */
 import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
@@ -265,7 +268,72 @@ async function processNegativeInventory(json) {
     totalInserted += batch.length;
   }
 
-  return { table: 'negative_inventory', rows_imported: totalInserted };
+  // ── SNAPSHOT: aggregate per (region, department) and upsert
+  // Only include truly negative rows
+  var negRows = rows.filter(function(r) { return r.qoh < 0; });
+
+  var today = new Date().toISOString().split('T')[0];
+  var snapAgg = {};  // key = region|dept_code
+
+  negRows.forEach(function(r) {
+    var sn = String(r.store_number).trim().toUpperCase();
+    var region = (sn === 'A' || sn === 'B') ? 'Bonaire' : 'Curacao';
+    // skip rows where store is totally empty
+    if (!sn) return;
+
+    var key = region + '|' + r.dept_code;
+    if (!snapAgg[key]) {
+      snapAgg[key] = {
+        snapshot_date: today,
+        region: region,
+        department_code: r.dept_code,
+        department_name: r.dept_name,
+        items_count: 0,
+        total_negative_value: 0,
+        total_negative_qty: 0,
+      };
+    }
+    snapAgg[key].items_count += 1;
+    snapAgg[key].total_negative_value += (r.cost || 0);
+    snapAgg[key].total_negative_qty += (r.qoh || 0);
+  });
+
+  var snapRows = Object.values(snapAgg).map(function(s) {
+    return {
+      snapshot_date: s.snapshot_date,
+      region: s.region,
+      department_code: s.department_code,
+      department_name: s.department_name,
+      items_count: s.items_count,
+      total_negative_value: Math.round(s.total_negative_value * 100) / 100,
+      total_negative_qty: Math.round(s.total_negative_qty * 100) / 100,
+    };
+  });
+
+  console.log('Snapshot rows: ' + snapRows.length + ' (date=' + today + ')');
+
+  if (snapRows.length > 0) {
+    // Delete existing snapshot for this date first (fresh overwrite if re-sent same day)
+    var delSnap = await supabase
+      .from('negative_inventory_snapshots')
+      .delete({ count: 'exact' })
+      .eq('snapshot_date', today);
+    if (delSnap.error) {
+      console.error('Snapshot delete error: ' + delSnap.error.message);
+    } else {
+      console.log('Deleted ' + (delSnap.count || 0) + ' existing snapshot rows for ' + today);
+    }
+
+    // Insert fresh snapshot
+    var snapIns = await supabase.from('negative_inventory_snapshots').insert(snapRows);
+    if (snapIns.error) {
+      console.error('Snapshot insert error: ' + snapIns.error.message);
+    } else {
+      console.log('Inserted ' + snapRows.length + ' snapshot rows');
+    }
+  }
+
+  return { table: 'negative_inventory', rows_imported: totalInserted, snapshot_rows: snapRows.length };
 }
 
 /* ── Process TICKET data (aggregate to traffic_data) ── */
