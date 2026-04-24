@@ -1,14 +1,21 @@
 /* ============================================================
-   BESTAND: page_admin_v2.js
+   BESTAND: page_admin_v3.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
-   (hernoem naar page.js bij het plaatsen)
+   (vervang het bestaande page.js bestand)
+   
+   WIJZIGINGEN t.o.v. v2:
+   - ROLE_PRESETS wordt nu uit Supabase tabel 'role_presets' geladen
+   - "Bewerken" knop per rol op Rollen & Toegang tab
+   - "+ Nieuwe Rol" knop op Rollen & Toegang tab
+   - Systeem-rollen (admin/manager/buyer/finance/viewer) kunnen 
+     bewerkt worden maar niet verwijderd
    ============================================================ */
 'use client';
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
 
-/* ── Report definitions with role presets ── */
+/* ── Report definitions (nog steeds hardcoded, rollen komen uit DB) ── */
 var REPORTS = [
   { id: 'sales', label: 'Omzet en Marge', group: 'Omzet', icon: '📊' },
   { id: 'sales_index', label: 'Index Rapport', group: 'Omzet', icon: '📈' },
@@ -20,23 +27,10 @@ var REPORTS = [
   { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
 ];
 
-var ROLE_PRESETS = {
-  admin: { label: 'Admin — Volledige toegang', reports: REPORTS.map(function(r) { return r.id; }) },
-  manager: { label: 'Manager — Dashboard + exports', reports: ['sales', 'sales_index', 'sales_traffic', 'inventory_budget', 'inventory_buying', 'inventory_negative', 'inventory_health', 'hr_payroll'] },
-  buyer: { label: 'Buyer — Inkoop & voorraad', reports: ['inventory_budget', 'inventory_buying', 'inventory_negative', 'inventory_health'] },
-  finance: { label: 'Finance — Omzet & marge', reports: ['sales', 'sales_index', 'sales_traffic', 'hr_payroll'] },
-  viewer: { label: 'Viewer — Alleen basis', reports: ['sales'] },
-};
-
-var ROLES = Object.keys(ROLE_PRESETS);
-
-function Pill({ label, active, onClick }) {
-  return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
-}
-
 export default function AdminUsersPage() {
   var _u = useState([]), users = _u[0], setUsers = _u[1];
   var _c = useState([]), companies = _c[0], setCompanies = _c[1];
+  var _rp = useState([]), rolePresets = _rp[0], setRolePresets = _rp[1];
   var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
   var _p = useState(null), profile = _p[0], setProfile = _p[1];
   var _msg = useState(null), msg = _msg[0], setMsg = _msg[1];
@@ -72,6 +66,18 @@ export default function AdminUsersPage() {
   var _deleteTarget = useState(null), deleteTarget = _deleteTarget[0], setDeleteTarget = _deleteTarget[1];
   var _deleting = useState(false), deleting = _deleting[0], setDeleting = _deleting[1];
 
+  // ═══ ROLE MANAGEMENT STATE ═══
+  var _editRolePreset = useState(null), editRolePreset = _editRolePreset[0], setEditRolePreset = _editRolePreset[1];
+  var _rpId = useState(''), rpId = _rpId[0], setRpId = _rpId[1];
+  var _rpLabel = useState(''), rpLabel = _rpLabel[0], setRpLabel = _rpLabel[1];
+  var _rpDescription = useState(''), rpDescription = _rpDescription[0], setRpDescription = _rpDescription[1];
+  var _rpReports = useState([]), rpReports = _rpReports[0], setRpReports = _rpReports[1];
+  var _rpSortOrder = useState(100), rpSortOrder = _rpSortOrder[0], setRpSortOrder = _rpSortOrder[1];
+  var _rpIsNew = useState(false), rpIsNew = _rpIsNew[0], setRpIsNew = _rpIsNew[1];
+  var _savingRole = useState(false), savingRole = _savingRole[0], setSavingRole = _savingRole[1];
+  var _deleteRole = useState(null), deleteRole = _deleteRole[0], setDeleteRole = _deleteRole[1];
+  var _deletingRole = useState(false), deletingRole = _deletingRole[0], setDeletingRole = _deletingRole[1];
+
   var supabase = createClient();
 
   useEffect(function() { loadData(); }, []);
@@ -86,12 +92,22 @@ export default function AdminUsersPage() {
     if (pr.data) setUsers(pr.data);
     var co = await supabase.from('companies').select('*').order('name');
     if (co.data) { setCompanies(co.data); if (co.data.length && !newCompanyId) setNewCompanyId(co.data[0].id); }
+    
+    // Laad rol-presets uit database
+    var rp = await supabase.from('role_presets').select('*').order('sort_order');
+    if (rp.data) setRolePresets(rp.data);
+    
     setLoading(false);
   }
 
   function showMessage(text, type) {
     setMsg({ text: text, type: type || 'success' });
     setTimeout(function() { setMsg(null); }, 4000);
+  }
+
+  // Helper: vind een rol-preset op id
+  function getPreset(roleId) {
+    return rolePresets.find(function(r) { return r.id === roleId; });
   }
 
   async function adminApiCall(action, body) {
@@ -116,7 +132,8 @@ export default function AdminUsersPage() {
     if (authResult.error) { showMessage('Fout: ' + authResult.error.message, 'error'); setCreating(false); return; }
 
     if (authResult.data && authResult.data.user) {
-      var defaultReports = ROLE_PRESETS[newRole] ? ROLE_PRESETS[newRole].reports : ['sales'];
+      var preset = getPreset(newRole);
+      var defaultReports = preset ? preset.reports : ['sales'];
       await supabase.from('profiles').upsert({
         id: authResult.data.user.id,
         email: newEmail,
@@ -148,7 +165,8 @@ export default function AdminUsersPage() {
 
   function handleRoleChange(role) {
     setEditRole(role);
-    if (ROLE_PRESETS[role]) setEditReports(ROLE_PRESETS[role].reports.slice());
+    var preset = getPreset(role);
+    if (preset) setEditReports(preset.reports.slice());
   }
 
   function handleNewRoleChange(role) {
@@ -205,6 +223,116 @@ export default function AdminUsersPage() {
     await loadData();
   }
 
+  // ═══ ROLE MANAGEMENT FUNCTIES ═══
+
+  function startEditRole(role) {
+    setEditRolePreset(role);
+    setRpId(role.id);
+    setRpLabel(role.label || '');
+    setRpDescription(role.description || '');
+    setRpReports(role.reports || []);
+    setRpSortOrder(role.sort_order || 100);
+    setRpIsNew(false);
+  }
+
+  function startNewRole() {
+    setEditRolePreset({});
+    setRpId('');
+    setRpLabel('');
+    setRpDescription('');
+    setRpReports([]);
+    var maxSort = rolePresets.reduce(function(m, r) { return Math.max(m, r.sort_order || 0); }, 0);
+    setRpSortOrder(maxSort + 10);
+    setRpIsNew(true);
+  }
+
+  function toggleRpReport(reportId) {
+    setRpReports(function(prev) {
+      if (prev.indexOf(reportId) >= 0) return prev.filter(function(r) { return r !== reportId; });
+      return prev.concat([reportId]);
+    });
+  }
+
+  async function handleSaveRole() {
+    if (!rpId.trim()) { showMessage('Rol-id is verplicht', 'error'); return; }
+    if (!rpLabel.trim()) { showMessage('Label is verplicht', 'error'); return; }
+
+    // Valideer id: alleen kleine letters, cijfers, underscores
+    var idPattern = /^[a-z0-9_]+$/;
+    if (!idPattern.test(rpId)) {
+      showMessage('Rol-id mag alleen kleine letters, cijfers en underscores bevatten', 'error');
+      return;
+    }
+
+    setSavingRole(true);
+
+    if (rpIsNew) {
+      // Check of id al bestaat
+      var exists = rolePresets.find(function(r) { return r.id === rpId; });
+      if (exists) {
+        showMessage('Een rol met id "' + rpId + '" bestaat al', 'error');
+        setSavingRole(false);
+        return;
+      }
+      var insertResult = await supabase.from('role_presets').insert({
+        id: rpId,
+        label: rpLabel,
+        description: rpDescription,
+        reports: rpReports,
+        sort_order: rpSortOrder,
+        is_system: false,
+      });
+      if (insertResult.error) {
+        showMessage('Fout bij aanmaken: ' + insertResult.error.message, 'error');
+        setSavingRole(false);
+        return;
+      }
+      showMessage('Nieuwe rol "' + rpLabel + '" aangemaakt');
+    } else {
+      var updateResult = await supabase.from('role_presets').update({
+        label: rpLabel,
+        description: rpDescription,
+        reports: rpReports,
+        sort_order: rpSortOrder,
+        updated_at: new Date().toISOString(),
+      }).eq('id', editRolePreset.id);
+      if (updateResult.error) {
+        showMessage('Fout bij opslaan: ' + updateResult.error.message, 'error');
+        setSavingRole(false);
+        return;
+      }
+      showMessage('Rol "' + rpLabel + '" bijgewerkt');
+    }
+
+    setEditRolePreset(null);
+    await loadData();
+    setSavingRole(false);
+  }
+
+  async function handleDeleteRole() {
+    if (!deleteRole) return;
+    setDeletingRole(true);
+
+    // Check of er gebruikers met deze rol zijn
+    var usersWithRole = users.filter(function(u) { return u.role === deleteRole.id; });
+    if (usersWithRole.length > 0) {
+      showMessage('Kan niet verwijderen: ' + usersWithRole.length + ' gebruiker(s) hebben deze rol', 'error');
+      setDeletingRole(false);
+      setDeleteRole(null);
+      return;
+    }
+
+    var result = await supabase.from('role_presets').delete().eq('id', deleteRole.id);
+    if (result.error) {
+      showMessage('Fout bij verwijderen: ' + result.error.message, 'error');
+    } else {
+      showMessage('Rol "' + deleteRole.label + '" verwijderd');
+      await loadData();
+    }
+    setDeleteRole(null);
+    setDeletingRole(false);
+  }
+
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6b5240]">Admin Panel laden...</p></div>;
 
   if (profile && profile.role !== 'admin') {
@@ -219,6 +347,7 @@ export default function AdminUsersPage() {
     );
   }
 
+  // Kleuren voor de systeem-rollen; custom rollen krijgen een default grijs
   var roleColors = {
     admin: { bg: 'bg-red-50', text: 'text-red-600', label: 'Admin' },
     manager: { bg: 'bg-blue-50', text: 'text-blue-600', label: 'Manager' },
@@ -227,14 +356,17 @@ export default function AdminUsersPage() {
     viewer: { bg: 'bg-gray-50', text: 'text-gray-600', label: 'Viewer' },
   };
 
+  function getRoleStyle(roleId) {
+    if (roleColors[roleId]) return roleColors[roleId];
+    // Custom rol: gebruik slate kleur
+    var preset = getPreset(roleId);
+    var label = preset ? (preset.id.charAt(0).toUpperCase() + preset.id.slice(1)) : roleId;
+    return { bg: 'bg-slate-50', text: 'text-slate-600', label: label };
+  }
+
   var companyName = function(cid) {
     var c = companies.find(function(co) { return co.id === cid; });
     return c ? c.short_name || c.name : '—';
-  };
-
-  var reportLabel = function(rid) {
-    var r = REPORTS.find(function(rep) { return rep.id === rid; });
-    return r ? r.label : rid;
   };
 
   return (
@@ -250,7 +382,14 @@ export default function AdminUsersPage() {
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Gebruikersbeheer</h1>
           <p className="text-[13px] text-[#6b5240]">Beheer gebruikers, rollen en rapporttoegang</p>
         </div>
-        <button onClick={function() { setShowCreate(true); }} className="px-5 py-2.5 rounded-lg bg-[#E84E1B] text-white text-[13px] font-semibold hover:bg-[#d4431a]">+ Nieuwe Gebruiker</button>
+        <div className="flex gap-2">
+          {tab === 'roles' && (
+            <button onClick={startNewRole} className="px-5 py-2.5 rounded-lg bg-[#1B3A5C] text-white text-[13px] font-semibold hover:bg-[#163048]">+ Nieuwe Rol</button>
+          )}
+          {tab === 'users' && (
+            <button onClick={function() { setShowCreate(true); }} className="px-5 py-2.5 rounded-lg bg-[#E84E1B] text-white text-[13px] font-semibold hover:bg-[#d4431a]">+ Nieuwe Gebruiker</button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -287,7 +426,7 @@ export default function AdminUsersPage() {
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Rol</label>
                   <select value={newRole} onChange={function(e) { handleNewRoleChange(e.target.value); }}
                     className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]">
-                    {ROLES.map(function(r) { return <option key={r} value={r}>{ROLE_PRESETS[r].label}</option>; })}
+                    {rolePresets.map(function(r) { return <option key={r.id} value={r.id}>{r.label}</option>; })}
                   </select>
                 </div>
                 <div>
@@ -304,11 +443,12 @@ export default function AdminUsersPage() {
                 </div>
               </div>
               <div className="mb-4">
-                <label className="text-[10px] text-[#6b5240] font-bold uppercase mb-2 block">Standaard rapporten voor {ROLE_PRESETS[newRole] ? newRole : 'viewer'}</label>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase mb-2 block">Standaard rapporten voor {newRole}</label>
                 <div className="flex flex-wrap gap-2">
                   {REPORTS.map(function(rep) {
-                    var preset = ROLE_PRESETS[newRole] ? ROLE_PRESETS[newRole].reports : ['sales'];
-                    var active = preset.indexOf(rep.id) >= 0;
+                    var preset = getPreset(newRole);
+                    var presetReports = preset ? preset.reports : ['sales'];
+                    var active = presetReports.indexOf(rep.id) >= 0;
                     return <span key={rep.id} className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold ' + (active ? 'bg-green-50 text-green-600' : 'bg-gray-50 text-gray-400')}>{rep.icon} {rep.label}</span>;
                   })}
                 </div>
@@ -338,7 +478,7 @@ export default function AdminUsersPage() {
                 </thead>
                 <tbody>
                   {users.map(function(u) {
-                    var rc = roleColors[u.role] || roleColors.viewer;
+                    var rc = getRoleStyle(u.role);
                     var reports = u.allowed_reports || [];
                     return (
                       <tr key={u.id} className="hover:bg-[#faf5f0]">
@@ -413,25 +553,38 @@ export default function AdminUsersPage() {
             <h3 className="text-[16px] font-bold mb-1">Rol Presets</h3>
             <p className="text-[13px] text-[#6b5240] mb-4">Bij het aanmaken van een gebruiker worden automatisch de rapporten van de geselecteerde rol toegekend. Je kunt daarna per gebruiker aanpassen.</p>
             <div className="space-y-3">
-              {ROLES.map(function(role) {
-                var preset = ROLE_PRESETS[role];
-                var rc = roleColors[role] || roleColors.viewer;
+              {rolePresets.map(function(preset) {
+                var rc = getRoleStyle(preset.id);
+                var userCount = users.filter(function(u) { return u.role === preset.id; }).length;
                 return (
-                  <div key={role} className="flex items-start gap-4 p-3 rounded-xl bg-[#faf7f4]">
+                  <div key={preset.id} className="flex items-start gap-4 p-3 rounded-xl bg-[#faf7f4]">
                     <div className="w-[140px] flex-shrink-0">
                       <span className={'inline-block px-3 py-1 rounded-full text-[12px] font-semibold ' + rc.bg + ' ' + rc.text}>{rc.label}</span>
+                      {preset.is_system && (
+                        <p className="text-[9px] text-[#a08a74] mt-1 uppercase tracking-wider font-semibold">Systeem</p>
+                      )}
                     </div>
                     <div className="flex-1">
                       <p className="text-[12px] text-[#6b5240] mb-2">{preset.label}</p>
                       <div className="flex flex-wrap gap-2">
                         {REPORTS.map(function(rep) {
-                          var active = preset.reports.indexOf(rep.id) >= 0;
+                          var active = (preset.reports || []).indexOf(rep.id) >= 0;
                           return <span key={rep.id} className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold ' + (active ? 'bg-green-50 text-green-600 border border-green-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}>{rep.icon} {rep.label}</span>;
                         })}
                       </div>
                     </div>
-                    <div className="text-[12px] font-mono text-[#6b5240] flex-shrink-0">
-                      {users.filter(function(u) { return u.role === role; }).length} users
+                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                      <div className="text-[12px] font-mono text-[#6b5240]">
+                        {userCount} users
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button onClick={function() { startEditRole(preset); }}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#1B3A5C] bg-[#e8eff7] hover:bg-[#d5e2f0] transition-colors">Bewerken</button>
+                        {!preset.is_system && (
+                          <button onClick={function() { setDeleteRole(preset); }}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors">Verwijder</button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -479,7 +632,7 @@ export default function AdminUsersPage() {
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase">Rol</label>
                 <select value={editRole} onChange={function(e) { handleRoleChange(e.target.value); }}
                   className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]">
-                  {ROLES.map(function(r) { return <option key={r} value={r}>{ROLE_PRESETS[r].label}</option>; })}
+                  {rolePresets.map(function(r) { return <option key={r.id} value={r.id}>{r.label}</option>; })}
                 </select>
                 <p className="text-[10px] text-[#a08a74] mt-1">Rol wijzigen past automatisch de rapporttoegang aan naar de standaard preset</p>
               </div>
@@ -532,6 +685,124 @@ export default function AdminUsersPage() {
         </div>
       )}
 
+      {/* ═══ EDIT/NEW ROLE MODAL ═══ */}
+      {editRolePreset && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setEditRolePreset(null); }}>
+          <div className="bg-white rounded-2xl p-7 w-[560px] max-h-[90vh] overflow-y-auto shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-[#1B3A5C] flex items-center justify-center">
+                <span className="text-white text-lg">{rpIsNew ? '➕' : '✏️'}</span>
+              </div>
+              <div>
+                <h3 className="text-[16px] font-bold">{rpIsNew ? 'Nieuwe Rol Aanmaken' : 'Rol Bewerken'}</h3>
+                <p className="text-[12px] text-[#6b5240]">{rpIsNew ? 'Definieer een nieuwe rol met standaard rapporttoegang' : editRolePreset.id}</p>
+              </div>
+            </div>
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase">Rol-ID {rpIsNew && '*'}</label>
+                <input 
+                  value={rpId} 
+                  onChange={function(e) { setRpId(e.target.value.toLowerCase()); }}
+                  disabled={!rpIsNew}
+                  className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C] disabled:bg-[#faf7f4] disabled:text-[#a08a74]"
+                  placeholder="bv. inkoper, finance_lead" />
+                <p className="text-[10px] text-[#a08a74] mt-1">
+                  {rpIsNew 
+                    ? 'Alleen kleine letters, cijfers en underscores. Kan later niet gewijzigd worden.' 
+                    : 'De rol-ID kan niet gewijzigd worden na aanmaken'}
+                </p>
+              </div>
+              <div>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase">Label *</label>
+                <input value={rpLabel} onChange={function(e) { setRpLabel(e.target.value); }}
+                  className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]"
+                  placeholder="bv. Inkoper — Voorraad & bestellingen" />
+                <p className="text-[10px] text-[#a08a74] mt-1">Wordt getoond in dropdowns en overzichten</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase">Beschrijving</label>
+                <textarea value={rpDescription} onChange={function(e) { setRpDescription(e.target.value); }}
+                  className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]"
+                  rows={2}
+                  placeholder="Optionele toelichting bij de rol" />
+              </div>
+              <div>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase">Volgorde</label>
+                <input 
+                  type="number" 
+                  value={rpSortOrder} 
+                  onChange={function(e) { setRpSortOrder(parseInt(e.target.value) || 0); }}
+                  className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" />
+                <p className="text-[10px] text-[#a08a74] mt-1">Lager = eerder in de lijst (admin=10, viewer=50)</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-[#6b5240] font-bold uppercase mb-2 block">Standaard Rapporttoegang</label>
+                <div className="space-y-1.5">
+                  {REPORTS.map(function(rep) {
+                    var active = rpReports.indexOf(rep.id) >= 0;
+                    return (
+                      <label key={rep.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#faf7f4] cursor-pointer">
+                        <input type="checkbox" checked={active} onChange={function() { toggleRpReport(rep.id); }}
+                          className="w-4 h-4 rounded border-[#e5ddd4] text-[#E84E1B] focus:ring-[#E84E1B]" />
+                        <span className="text-[14px]">{rep.icon}</span>
+                        <div className="flex-1">
+                          <span className="text-[13px] font-semibold">{rep.label}</span>
+                          <span className="text-[11px] text-[#a08a74] ml-2">{rep.group}</span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              {!rpIsNew && editRolePreset.is_system && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-[11px] text-amber-700 font-semibold">ℹ️ Systeem-rol</p>
+                  <p className="text-[11px] text-amber-600 mt-1">Deze rol kan niet verwijderd worden, maar je kunt het label, de beschrijving en de rapporttoegang wel aanpassen.</p>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={function() { setEditRolePreset(null); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
+              <button onClick={handleSaveRole} disabled={savingRole} className="flex-1 py-2.5 rounded-lg bg-[#1B3A5C] text-white text-[13px] font-semibold disabled:opacity-50">
+                {savingRole ? 'Opslaan...' : (rpIsNew ? 'Rol Aanmaken' : 'Opslaan')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ DELETE ROLE MODAL ═══ */}
+      {deleteRole && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setDeleteRole(null); }}>
+          <div className="bg-white rounded-2xl p-7 w-[420px] shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center"><span className="text-red-600 text-lg">⚠️</span></div>
+              <div>
+                <h3 className="text-[16px] font-bold text-red-600">Rol Verwijderen</h3>
+                <p className="text-[12px] text-[#6b5240]">Deze actie kan niet ongedaan worden gemaakt</p>
+              </div>
+            </div>
+            <div className="bg-red-50 rounded-xl p-4 mb-5">
+              <p className="text-[13px] text-red-800">
+                Weet je zeker dat je de rol <strong>{deleteRole.label}</strong> (<code className="text-[11px] bg-white px-1 py-0.5 rounded">{deleteRole.id}</code>) permanent wilt verwijderen?
+              </p>
+              {users.filter(function(u) { return u.role === deleteRole.id; }).length > 0 && (
+                <p className="text-[11px] text-red-700 mt-2">
+                  ⚠️ {users.filter(function(u) { return u.role === deleteRole.id; }).length} gebruiker(s) hebben momenteel deze rol. Wijs eerst een andere rol toe voordat je kunt verwijderen.
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={function() { setDeleteRole(null); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
+              <button onClick={handleDeleteRole} disabled={deletingRole} className="flex-1 py-2.5 rounded-lg bg-red-600 text-white text-[13px] font-semibold disabled:opacity-50">
+                {deletingRole ? 'Verwijderen...' : 'Definitief Verwijderen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══ PASSWORD RESET MODAL ═══ */}
       {resetUser && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setResetUser(null); }}>
@@ -560,7 +831,7 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      {/* ═══ DELETE MODAL ═══ */}
+      {/* ═══ DELETE USER MODAL ═══ */}
       {deleteTarget && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setDeleteTarget(null); }}>
           <div className="bg-white rounded-2xl p-7 w-[400px] shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
