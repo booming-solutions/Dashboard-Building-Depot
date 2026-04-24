@@ -1,16 +1,13 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v7.js
+   BESTAND: page_negative_inventory_v9.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.04
+   VERSIE: v3.28.06
    
-   Wijzigingen t.o.v. v6:
-   - Default store = Curaçao (i.p.v. Totaal)
-   - Overzicht: BUM kolom + toggle "Per dept" / "Per BUM" groepering
-   - Overzicht: sorteerbare kolommen
-   - Overzicht: dept-tabel reageert op BUM filter (totals ook)
-   - Detail: totaalrij boven de items-lijst (reageert op filters)
-   - Detail: filter-knoppen "Aantal < -5" en "Waarde < -500" (default UIT)
+   Wijzigingen t.o.v. v8:
+   - Opmerking-kolom toont nu bovenaan de LAATSTE opmerking
+     (wie + wanneer + tekst, max 2 regels met ellipsis)
+   - Daaronder het invoerveld + status + opslaan voor een nieuwe opmerking
    ============================================================ */
 'use client';
 
@@ -204,9 +201,11 @@ export default function NegativeInventoryPage() {
     if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return false;
     if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return false;
     if (selDept !== '__total__' && it.dept_code !== selDept) return false;
+    if (qtyFilter && (it.qty_on_hand || 0) >= -5) return false;
+    if (valFilter && (it.inv_value || 0) >= -500) return false;
     return true;
   }
-  var filteredItems = useMemo(function() { return items.filter(matchFilters); }, [items, store, selBum, selDept]);
+  var filteredItems = useMemo(function() { return items.filter(matchFilters); }, [items, store, selBum, selDept, qtyFilter, valFilter]);
 
   /* ── Filter options ── */
   var bums = useMemo(function() {
@@ -233,6 +232,8 @@ export default function NegativeInventoryPage() {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
       if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
+      if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
+      if (valFilter && (it.inv_value || 0) >= -500) return;
       var code = it.dept_code;
       if (!m[code]) m[code] = { deptCode: code, deptName: it.dept_name, items: 0, value: 0, bumSet: {} };
       m[code].items += 1;
@@ -250,7 +251,7 @@ export default function NegativeInventoryPage() {
       return (parseInt(a.deptCode) || 999) - (parseInt(b.deptCode) || 999);
     });
     return arr;
-  }, [items, store, selBum]);
+  }, [items, store, selBum, qtyFilter, valFilter]);
 
   /* ── BUM groups (for "per BUM" view) ── */
   var bumGroups = useMemo(function() {
@@ -259,6 +260,8 @@ export default function NegativeInventoryPage() {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
       if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
+      if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
+      if (valFilter && (it.inv_value || 0) >= -500) return;
       var b = (it.bum || '—').toUpperCase();
       if (!m[b]) m[b] = { bum: b, items: 0, value: 0, deptSet: {} };
       m[b].items += 1;
@@ -278,7 +281,7 @@ export default function NegativeInventoryPage() {
       return a.bum.localeCompare(b.bum);
     });
     return arr;
-  }, [items, store, selBum]);
+  }, [items, store, selBum, qtyFilter, valFilter]);
 
   /* ── Sorted rows for Overview tab ── */
   var overviewRows = useMemo(function() {
@@ -414,12 +417,6 @@ export default function NegativeInventoryPage() {
     if (hideResolved) {
       arr = arr.filter(function(it) { return latestStatusFor(it.store_number, it.item_number) !== 'opgelost'; });
     }
-    if (qtyFilter) {
-      arr = arr.filter(function(it) { return (it.qty_on_hand || 0) < -5; });
-    }
-    if (valFilter) {
-      arr = arr.filter(function(it) { return (it.inv_value || 0) < -500; });
-    }
     if (search.trim()) {
       var q = search.trim().toLowerCase();
       arr = arr.filter(function(it) {
@@ -455,7 +452,7 @@ export default function NegativeInventoryPage() {
       return String(va).localeCompare(String(vb)) * dir;
     });
     return arr;
-  }, [filteredItems, search, hideResolved, qtyFilter, valFilter, sortCol, sortDir, notesByKey, firstSeen]);
+  }, [filteredItems, search, hideResolved, sortCol, sortDir, notesByKey, firstSeen]);
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -546,6 +543,13 @@ export default function NegativeInventoryPage() {
             <option value="__total__">{selBum !== 'all' ? 'Totaal ' + selBum : 'Totaal alle departementen'}</option>
             {departments.map(function(d) { return <option key={d.deptCode} value={d.deptCode}>{d.deptCode + ' - ' + d.deptName}</option>; })}
           </select>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Drempel</span>
+          <div className="flex gap-1">
+            <Pill label="Aantal < -5" active={qtyFilter} onClick={function() { setQtyFilter(!qtyFilter); }} />
+            <Pill label="Waarde < -500" active={valFilter} onClick={function() { setValFilter(!valFilter); }} />
+          </div>
         </div>
       </div>
 
@@ -719,30 +723,12 @@ export default function NegativeInventoryPage() {
               onChange={function(e) { setSearch(e.target.value); }}
               className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[280px]"
             />
-            <Pill label="Aantal < -5" active={qtyFilter} onClick={function() { setQtyFilter(!qtyFilter); }} />
-            <Pill label="Waarde < -500" active={valFilter} onClick={function() { setValFilter(!valFilter); }} />
             <label className="flex items-center gap-2 text-[12px] text-[#6b5240]">
               <input type="checkbox" checked={hideResolved} onChange={function(e) { setHideResolved(e.target.checked); }} />
               Verberg opgeloste items
             </label>
             <div className="ml-auto text-[11px] text-[#a08a74]">
               {fmt(detailItems.length)} van {fmt(filteredItems.length)} items
-            </div>
-          </div>
-
-          {/* Totaalrij bovenaan */}
-          <div className="bg-[#faf7f4] rounded-[14px] border border-[#e5ddd4] p-4 flex flex-wrap items-center gap-6 shadow-sm">
-            <div>
-              <div className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.8px]">Totaal gefilterd</div>
-              <div className="text-[20px] font-semibold font-mono mt-0.5">{fmt(detailTotals.items)} items</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.8px]">Totale waarde</div>
-              <div className="text-[20px] font-semibold font-mono mt-0.5" style={{ color: '#dc2626' }}>{fmt(Math.round(detailTotals.value))} XCG</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.8px]">Totaal aantal</div>
-              <div className="text-[20px] font-semibold font-mono mt-0.5" style={{ color: '#dc2626' }}>{fmt(detailTotals.qty)}</div>
             </div>
           </div>
 
@@ -797,10 +783,28 @@ export default function NegativeInventoryPage() {
                         </td>
                         <td className="p-2 border-b border-[#f0ebe5]"><StatusBadge status={status} /></td>
                         <td className="p-2 border-b border-[#f0ebe5]">
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col gap-1.5">
+                            {itemNotes.length > 0 && (
+                              <div className="bg-[#faf7f4] border border-[#e5ddd4] rounded px-2 py-1.5">
+                                <div className="text-[9px] text-[#6b5240] flex items-center gap-1.5">
+                                  <span className="font-semibold text-[#1a0a04]">{itemNotes[0].created_by_name || itemNotes[0].created_by_email}</span>
+                                  <span className="text-[#a08a74]">·</span>
+                                  <span>{fmtDate(itemNotes[0].created_at)}</span>
+                                </div>
+                                <div className="text-[11px] text-[#1a0a04] mt-0.5 leading-tight" style={{
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  wordBreak: 'break-word',
+                                }} title={itemNotes[0].note}>
+                                  {itemNotes[0].note}
+                                </div>
+                              </div>
+                            )}
                             <input
                               type="text"
-                              placeholder="Nieuwe opmerking..."
+                              placeholder={itemNotes.length > 0 ? 'Nieuwe opmerking toevoegen...' : 'Nieuwe opmerking...'}
                               value={inlineNote[it.id] || ''}
                               onChange={function(e) { setInlineNote(Object.assign({}, inlineNote, { [it.id]: e.target.value })); }}
                               onKeyDown={function(e) { if (e.key === 'Enter') handleSaveInline(it); }}
