@@ -1,10 +1,12 @@
 /* ============================================================
-   BESTAND: route_email_v3.js
+   BESTAND: route_email_v4.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
-   WIJZIGING v3: processNegativeInventory maakt nu automatisch
-   een dagelijkse snapshot per department/regio in
-   negative_inventory_snapshots tabel.
+   WIJZIGING v4:
+   - detectFileType herkent nu "Quantity on Hand" (was bug: detectie gaf 'unknown' terug)
+   - processNegativeInventory: niet-numerieke dept codes (FE/FF/XX/etc)
+     samenvoegen tot één department 'OTHER'
+   - Snapshot includes all stores (1,2,4,5,9,R = Curacao; A,B = Bonaire)
    ============================================================ */
 import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
@@ -44,9 +46,11 @@ function detectFileType(columns) {
     return 'buying';
   }
 
-  // Negative inventory: has columns like "qty on hand" or "qoh" with negative values context
-  if (cols.some(function(c) { return c.includes('qty') || c.includes('qoh'); }) &&
-      cols.some(function(c) { return c.includes('item'); }) &&
+  // Negative inventory: has "Item Number" + "Quantity on Hand" + "Inventory Value"
+  // (distinguishable from buying by absence of 'sales units')
+  if (cols.some(function(c) { return c.includes('item number'); }) &&
+      cols.some(function(c) { return c.includes('quantity on hand') || c.includes('qty') || c.includes('qoh'); }) &&
+      !cols.some(function(c) { return c.includes('sales units'); }) &&
       !cols.some(function(c) { return c.includes('net sales'); })) {
     return 'negative_inventory';
   }
@@ -237,14 +241,22 @@ async function processNegativeInventory(json) {
   var keys = Object.keys(json[0] || {});
 
   var rows = json.map(function(row) {
+    var rawDept = String(row[findCol(keys, ['department code', 'dept_code', 'dept'])] || '').trim();
+    var rawDeptName = String(row[findCol(keys, ['department name', 'dept_name'])] || '');
+
+    // Non-numeric dept codes (FE, FF, XX, etc) bucket into 'OTHER'
+    var isNumeric = /^\d+$/.test(rawDept);
+    var deptCode = isNumeric ? rawDept : 'OTHER';
+    var deptName = isNumeric ? rawDeptName : 'Other (niet-numerieke categorieën)';
+
     return {
       store_number: String(row[findCol(keys, ['store'])] || ''),
-      dept_code: String(row[findCol(keys, ['department code', 'dept_code', 'dept'])] || ''),
-      dept_name: String(row[findCol(keys, ['department name', 'dept_name'])] || ''),
+      dept_code: deptCode,
+      dept_name: deptName,
       item_number: String(row[findCol(keys, ['item'])] || ''),
       item_description: String(row[findCol(keys, ['description', 'desc'])] || ''),
       qoh: parseFloat(row[findCol(keys, ['qty', 'qoh', 'quantity'])] || 0),
-      cost: parseFloat(row[findCol(keys, ['cost', 'value'])] || 0),
+      cost: parseFloat(row[findCol(keys, ['inventory value', 'value', 'cost'])] || 0),
     };
   }).filter(function(r) { return r.item_number && r.dept_code; });
 
@@ -270,6 +282,7 @@ async function processNegativeInventory(json) {
 
   // ── SNAPSHOT: aggregate per (region, department) and upsert
   // Only include truly negative rows
+  // Region: A,B = Bonaire, all others = Curacao
   var negRows = rows.filter(function(r) { return r.qoh < 0; });
 
   var today = new Date().toISOString().split('T')[0];
@@ -277,9 +290,8 @@ async function processNegativeInventory(json) {
 
   negRows.forEach(function(r) {
     var sn = String(r.store_number).trim().toUpperCase();
-    var region = (sn === 'A' || sn === 'B') ? 'Bonaire' : 'Curacao';
-    // skip rows where store is totally empty
     if (!sn) return;
+    var region = (sn === 'A' || sn === 'B') ? 'Bonaire' : 'Curacao';
 
     var key = region + '|' + r.dept_code;
     if (!snapAgg[key]) {
