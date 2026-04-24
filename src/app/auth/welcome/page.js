@@ -1,12 +1,12 @@
 /* ============================================================
-   BESTAND: page.js
+   BESTAND: page.js (v2)
    KOPIEER NAAR: src/app/auth/welcome/page.js
+   (vervang het bestaande bestand)
    
-   Dit is een NIEUWE pagina. Maak eerst deze mappen aan:
-   - src/app/auth/
-   - src/app/auth/welcome/
-   
-   Plaats dit bestand als page.js in src/app/auth/welcome/
+   WIJZIGINGEN t.o.v. v1:
+   - Detecteert of er echt een invite/recovery token in de URL staat
+   - Als geen token: redirect naar /dashboard (ingelogd) of /login
+   - Voorkomt dat per ongeluk ingelogde users hier hun wachtwoord resetten
    ============================================================ */
 'use client';
 
@@ -23,22 +23,48 @@ export default function WelcomePage() {
   var _user = useState(null), user = _user[0], setUser = _user[1];
   var _checking = useState(true), checking = _checking[0], setChecking = _checking[1];
   var _done = useState(false), done = _done[0], setDone = _done[1];
+  var _invalidReason = useState(''), invalidReason = _invalidReason[0], setInvalidReason = _invalidReason[1];
 
   var router = useRouter();
   var supabase = createClient();
 
-  useEffect(function() { checkSession(); }, []);
+  useEffect(function() { checkInviteFlow(); }, []);
 
-  async function checkSession() {
-    // Supabase leest automatisch tokens uit URL hash (#access_token=...)
-    // Kleine delay om zeker te zijn dat Supabase de sessie heeft ingesteld
+  async function checkInviteFlow() {
+    // Stap 1: Check of er invite/recovery tokens in de URL hash staan
+    // Supabase gebruikt URL fragments zoals #access_token=xxx&type=invite
+    var hash = typeof window !== 'undefined' ? window.location.hash : '';
+    var hasInviteToken = hash.indexOf('access_token') >= 0 && 
+                         (hash.indexOf('type=invite') >= 0 || hash.indexOf('type=recovery') >= 0);
+
+    // Stap 2: Check bestaande sessie (voor het geval je al doorgeklikt hebt
+    // op een invite-link en de sessie is al actief)
     await new Promise(function(resolve) { setTimeout(resolve, 500); });
-    
-    var result = await supabase.auth.getUser();
-    if (result.data && result.data.user) {
-      setUser(result.data.user);
+    var sessionResult = await supabase.auth.getSession();
+    var hasSession = sessionResult.data && sessionResult.data.session;
+
+    // Stap 3: Als er GEEN invite token in URL is, checken we of dit een 
+    // legitieme sessie is (bv. directe toegang zonder invite)
+    if (!hasInviteToken) {
+      if (hasSession) {
+        // Al ingelogd en zonder invite token? Stuur door naar dashboard.
+        router.push('/dashboard');
+        return;
+      } else {
+        // Niet ingelogd, geen invite token: dit is een ongeldige toegang
+        setInvalidReason('Deze pagina is alleen bereikbaar via een uitnodigingslink uit je e-mail. Neem contact op met je beheerder als je een nieuwe uitnodiging nodig hebt.');
+        setChecking(false);
+        return;
+      }
+    }
+
+    // Stap 4: Er is een invite token in de URL. Check of Supabase de sessie
+    // correct heeft ingesteld met die token.
+    var userResult = await supabase.auth.getUser();
+    if (userResult.data && userResult.data.user) {
+      setUser(userResult.data.user);
     } else {
-      setError('Deze uitnodigingslink is ongeldig of al gebruikt. Neem contact op met je beheerder.');
+      setInvalidReason('Deze uitnodigingslink is ongeldig of al gebruikt. Neem contact op met je beheerder voor een nieuwe uitnodiging.');
     }
     setChecking(false);
   }
@@ -68,13 +94,12 @@ export default function WelcomePage() {
     setDone(true);
     setLoading(false);
 
-    // Korte pauze zodat gebruiker de bevestiging ziet, dan door
     setTimeout(function() {
       router.push('/dashboard');
     }, 2000);
   }
 
-  // ═ Gedeelde stijlen, hergebruikt uit login-pagina voor consistentie ═
+  // ═ Gedeelde stijlen ═
   var pageWrapStyle = {
     minHeight: '100vh',
     background: 'linear-gradient(145deg, #D4EAF7 0%, #B8D8EB 30%, #C5E1F2 60%, #D0E8F5 100%)',
@@ -124,7 +149,7 @@ export default function WelcomePage() {
 
   var fontImport = "@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');";
 
-  // ═══ State 1: Checking session ═══
+  // ═══ State 1: Checking ═══
   if (checking) {
     return (
       <>
@@ -151,11 +176,11 @@ export default function WelcomePage() {
               <div style={{ width: '72px', height: '72px', borderRadius: '18px', background: '#FEE2E2', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
                 <span style={{ fontSize: '36px' }}>⚠️</span>
               </div>
-              <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1B2E4A', marginBottom: '8px', marginTop: 0 }}>Link is niet geldig</h1>
-              <p style={{ fontSize: '14px', color: '#4B7A9E', lineHeight: 1.5, margin: 0 }}>{error}</p>
+              <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1B2E4A', marginBottom: '8px', marginTop: 0 }}>Geen geldige uitnodiging</h1>
+              <p style={{ fontSize: '14px', color: '#4B7A9E', lineHeight: 1.5, margin: 0 }}>{invalidReason}</p>
             </div>
             <a href="/login" style={{ display: 'block', textAlign: 'center', padding: '14px', borderRadius: '12px', background: '#1B2E4A', color: '#fff', fontSize: '15px', fontWeight: 600, textDecoration: 'none' }}>
-              Terug naar inloggen
+              Naar inloggen
             </a>
           </div>
         </div>
@@ -189,7 +214,7 @@ export default function WelcomePage() {
       <style jsx global>{fontImport}</style>
       <div style={pageWrapStyle}>
 
-        {/* Logo op witte achtergrond */}
+        {/* Logo */}
         <div style={{ width: '100px', height: '100px', borderRadius: '24px', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 32px rgba(27,46,74,0.12), 0 2px 8px rgba(27,46,74,0.06)', marginBottom: '16px' }}>
           <img src="/logo.png" alt="Booming Solutions" style={{ width: '76px', height: '76px', objectFit: 'contain' }} />
         </div>
@@ -210,7 +235,6 @@ export default function WelcomePage() {
           </p>
 
           <form onSubmit={handleSubmit}>
-            {/* Nieuw wachtwoord */}
             <div style={{ marginBottom: '20px' }}>
               <label style={labelStyle}>Nieuw wachtwoord</label>
               <div style={{ position: 'relative' }}>
@@ -235,7 +259,6 @@ export default function WelcomePage() {
               </div>
             </div>
 
-            {/* Herhaal wachtwoord */}
             <div style={{ marginBottom: '20px' }}>
               <label style={labelStyle}>Herhaal wachtwoord</label>
               <input
@@ -251,21 +274,18 @@ export default function WelcomePage() {
               />
             </div>
 
-            {/* Security info */}
             <div style={{ padding: '12px 14px', borderRadius: '10px', background: '#F8FBFD', border: '1px solid #D4EAF7', marginBottom: '20px' }}>
               <p style={{ margin: 0, fontSize: '12px', color: '#4B7A9E', lineHeight: 1.5 }}>
                 💡 Gebruik een sterk wachtwoord met minimaal 8 tekens. Combineer letters, cijfers en symbolen voor extra veiligheid.
               </p>
             </div>
 
-            {/* Error melding */}
             {error && (
               <div style={{ padding: '12px 16px', borderRadius: '10px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#DC2626', fontSize: '13px', marginBottom: '16px' }}>
                 {error}
               </div>
             )}
 
-            {/* Submit knop */}
             <button
               type="submit"
               disabled={loading}
@@ -289,7 +309,7 @@ export default function WelcomePage() {
           </form>
         </div>
 
-        {/* Vergrendelde voettekst */}
+        {/* Voettekst */}
         <div style={{
           position: 'fixed',
           bottom: 0,
