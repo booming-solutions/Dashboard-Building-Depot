@@ -1,16 +1,20 @@
 /* ============================================================
-   BESTAND: route_email_v5.js
+   BESTAND: route_email_v6.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v6:
+   - processNegativeInventory schrijft nu naar de ECHTE kolomnamen
+     van negative_inventory: qty_on_hand, inv_value (i.p.v. qoh/cost)
+   - Vult ook class_code, class_name, store_short_name,
+     avg_cost_per_unit, report_date
+   - Oorzaak bug: alle inserts faalden silently omdat kolomnamen
+     niet matchten → tabel bleef leeg → Detail-tab leeg
    WIJZIGING v5:
    - processNegativeInventory schrijft nu ook BUM (Department Group) weg
-   - Upsert naar negative_inventory_first_seen tabel voor tracking van
-     "eerste keer negatief" per item, met reset als item was opgelost
+   - Upsert naar negative_inventory_first_seen tabel
    WIJZIGING v4:
-   - detectFileType herkent nu "Quantity on Hand" (was bug: detectie gaf 'unknown' terug)
-   - processNegativeInventory: niet-numerieke dept codes (FE/FF/XX/etc)
-     samenvoegen tot één department 'OTHER'
-   - Snapshot includes all stores (1,2,4,5,9,R = Curacao; A,B = Bonaire)
+   - detectFileType herkent nu "Quantity on Hand"
+   - Niet-numerieke dept codes samenvoegen tot 'OTHER'
    ============================================================ */
 import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
@@ -243,6 +247,7 @@ async function processInventory(json) {
 /* ── Process NEGATIVE INVENTORY data ── */
 async function processNegativeInventory(json) {
   var keys = Object.keys(json[0] || {});
+  var today = new Date().toISOString().split('T')[0];
 
   var rows = json.map(function(row) {
     var rawDept = String(row[findCol(keys, ['department code', 'dept_code', 'dept'])] || '').trim();
@@ -254,14 +259,19 @@ async function processNegativeInventory(json) {
     var deptName = isNumeric ? rawDeptName : 'Other (niet-numerieke categorieën)';
 
     return {
-      store_number: String(row[findCol(keys, ['store'])] || ''),
+      store_number: String(row[findCol(keys, ['store number', 'store'])] || ''),
+      store_short_name: String(row[findCol(keys, ['store short', 'short name'])] || ''),
       dept_code: deptCode,
       dept_name: deptName,
       bum: String(row[findCol(keys, ['department group', 'bum'])] || ''),
-      item_number: String(row[findCol(keys, ['item'])] || ''),
-      item_description: String(row[findCol(keys, ['description', 'desc'])] || ''),
-      qoh: parseFloat(row[findCol(keys, ['qty', 'qoh', 'quantity'])] || 0),
-      cost: parseFloat(row[findCol(keys, ['inventory value', 'value', 'cost'])] || 0),
+      class_code: String(row[findCol(keys, ['class code'])] || ''),
+      class_name: String(row[findCol(keys, ['class name'])] || ''),
+      item_number: String(row[findCol(keys, ['item number', 'item'])] || ''),
+      item_description: String(row[findCol(keys, ['item description', 'description', 'desc'])] || ''),
+      qty_on_hand: parseFloat(row[findCol(keys, ['quantity on hand', 'qty', 'qoh'])] || 0),
+      inv_value: parseFloat(row[findCol(keys, ['inventory value', 'inv value'])] || 0),
+      avg_cost_per_unit: parseFloat(row[findCol(keys, ['average cost', 'avg cost'])] || 0),
+      report_date: today,
     };
   }).filter(function(r) { return r.item_number && r.dept_code; });
 
@@ -286,18 +296,12 @@ async function processNegativeInventory(json) {
   }
 
   // ── FIRST-SEEN tracking: per item_number (not per store)
-  // Logic: for every distinct item that is now negative, upsert first_seen.
-  // If item exists in table AND last_seen_date < yesterday (was not negative yesterday),
-  // reset first_seen_date to today (gap detected = new negative period).
-  // Otherwise keep existing first_seen_date, update last_seen_date.
-  var today = new Date().toISOString().split('T')[0];
-  var negRows = rows.filter(function(r) { return r.qoh < 0; });
+  var negRows = rows.filter(function(r) { return r.qty_on_hand < 0; });
   var uniqueItems = [...new Set(negRows.map(function(r) { return r.item_number; }))].filter(Boolean);
 
   console.log('Unique negative items to track: ' + uniqueItems.length);
 
   if (uniqueItems.length > 0) {
-    // Load current first_seen records for these items
     var existingMap = {};
     var chunkSize = 500;
     for (var c = 0; c < uniqueItems.length; c += chunkSize) {
@@ -315,7 +319,6 @@ async function processNegativeInventory(json) {
       });
     }
 
-    // Build upsert rows
     var yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     var yesterdayStr = yesterday.toISOString().split('T')[0];
@@ -323,18 +326,14 @@ async function processNegativeInventory(json) {
     var upsertRows = uniqueItems.map(function(itemNum) {
       var existing = existingMap[itemNum];
       if (!existing) {
-        // Brand new
         return { item_number: itemNum, first_seen_date: today, last_seen_date: today };
       }
-      // If last_seen_date is before yesterday -> gap detected -> reset
       if (existing.last_seen_date < yesterdayStr) {
         return { item_number: itemNum, first_seen_date: today, last_seen_date: today };
       }
-      // Continuous -> keep first_seen, update last_seen
       return { item_number: itemNum, first_seen_date: existing.first_seen_date, last_seen_date: today };
     });
 
-    // Upsert in batches
     var fsUpserted = 0;
     for (var u = 0; u < upsertRows.length; u += 500) {
       var batch = upsertRows.slice(u, u + 500);
@@ -350,10 +349,8 @@ async function processNegativeInventory(json) {
     console.log('Upserted ' + fsUpserted + ' first_seen rows');
   }
 
-  // ── SNAPSHOT: aggregate per (region, department) and upsert
-  // Only include truly negative rows
-  // Region: A,B = Bonaire, all others = Curacao
-  var snapAgg = {};  // key = region|dept_code
+  // ── SNAPSHOT: aggregate per (region, department)
+  var snapAgg = {};
 
   negRows.forEach(function(r) {
     var sn = String(r.store_number).trim().toUpperCase();
@@ -373,8 +370,8 @@ async function processNegativeInventory(json) {
       };
     }
     snapAgg[key].items_count += 1;
-    snapAgg[key].total_negative_value += (r.cost || 0);
-    snapAgg[key].total_negative_qty += (r.qoh || 0);
+    snapAgg[key].total_negative_value += (r.inv_value || 0);
+    snapAgg[key].total_negative_qty += (r.qty_on_hand || 0);
   });
 
   var snapRows = Object.values(snapAgg).map(function(s) {
@@ -392,7 +389,6 @@ async function processNegativeInventory(json) {
   console.log('Snapshot rows: ' + snapRows.length + ' (date=' + today + ')');
 
   if (snapRows.length > 0) {
-    // Delete existing snapshot for this date first (fresh overwrite if re-sent same day)
     var delSnap = await supabase
       .from('negative_inventory_snapshots')
       .delete({ count: 'exact' })
@@ -403,7 +399,6 @@ async function processNegativeInventory(json) {
       console.log('Deleted ' + (delSnap.count || 0) + ' existing snapshot rows for ' + today);
     }
 
-    // Insert fresh snapshot
     var snapIns = await supabase.from('negative_inventory_snapshots').insert(snapRows);
     if (snapIns.error) {
       console.error('Snapshot insert error: ' + snapIns.error.message);
