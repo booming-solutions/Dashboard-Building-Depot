@@ -1,14 +1,13 @@
 /* ============================================================
-   BESTAND: page_admin_v3.js
+   BESTAND: page_admin_v4.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGINGEN t.o.v. v2:
-   - ROLE_PRESETS wordt nu uit Supabase tabel 'role_presets' geladen
-   - "Bewerken" knop per rol op Rollen & Toegang tab
-   - "+ Nieuwe Rol" knop op Rollen & Toegang tab
-   - Systeem-rollen (admin/manager/buyer/finance/viewer) kunnen 
-     bewerkt worden maar niet verwijderd
+   WIJZIGINGEN t.o.v. v3:
+   - Wachtwoord-veld verwijderd uit "Nieuwe Gebruiker" formulier
+   - handleCreate gebruikt nu /api/admin/users invite_user actie
+   - Gebruiker krijgt een uitnodigingsmail i.p.v. direct account
+   - Knop tekst aangepast naar "Uitnodiging versturen"
    ============================================================ */
 'use client';
 
@@ -36,10 +35,9 @@ export default function AdminUsersPage() {
   var _msg = useState(null), msg = _msg[0], setMsg = _msg[1];
   var _tab = useState('users'), tab = _tab[0], setTab = _tab[1];
 
-  // Create user
+  // Create user (invite flow)
   var _showCreate = useState(false), showCreate = _showCreate[0], setShowCreate = _showCreate[1];
   var _newEmail = useState(''), newEmail = _newEmail[0], setNewEmail = _newEmail[1];
-  var _newPassword = useState(''), newPassword = _newPassword[0], setNewPassword = _newPassword[1];
   var _newName = useState(''), newName = _newName[0], setNewName = _newName[1];
   var _newRole = useState('viewer'), newRole = _newRole[0], setNewRole = _newRole[1];
   var _newDept = useState(''), newDept = _newDept[0], setNewDept = _newDept[1];
@@ -66,7 +64,7 @@ export default function AdminUsersPage() {
   var _deleteTarget = useState(null), deleteTarget = _deleteTarget[0], setDeleteTarget = _deleteTarget[1];
   var _deleting = useState(false), deleting = _deleting[0], setDeleting = _deleting[1];
 
-  // ═══ ROLE MANAGEMENT STATE ═══
+  // Role management
   var _editRolePreset = useState(null), editRolePreset = _editRolePreset[0], setEditRolePreset = _editRolePreset[1];
   var _rpId = useState(''), rpId = _rpId[0], setRpId = _rpId[1];
   var _rpLabel = useState(''), rpLabel = _rpLabel[0], setRpLabel = _rpLabel[1];
@@ -92,11 +90,8 @@ export default function AdminUsersPage() {
     if (pr.data) setUsers(pr.data);
     var co = await supabase.from('companies').select('*').order('name');
     if (co.data) { setCompanies(co.data); if (co.data.length && !newCompanyId) setNewCompanyId(co.data[0].id); }
-    
-    // Laad rol-presets uit database
     var rp = await supabase.from('role_presets').select('*').order('sort_order');
     if (rp.data) setRolePresets(rp.data);
-    
     setLoading(false);
   }
 
@@ -105,7 +100,6 @@ export default function AdminUsersPage() {
     setTimeout(function() { setMsg(null); }, 4000);
   }
 
-  // Helper: vind een rol-preset op id
   function getPreset(roleId) {
     return rolePresets.find(function(r) { return r.id === roleId; });
   }
@@ -123,33 +117,40 @@ export default function AdminUsersPage() {
     return result;
   }
 
+  // ═══ INVITE NEW USER (nieuwe flow via API route) ═══
   async function handleCreate() {
-    if (!newEmail || !newPassword || !newName) { showMessage('Vul alle verplichte velden in', 'error'); return; }
-    if (newPassword.length < 6) { showMessage('Wachtwoord moet minimaal 6 tekens zijn', 'error'); return; }
+    if (!newEmail || !newName) { 
+      showMessage('Vul naam en e-mail in', 'error'); 
+      return; 
+    }
+    // Basis e-mail validatie
+    var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(newEmail)) {
+      showMessage('Voer een geldig e-mailadres in', 'error');
+      return;
+    }
+
     setCreating(true);
 
-    var authResult = await supabase.auth.signUp({ email: newEmail, password: newPassword, options: { data: { full_name: newName } } });
-    if (authResult.error) { showMessage('Fout: ' + authResult.error.message, 'error'); setCreating(false); return; }
+    var preset = getPreset(newRole);
+    var defaultReports = preset ? preset.reports : ['sales'];
 
-    if (authResult.data && authResult.data.user) {
-      var preset = getPreset(newRole);
-      var defaultReports = preset ? preset.reports : ['sales'];
-      await supabase.from('profiles').upsert({
-        id: authResult.data.user.id,
-        email: newEmail,
-        full_name: newName,
-        role: newRole,
-        department: newDept,
-        company_id: newCompanyId || null,
-        allowed_reports: defaultReports,
-        is_active: true,
-        updated_at: new Date().toISOString(),
-      });
-      showMessage('Gebruiker ' + newName + ' aangemaakt');
-      setNewEmail(''); setNewPassword(''); setNewName(''); setNewRole('viewer'); setNewDept('');
+    var result = await adminApiCall('invite_user', {
+      email: newEmail,
+      fullName: newName,
+      role: newRole,
+      department: newDept || null,
+      companyId: newCompanyId || null,
+      allowedReports: defaultReports,
+    });
+
+    if (result && result.success) {
+      showMessage('Uitnodigingsmail verstuurd naar ' + newEmail);
+      setNewEmail(''); setNewName(''); setNewRole('viewer'); setNewDept('');
       setShowCreate(false);
+      await loadData();
     }
-    await loadData();
+
     setCreating(false);
   }
 
@@ -183,7 +184,7 @@ export default function AdminUsersPage() {
   async function handleSave() {
     if (!editUser) return;
     setSaving(true);
-    await supabase.from('profiles').update({
+    var result = await supabase.from('profiles').update({
       full_name: editName,
       role: editRole,
       department: editDept,
@@ -192,9 +193,13 @@ export default function AdminUsersPage() {
       allowed_reports: editReports,
       updated_at: new Date().toISOString(),
     }).eq('id', editUser.id);
-    showMessage('Profiel van ' + editName + ' bijgewerkt');
-    setEditUser(null);
-    await loadData();
+    if (result.error) {
+      showMessage('Fout bij opslaan: ' + result.error.message, 'error');
+    } else {
+      showMessage('Profiel van ' + editName + ' bijgewerkt');
+      setEditUser(null);
+      await loadData();
+    }
     setSaving(false);
   }
 
@@ -257,7 +262,6 @@ export default function AdminUsersPage() {
     if (!rpId.trim()) { showMessage('Rol-id is verplicht', 'error'); return; }
     if (!rpLabel.trim()) { showMessage('Label is verplicht', 'error'); return; }
 
-    // Valideer id: alleen kleine letters, cijfers, underscores
     var idPattern = /^[a-z0-9_]+$/;
     if (!idPattern.test(rpId)) {
       showMessage('Rol-id mag alleen kleine letters, cijfers en underscores bevatten', 'error');
@@ -267,7 +271,6 @@ export default function AdminUsersPage() {
     setSavingRole(true);
 
     if (rpIsNew) {
-      // Check of id al bestaat
       var exists = rolePresets.find(function(r) { return r.id === rpId; });
       if (exists) {
         showMessage('Een rol met id "' + rpId + '" bestaat al', 'error');
@@ -313,7 +316,6 @@ export default function AdminUsersPage() {
     if (!deleteRole) return;
     setDeletingRole(true);
 
-    // Check of er gebruikers met deze rol zijn
     var usersWithRole = users.filter(function(u) { return u.role === deleteRole.id; });
     if (usersWithRole.length > 0) {
       showMessage('Kan niet verwijderen: ' + usersWithRole.length + ' gebruiker(s) hebben deze rol', 'error');
@@ -347,7 +349,6 @@ export default function AdminUsersPage() {
     );
   }
 
-  // Kleuren voor de systeem-rollen; custom rollen krijgen een default grijs
   var roleColors = {
     admin: { bg: 'bg-red-50', text: 'text-red-600', label: 'Admin' },
     manager: { bg: 'bg-blue-50', text: 'text-blue-600', label: 'Manager' },
@@ -358,7 +359,6 @@ export default function AdminUsersPage() {
 
   function getRoleStyle(roleId) {
     if (roleColors[roleId]) return roleColors[roleId];
-    // Custom rol: gebruik slate kleur
     var preset = getPreset(roleId);
     var label = preset ? (preset.id.charAt(0).toUpperCase() + preset.id.slice(1)) : roleId;
     return { bg: 'bg-slate-50', text: 'text-slate-600', label: label };
@@ -402,11 +402,12 @@ export default function AdminUsersPage() {
       {/* ═══ USERS TAB ═══ */}
       {tab === 'users' && (
         <>
-          {/* Create User Form */}
+          {/* Invite User Form (geen wachtwoord meer) */}
           {showCreate && (
             <div className="bg-white rounded-[14px] border-2 border-[#E84E1B] p-5 mb-5 shadow-sm">
-              <h3 className="text-[16px] font-bold mb-4">Nieuwe Gebruiker Aanmaken</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+              <h3 className="text-[16px] font-bold mb-1">Nieuwe Gebruiker Uitnodigen</h3>
+              <p className="text-[12px] text-[#6b5240] mb-4">De gebruiker ontvangt een uitnodigingsmail en stelt zelf zijn wachtwoord in</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Naam *</label>
                   <input value={newName} onChange={function(e) { setNewName(e.target.value); }}
@@ -418,11 +419,6 @@ export default function AdminUsersPage() {
                     className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="email@bedrijf.com" />
                 </div>
                 <div>
-                  <label className="text-[10px] text-[#6b5240] font-bold uppercase">Wachtwoord *</label>
-                  <input type="password" value={newPassword} onChange={function(e) { setNewPassword(e.target.value); }}
-                    className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="Min. 6 tekens" />
-                </div>
-                <div>
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Rol</label>
                   <select value={newRole} onChange={function(e) { handleNewRoleChange(e.target.value); }}
                     className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]">
@@ -432,9 +428,9 @@ export default function AdminUsersPage() {
                 <div>
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Afdeling</label>
                   <input value={newDept} onChange={function(e) { setNewDept(e.target.value); }}
-                    className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="bv. inkoop, finance" />
+                    className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="bv. inkoop, finance (optioneel)" />
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Bedrijf</label>
                   <select value={newCompanyId} onChange={function(e) { setNewCompanyId(e.target.value); }}
                     className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]">
@@ -454,10 +450,15 @@ export default function AdminUsersPage() {
                 </div>
                 <p className="text-[10px] text-[#a08a74] mt-1">Na aanmaken kun je de rapporttoegang per gebruiker aanpassen</p>
               </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <p className="text-[12px] text-blue-800">
+                  <strong>📧 Uitnodigingsmail wordt verstuurd:</strong> De gebruiker krijgt een e-mail met een eenmalige link om zijn wachtwoord in te stellen. De link verloopt na 24 uur.
+                </p>
+              </div>
               <div className="flex gap-3">
                 <button onClick={handleCreate} disabled={creating}
                   className="px-5 py-2.5 rounded-lg bg-[#E84E1B] text-white text-[13px] font-semibold disabled:opacity-50">
-                  {creating ? 'Aanmaken...' : '+ Gebruiker Aanmaken'}
+                  {creating ? 'Versturen...' : '📧 Uitnodiging Versturen'}
                 </button>
                 <button onClick={function() { setShowCreate(false); }}
                   className="px-5 py-2.5 rounded-lg bg-white text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
