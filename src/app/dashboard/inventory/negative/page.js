@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v4.js
+   BESTAND: page_negative_inventory_v5.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
-   VERSIE: v3.28.01
+   VERSIE: v3.28.02
+   
+   Wijzigingen t.o.v. v4:
+   - Lees uit qty_on_hand i.p.v. qoh, inv_value i.p.v. cost
+     (matched de ECHTE kolomnamen in de negative_inventory tabel)
    
    Wijzigingen t.o.v. v3:
    - Layout matcht Voorraad vs Budget (kop, filterbalk, tabs, chips)
@@ -143,7 +147,7 @@ export default function NegativeInventoryPage() {
     const step = 1000;
     while (true) {
       const { data, error } = await supabase
-        .from('negative_inventory').select('*').lt('qoh', 0)
+        .from('negative_inventory').select('*').lt('qty_on_hand', 0)
         .range(from, from + step - 1);
       if (error) { console.error(error); break; }
       if (!data || data.length === 0) break;
@@ -332,8 +336,8 @@ export default function NegativeInventoryPage() {
         case 'bum':         va = a.bum || ''; vb = b.bum || ''; break;
         case 'item':        va = a.item_number; vb = b.item_number; break;
         case 'desc':        va = a.item_description || ''; vb = b.item_description || ''; break;
-        case 'qoh':         va = a.qoh || 0; vb = b.qoh || 0; break;
-        case 'cost':        va = a.cost || 0; vb = b.cost || 0; break;
+        case 'qoh':         va = a.qty_on_hand || 0; vb = b.qty_on_hand || 0; break;
+        case 'cost':        va = a.inv_value || 0; vb = b.inv_value || 0; break;
         case 'firstSeen': {
           const fa = firstSeen[a.item_number]?.first_seen_date || '9999-12-31';
           const fb = firstSeen[b.item_number]?.first_seen_date || '9999-12-31';
@@ -344,7 +348,7 @@ export default function NegativeInventoryPage() {
           vb = latestStatusFor(b.store_number, b.item_number) || 'zzz';
           break;
         }
-        default: va = a.cost || 0; vb = b.cost || 0;
+        default: va = a.inv_value || 0; vb = b.inv_value || 0;
       }
       if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
       return String(va).localeCompare(String(vb)) * dir;
@@ -776,8 +780,8 @@ function DetailTab({
                     <td style={{ ...td, fontSize: 11 }}>{it.bum || ''}</td>
                     <td style={{ ...td, fontFamily: 'monospace', fontSize: 12 }}>{it.item_number}</td>
                     <td style={{ ...td, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.item_description}</td>
-                    <td style={{ ...td, textAlign: 'right', color: C.red, fontWeight: 600 }}>{fmt(it.qoh)}</td>
-                    <td style={{ ...td, textAlign: 'right', color: C.red }}>{fmtMoney(it.cost)}</td>
+                    <td style={{ ...td, textAlign: 'right', color: C.red, fontWeight: 600 }}>{fmt(it.qty_on_hand)}</td>
+                    <td style={{ ...td, textAlign: 'right', color: C.red }}>{fmtMoney(it.inv_value)}</td>
                     <td style={{ ...td, fontSize: 12 }}>
                       {fs ? (
                         <>
@@ -922,8 +926,8 @@ function HistoryModal({ item, notes, firstSeen, onClose }) {
 
         <div style={{ padding: 20 }}>
           <div style={{ marginBottom: 14, display: 'flex', gap: 16, fontSize: 13, flexWrap: 'wrap' }}>
-            <span>Aantal: <strong style={{ color: C.red }}>{fmt(item.qoh)}</strong></span>
-            <span>Waarde: <strong style={{ color: C.red }}>XCG {fmtMoney(item.cost)}</strong></span>
+            <span>Aantal: <strong style={{ color: C.red }}>{fmt(item.qty_on_hand)}</strong></span>
+            <span>Waarde: <strong style={{ color: C.red }}>XCG {fmtMoney(item.inv_value)}</strong></span>
             {firstSeen && (
               <span>Eerste keer negatief: <strong>{fmtDate(firstSeen.first_seen_date)}</strong>
                 {' '}({daysSince(firstSeen.first_seen_date)} dagen geleden)
