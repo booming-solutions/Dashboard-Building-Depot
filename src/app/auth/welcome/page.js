@@ -1,12 +1,13 @@
 /* ============================================================
-   BESTAND: page.js (v2)
+   BESTAND: page.js (v3)
    KOPIEER NAAR: src/app/auth/welcome/page.js
    (vervang het bestaande bestand)
    
-   WIJZIGINGEN t.o.v. v1:
-   - Detecteert of er echt een invite/recovery token in de URL staat
-   - Als geen token: redirect naar /dashboard (ingelogd) of /login
-   - Voorkomt dat per ongeluk ingelogde users hier hun wachtwoord resetten
+   WIJZIGINGEN t.o.v. v2:
+   - Als er al een sessie is EN er zijn invite-tokens in de URL:
+     eerst uitloggen, dan de invite verwerken
+   - Voorkomt dat admin-sessie stilletjes wordt overschreven
+   - Laat duidelijk zien welke user de invite is voor (ter bevestiging)
    ============================================================ */
 'use client';
 
@@ -32,34 +33,48 @@ export default function WelcomePage() {
 
   async function checkInviteFlow() {
     // Stap 1: Check of er invite/recovery tokens in de URL hash staan
-    // Supabase gebruikt URL fragments zoals #access_token=xxx&type=invite
     var hash = typeof window !== 'undefined' ? window.location.hash : '';
     var hasInviteToken = hash.indexOf('access_token') >= 0 && 
                          (hash.indexOf('type=invite') >= 0 || hash.indexOf('type=recovery') >= 0);
 
-    // Stap 2: Check bestaande sessie (voor het geval je al doorgeklikt hebt
-    // op een invite-link en de sessie is al actief)
-    await new Promise(function(resolve) { setTimeout(resolve, 500); });
+    // Stap 2: Check bestaande sessie
     var sessionResult = await supabase.auth.getSession();
-    var hasSession = sessionResult.data && sessionResult.data.session;
+    var hasExistingSession = sessionResult.data && sessionResult.data.session;
 
-    // Stap 3: Als er GEEN invite token in URL is, checken we of dit een 
-    // legitieme sessie is (bv. directe toegang zonder invite)
+    // Stap 3: GEEN invite token in URL
     if (!hasInviteToken) {
-      if (hasSession) {
-        // Al ingelogd en zonder invite token? Stuur door naar dashboard.
+      if (hasExistingSession) {
+        // Al ingelogd zonder invite token: gewoon door naar dashboard
         router.push('/dashboard');
         return;
       } else {
-        // Niet ingelogd, geen invite token: dit is een ongeldige toegang
         setInvalidReason('Deze pagina is alleen bereikbaar via een uitnodigingslink uit je e-mail. Neem contact op met je beheerder als je een nieuwe uitnodiging nodig hebt.');
         setChecking(false);
         return;
       }
     }
 
-    // Stap 4: Er is een invite token in de URL. Check of Supabase de sessie
-    // correct heeft ingesteld met die token.
+    // Stap 4: ER IS een invite token in de URL
+    // Als er al een sessie is (van een andere user), die ABSOLUUT eerst uitloggen.
+    // Anders overschrijft Supabase de bestaande sessie stilletjes.
+    if (hasExistingSession) {
+      // Uitloggen en hash behouden (die bevat de invite tokens)
+      var currentHash = window.location.hash;
+      await supabase.auth.signOut();
+      // Na signOut: de URL hash kan schoongemaakt zijn door signOut.
+      // We plaatsen hem terug om door te gaan met de invite-flow.
+      if (window.location.hash !== currentHash) {
+        window.location.hash = currentHash;
+      }
+      // Korte delay zodat Supabase de logout echt heeft verwerkt
+      await new Promise(function(resolve) { setTimeout(resolve, 400); });
+    }
+
+    // Stap 5: Nu is de sessie leeg (of was al leeg). Supabase moet nu
+    // de invite-tokens uit de URL lezen en een nieuwe sessie aanmaken.
+    // We geven het systeem even de tijd.
+    await new Promise(function(resolve) { setTimeout(resolve, 600); });
+
     var userResult = await supabase.auth.getUser();
     if (userResult.data && userResult.data.user) {
       setUser(userResult.data.user);
@@ -230,9 +245,19 @@ export default function WelcomePage() {
           <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#1B2E4A', marginBottom: '6px', marginTop: 0 }}>
             Welkom!
           </h2>
-          <p style={{ fontSize: '14px', color: '#4B7A9E', marginBottom: '24px', lineHeight: 1.5, marginTop: 0 }}>
-            Stel een wachtwoord in voor <strong style={{ color: '#1B2E4A' }}>{user.email}</strong> om toegang te krijgen tot je dashboard.
+          <p style={{ fontSize: '14px', color: '#4B7A9E', marginBottom: '20px', lineHeight: 1.5, marginTop: 0 }}>
+            Je stelt nu een wachtwoord in voor dit account:
           </p>
+
+          {/* Duidelijk user-label box zodat de admin direct ziet wie het is */}
+          <div style={{ padding: '14px 16px', borderRadius: '12px', background: '#F8FBFD', border: '2px solid #D4EAF7', marginBottom: '24px' }}>
+            <p style={{ margin: 0, fontSize: '11px', color: '#4B7A9E', fontFamily: "'IBM Plex Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>
+              Account
+            </p>
+            <p style={{ margin: 0, fontSize: '15px', color: '#1B2E4A', fontWeight: 600 }}>
+              {user.email}
+            </p>
+          </div>
 
           <form onSubmit={handleSubmit}>
             <div style={{ marginBottom: '20px' }}>
