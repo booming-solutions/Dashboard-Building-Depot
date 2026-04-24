@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: route_email_v4.js
+   BESTAND: route_email_v5.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v5:
+   - processNegativeInventory schrijft nu ook BUM (Department Group) weg
+   - Upsert naar negative_inventory_first_seen tabel voor tracking van
+     "eerste keer negatief" per item, met reset als item was opgelost
    WIJZIGING v4:
    - detectFileType herkent nu "Quantity on Hand" (was bug: detectie gaf 'unknown' terug)
    - processNegativeInventory: niet-numerieke dept codes (FE/FF/XX/etc)
@@ -253,6 +257,7 @@ async function processNegativeInventory(json) {
       store_number: String(row[findCol(keys, ['store'])] || ''),
       dept_code: deptCode,
       dept_name: deptName,
+      bum: String(row[findCol(keys, ['department group', 'bum'])] || ''),
       item_number: String(row[findCol(keys, ['item'])] || ''),
       item_description: String(row[findCol(keys, ['description', 'desc'])] || ''),
       qoh: parseFloat(row[findCol(keys, ['qty', 'qoh', 'quantity'])] || 0),
@@ -280,12 +285,74 @@ async function processNegativeInventory(json) {
     totalInserted += batch.length;
   }
 
+  // ── FIRST-SEEN tracking: per item_number (not per store)
+  // Logic: for every distinct item that is now negative, upsert first_seen.
+  // If item exists in table AND last_seen_date < yesterday (was not negative yesterday),
+  // reset first_seen_date to today (gap detected = new negative period).
+  // Otherwise keep existing first_seen_date, update last_seen_date.
+  var today = new Date().toISOString().split('T')[0];
+  var negRows = rows.filter(function(r) { return r.qoh < 0; });
+  var uniqueItems = [...new Set(negRows.map(function(r) { return r.item_number; }))].filter(Boolean);
+
+  console.log('Unique negative items to track: ' + uniqueItems.length);
+
+  if (uniqueItems.length > 0) {
+    // Load current first_seen records for these items
+    var existingMap = {};
+    var chunkSize = 500;
+    for (var c = 0; c < uniqueItems.length; c += chunkSize) {
+      var chunk = uniqueItems.slice(c, c + chunkSize);
+      var fs = await supabase
+        .from('negative_inventory_first_seen')
+        .select('item_number, first_seen_date, last_seen_date')
+        .in('item_number', chunk);
+      if (fs.error) {
+        console.error('First-seen load error: ' + fs.error.message);
+        continue;
+      }
+      (fs.data || []).forEach(function(r) {
+        existingMap[r.item_number] = r;
+      });
+    }
+
+    // Build upsert rows
+    var yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    var yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    var upsertRows = uniqueItems.map(function(itemNum) {
+      var existing = existingMap[itemNum];
+      if (!existing) {
+        // Brand new
+        return { item_number: itemNum, first_seen_date: today, last_seen_date: today };
+      }
+      // If last_seen_date is before yesterday -> gap detected -> reset
+      if (existing.last_seen_date < yesterdayStr) {
+        return { item_number: itemNum, first_seen_date: today, last_seen_date: today };
+      }
+      // Continuous -> keep first_seen, update last_seen
+      return { item_number: itemNum, first_seen_date: existing.first_seen_date, last_seen_date: today };
+    });
+
+    // Upsert in batches
+    var fsUpserted = 0;
+    for (var u = 0; u < upsertRows.length; u += 500) {
+      var batch = upsertRows.slice(u, u + 500);
+      var up = await supabase
+        .from('negative_inventory_first_seen')
+        .upsert(batch, { onConflict: 'item_number' });
+      if (up.error) {
+        console.error('First-seen upsert error: ' + up.error.message);
+        continue;
+      }
+      fsUpserted += batch.length;
+    }
+    console.log('Upserted ' + fsUpserted + ' first_seen rows');
+  }
+
   // ── SNAPSHOT: aggregate per (region, department) and upsert
   // Only include truly negative rows
   // Region: A,B = Bonaire, all others = Curacao
-  var negRows = rows.filter(function(r) { return r.qoh < 0; });
-
-  var today = new Date().toISOString().split('T')[0];
   var snapAgg = {};  // key = region|dept_code
 
   negRows.forEach(function(r) {
