@@ -1,21 +1,51 @@
 /* ============================================================
-   BESTAND: page.js (v4)
+   BESTAND: page.js (v5)
    KOPIEER NAAR: src/app/auth/welcome/page.js
    (vervang het bestaande bestand)
    
-   WIJZIGINGEN t.o.v. v3:
-   - Ondersteunt nu TWEE flows:
-     1. ?mode=change_password (van login pagina, must_change_password=true)
-     2. URL hash met invite/recovery tokens (legacy)
-   - Na wachtwoord opslaan: must_change_password wordt op false gezet
+   FIX t.o.v. v4:
+   - useSearchParams() is nu binnen een Suspense boundary geplaatst
+     (Next.js vereiste, anders faalt de build)
    ============================================================ */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+// ═══ MAIN PAGE COMPONENT - wraps in Suspense ═══
 export default function WelcomePage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <WelcomeContent />
+    </Suspense>
+  );
+}
+
+function LoadingFallback() {
+  var pageWrapStyle = {
+    minHeight: '100vh',
+    background: 'linear-gradient(145deg, #D4EAF7 0%, #B8D8EB 30%, #C5E1F2 60%, #D0E8F5 100%)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: "'Outfit', -apple-system, sans-serif",
+    padding: '40px 20px',
+  };
+  return (
+    <>
+      <style jsx global>{"@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');"}</style>
+      <div style={pageWrapStyle}>
+        <div style={{ background: 'rgba(255,255,255,0.9)', borderRadius: '20px', padding: '36px', maxWidth: '440px', width: '100%' }}>
+          <p style={{ textAlign: 'center', color: '#4B7A9E', fontSize: '14px', margin: 0 }}>Moment...</p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ═══ ACTUAL CONTENT - uses useSearchParams ═══
+function WelcomeContent() {
   var _pw = useState(''), password = _pw[0], setPassword = _pw[1];
   var _pw2 = useState(''), password2 = _pw2[0], setPassword2 = _pw2[1];
   var _loading = useState(false), loading = _loading[0], setLoading = _loading[1];
@@ -34,7 +64,6 @@ export default function WelcomePage() {
   useEffect(function() { checkFlow(); }, []);
 
   async function checkFlow() {
-    // Stap 1: Check welke flow dit is
     var modeParam = searchParams.get('mode');
     var hash = typeof window !== 'undefined' ? window.location.hash : '';
     var hasInviteToken = hash.indexOf('access_token') >= 0 && 
@@ -45,7 +74,6 @@ export default function WelcomePage() {
       setFlowMode('change_password');
       var sessionCheck = await supabase.auth.getSession();
       if (!sessionCheck.data || !sessionCheck.data.session) {
-        // Niet ingelogd? Terug naar login
         setInvalidReason('Je sessie is verlopen. Log opnieuw in.');
         setChecking(false);
         return;
@@ -60,10 +88,9 @@ export default function WelcomePage() {
       return;
     }
 
-    // Flow B: invite token in URL (legacy support)
+    // Flow B: invite token in URL (legacy)
     if (hasInviteToken) {
       setFlowMode('invite');
-      // Check bestaande sessie en logout indien nodig
       var existing = await supabase.auth.getSession();
       if (existing.data && existing.data.session) {
         var currentHash = window.location.hash;
@@ -85,7 +112,7 @@ export default function WelcomePage() {
       return;
     }
 
-    // Geen mode, geen invite token: check of er een sessie is
+    // Geen mode, geen token
     var fallbackSession = await supabase.auth.getSession();
     if (fallbackSession.data && fallbackSession.data.session) {
       router.push('/dashboard');
@@ -111,7 +138,6 @@ export default function WelcomePage() {
 
     setLoading(true);
 
-    // Stap 1: Wachtwoord wijzigen
     var pwResult = await supabase.auth.updateUser({ password: password });
     if (pwResult.error) {
       setError('Er ging iets mis: ' + pwResult.error.message);
@@ -119,7 +145,6 @@ export default function WelcomePage() {
       return;
     }
 
-    // Stap 2: must_change_password op false zetten
     if (user && user.id) {
       await supabase.from('profiles').update({
         must_change_password: false,
@@ -185,7 +210,6 @@ export default function WelcomePage() {
 
   var fontImport = "@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');";
 
-  // ═══ State 1: Checking ═══
   if (checking) {
     return (
       <>
@@ -201,7 +225,6 @@ export default function WelcomePage() {
     );
   }
 
-  // ═══ State 2: Invalid ═══
   if (!user) {
     return (
       <>
@@ -224,7 +247,6 @@ export default function WelcomePage() {
     );
   }
 
-  // ═══ State 3: Done ═══
   if (done) {
     return (
       <>
@@ -244,7 +266,6 @@ export default function WelcomePage() {
     );
   }
 
-  // ═══ State 4: Form ═══
   var headerTitle = flowMode === 'change_password' ? 'Stel je nieuwe wachtwoord in' : 'Welkom!';
   var headerSubtitle = flowMode === 'change_password' 
     ? 'Bij je eerste login moet je het tijdelijke wachtwoord vervangen door een eigen wachtwoord.'
