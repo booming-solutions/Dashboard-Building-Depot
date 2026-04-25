@@ -1,19 +1,19 @@
 /* ============================================================
-   BESTAND: page.js (v3)
+   BESTAND: page.js (v4)
    KOPIEER NAAR: src/app/auth/welcome/page.js
    (vervang het bestaande bestand)
    
-   WIJZIGINGEN t.o.v. v2:
-   - Als er al een sessie is EN er zijn invite-tokens in de URL:
-     eerst uitloggen, dan de invite verwerken
-   - Voorkomt dat admin-sessie stilletjes wordt overschreven
-   - Laat duidelijk zien welke user de invite is voor (ter bevestiging)
+   WIJZIGINGEN t.o.v. v3:
+   - Ondersteunt nu TWEE flows:
+     1. ?mode=change_password (van login pagina, must_change_password=true)
+     2. URL hash met invite/recovery tokens (legacy)
+   - Na wachtwoord opslaan: must_change_password wordt op false gezet
    ============================================================ */
 'use client';
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function WelcomePage() {
   var _pw = useState(''), password = _pw[0], setPassword = _pw[1];
@@ -25,62 +25,74 @@ export default function WelcomePage() {
   var _checking = useState(true), checking = _checking[0], setChecking = _checking[1];
   var _done = useState(false), done = _done[0], setDone = _done[1];
   var _invalidReason = useState(''), invalidReason = _invalidReason[0], setInvalidReason = _invalidReason[1];
+  var _flowMode = useState('invite'), flowMode = _flowMode[0], setFlowMode = _flowMode[1];
 
   var router = useRouter();
+  var searchParams = useSearchParams();
   var supabase = createClient();
 
-  useEffect(function() { checkInviteFlow(); }, []);
+  useEffect(function() { checkFlow(); }, []);
 
-  async function checkInviteFlow() {
-    // Stap 1: Check of er invite/recovery tokens in de URL hash staan
+  async function checkFlow() {
+    // Stap 1: Check welke flow dit is
+    var modeParam = searchParams.get('mode');
     var hash = typeof window !== 'undefined' ? window.location.hash : '';
     var hasInviteToken = hash.indexOf('access_token') >= 0 && 
                          (hash.indexOf('type=invite') >= 0 || hash.indexOf('type=recovery') >= 0);
 
-    // Stap 2: Check bestaande sessie
-    var sessionResult = await supabase.auth.getSession();
-    var hasExistingSession = sessionResult.data && sessionResult.data.session;
-
-    // Stap 3: GEEN invite token in URL
-    if (!hasInviteToken) {
-      if (hasExistingSession) {
-        // Al ingelogd zonder invite token: gewoon door naar dashboard
-        router.push('/dashboard');
-        return;
-      } else {
-        setInvalidReason('Deze pagina is alleen bereikbaar via een uitnodigingslink uit je e-mail. Neem contact op met je beheerder als je een nieuwe uitnodiging nodig hebt.');
+    // Flow A: change_password mode (van login pagina)
+    if (modeParam === 'change_password') {
+      setFlowMode('change_password');
+      var sessionCheck = await supabase.auth.getSession();
+      if (!sessionCheck.data || !sessionCheck.data.session) {
+        // Niet ingelogd? Terug naar login
+        setInvalidReason('Je sessie is verlopen. Log opnieuw in.');
         setChecking(false);
         return;
       }
-    }
-
-    // Stap 4: ER IS een invite token in de URL
-    // Als er al een sessie is (van een andere user), die ABSOLUUT eerst uitloggen.
-    // Anders overschrijft Supabase de bestaande sessie stilletjes.
-    if (hasExistingSession) {
-      // Uitloggen en hash behouden (die bevat de invite tokens)
-      var currentHash = window.location.hash;
-      await supabase.auth.signOut();
-      // Na signOut: de URL hash kan schoongemaakt zijn door signOut.
-      // We plaatsen hem terug om door te gaan met de invite-flow.
-      if (window.location.hash !== currentHash) {
-        window.location.hash = currentHash;
+      var userResult = await supabase.auth.getUser();
+      if (userResult.data && userResult.data.user) {
+        setUser(userResult.data.user);
+      } else {
+        setInvalidReason('Je sessie is verlopen. Log opnieuw in.');
       }
-      // Korte delay zodat Supabase de logout echt heeft verwerkt
-      await new Promise(function(resolve) { setTimeout(resolve, 400); });
+      setChecking(false);
+      return;
     }
 
-    // Stap 5: Nu is de sessie leeg (of was al leeg). Supabase moet nu
-    // de invite-tokens uit de URL lezen en een nieuwe sessie aanmaken.
-    // We geven het systeem even de tijd.
-    await new Promise(function(resolve) { setTimeout(resolve, 600); });
+    // Flow B: invite token in URL (legacy support)
+    if (hasInviteToken) {
+      setFlowMode('invite');
+      // Check bestaande sessie en logout indien nodig
+      var existing = await supabase.auth.getSession();
+      if (existing.data && existing.data.session) {
+        var currentHash = window.location.hash;
+        await supabase.auth.signOut();
+        if (window.location.hash !== currentHash) {
+          window.location.hash = currentHash;
+        }
+        await new Promise(function(resolve) { setTimeout(resolve, 400); });
+      }
+      await new Promise(function(resolve) { setTimeout(resolve, 600); });
 
-    var userResult = await supabase.auth.getUser();
-    if (userResult.data && userResult.data.user) {
-      setUser(userResult.data.user);
-    } else {
-      setInvalidReason('Deze uitnodigingslink is ongeldig of al gebruikt. Neem contact op met je beheerder voor een nieuwe uitnodiging.');
+      var inviteUserResult = await supabase.auth.getUser();
+      if (inviteUserResult.data && inviteUserResult.data.user) {
+        setUser(inviteUserResult.data.user);
+      } else {
+        setInvalidReason('Deze uitnodigingslink is ongeldig of al gebruikt. Neem contact op met je beheerder.');
+      }
+      setChecking(false);
+      return;
     }
+
+    // Geen mode, geen invite token: check of er een sessie is
+    var fallbackSession = await supabase.auth.getSession();
+    if (fallbackSession.data && fallbackSession.data.session) {
+      router.push('/dashboard');
+      return;
+    }
+
+    setInvalidReason('Deze pagina is alleen bereikbaar via een uitnodiging of na inloggen met een tijdelijk wachtwoord. Ga naar de login-pagina om in te loggen.');
     setChecking(false);
   }
 
@@ -99,11 +111,20 @@ export default function WelcomePage() {
 
     setLoading(true);
 
-    var result = await supabase.auth.updateUser({ password: password });
-    if (result.error) {
-      setError('Er ging iets mis: ' + result.error.message);
+    // Stap 1: Wachtwoord wijzigen
+    var pwResult = await supabase.auth.updateUser({ password: password });
+    if (pwResult.error) {
+      setError('Er ging iets mis: ' + pwResult.error.message);
       setLoading(false);
       return;
+    }
+
+    // Stap 2: must_change_password op false zetten
+    if (user && user.id) {
+      await supabase.from('profiles').update({
+        must_change_password: false,
+        updated_at: new Date().toISOString(),
+      }).eq('id', user.id);
     }
 
     setDone(true);
@@ -114,7 +135,7 @@ export default function WelcomePage() {
     }, 2000);
   }
 
-  // ═ Gedeelde stijlen ═
+  // ═ Stijlen ═
   var pageWrapStyle = {
     minHeight: '100vh',
     background: 'linear-gradient(145deg, #D4EAF7 0%, #B8D8EB 30%, #C5E1F2 60%, #D0E8F5 100%)',
@@ -172,7 +193,7 @@ export default function WelcomePage() {
         <div style={pageWrapStyle}>
           <div style={cardStyle}>
             <p style={{ textAlign: 'center', color: '#4B7A9E', fontSize: '14px', margin: 0 }}>
-              Moment, we controleren je uitnodiging...
+              Moment...
             </p>
           </div>
         </div>
@@ -180,7 +201,7 @@ export default function WelcomePage() {
     );
   }
 
-  // ═══ State 2: Invalid link ═══
+  // ═══ State 2: Invalid ═══
   if (!user) {
     return (
       <>
@@ -191,7 +212,7 @@ export default function WelcomePage() {
               <div style={{ width: '72px', height: '72px', borderRadius: '18px', background: '#FEE2E2', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
                 <span style={{ fontSize: '36px' }}>⚠️</span>
               </div>
-              <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1B2E4A', marginBottom: '8px', marginTop: 0 }}>Geen geldige uitnodiging</h1>
+              <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1B2E4A', marginBottom: '8px', marginTop: 0 }}>Geen toegang</h1>
               <p style={{ fontSize: '14px', color: '#4B7A9E', lineHeight: 1.5, margin: 0 }}>{invalidReason}</p>
             </div>
             <a href="/login" style={{ display: 'block', textAlign: 'center', padding: '14px', borderRadius: '12px', background: '#1B2E4A', color: '#fff', fontSize: '15px', fontWeight: 600, textDecoration: 'none' }}>
@@ -223,13 +244,17 @@ export default function WelcomePage() {
     );
   }
 
-  // ═══ State 4: Password form ═══
+  // ═══ State 4: Form ═══
+  var headerTitle = flowMode === 'change_password' ? 'Stel je nieuwe wachtwoord in' : 'Welkom!';
+  var headerSubtitle = flowMode === 'change_password' 
+    ? 'Bij je eerste login moet je het tijdelijke wachtwoord vervangen door een eigen wachtwoord.'
+    : 'Stel een wachtwoord in om toegang te krijgen tot je dashboard.';
+
   return (
     <>
       <style jsx global>{fontImport}</style>
       <div style={pageWrapStyle}>
 
-        {/* Logo */}
         <div style={{ width: '100px', height: '100px', borderRadius: '24px', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 32px rgba(27,46,74,0.12), 0 2px 8px rgba(27,46,74,0.06)', marginBottom: '16px' }}>
           <img src="/logo.png" alt="Booming Solutions" style={{ width: '76px', height: '76px', objectFit: 'contain' }} />
         </div>
@@ -243,13 +268,12 @@ export default function WelcomePage() {
 
         <div style={cardStyle}>
           <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#1B2E4A', marginBottom: '6px', marginTop: 0 }}>
-            Welkom!
+            {headerTitle}
           </h2>
           <p style={{ fontSize: '14px', color: '#4B7A9E', marginBottom: '20px', lineHeight: 1.5, marginTop: 0 }}>
-            Je stelt nu een wachtwoord in voor dit account:
+            {headerSubtitle}
           </p>
 
-          {/* Duidelijk user-label box zodat de admin direct ziet wie het is */}
           <div style={{ padding: '14px 16px', borderRadius: '12px', background: '#F8FBFD', border: '2px solid #D4EAF7', marginBottom: '24px' }}>
             <p style={{ margin: 0, fontSize: '11px', color: '#4B7A9E', fontFamily: "'IBM Plex Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>
               Account
@@ -329,12 +353,11 @@ export default function WelcomePage() {
                 transition: 'background 0.15s, color 0.15s',
               }}
             >
-              {loading ? 'Wachtwoord instellen...' : 'Wachtwoord instellen & inloggen'}
+              {loading ? 'Wachtwoord instellen...' : 'Wachtwoord instellen & doorgaan'}
             </button>
           </form>
         </div>
 
-        {/* Voettekst */}
         <div style={{
           position: 'fixed',
           bottom: 0,
