@@ -1,3 +1,13 @@
+/* ============================================================
+   BESTAND: page.js
+   KOPIEER NAAR: src/app/login/page.js
+   (vervang het bestaande login page.js bestand)
+   
+   WIJZIGING t.o.v. je huidige login:
+   - Na succesvolle login: check must_change_password op het profiel
+   - Als true: door naar /auth/welcome (wachtwoord wijzigen verplicht)
+   - Als false: normaal door naar /dashboard
+   ============================================================ */
 'use client';
 
 import { useState } from 'react';
@@ -23,13 +33,39 @@ export default function LoginPage() {
     setMessage('');
 
     if (mode === 'login') {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        setError(error.message);
+      const signInResult = await supabase.auth.signInWithPassword({ email, password });
+      if (signInResult.error) {
+        setError(signInResult.error.message);
         setLoading(false);
-      } else {
-        router.push('/dashboard');
+        return;
       }
+
+      // ═══ NIEUW: Check must_change_password ═══
+      const user = signInResult.data && signInResult.data.user;
+      if (user) {
+        const profileResult = await supabase
+          .from('profiles')
+          .select('must_change_password, is_active')
+          .eq('id', user.id)
+          .single();
+
+        // Check of account actief is
+        if (profileResult.data && profileResult.data.is_active === false) {
+          await supabase.auth.signOut();
+          setError('Je account is gedeactiveerd. Neem contact op met je beheerder.');
+          setLoading(false);
+          return;
+        }
+
+        // Check of wachtwoord gewijzigd moet worden
+        if (profileResult.data && profileResult.data.must_change_password === true) {
+          router.push('/auth/welcome?mode=change_password');
+          return;
+        }
+      }
+
+      // Normale login: door naar dashboard
+      router.push('/dashboard');
     } else {
       const { error } = await supabase.auth.signUp({ email, password });
       if (error) {
@@ -58,56 +94,46 @@ export default function LoginPage() {
         padding: '40px 20px 80px',
       }}>
 
-        {/* Logo op witte achtergrond */}
         <div style={{
-          width: '110px',
-          height: '110px',
+          width: '100px',
+          height: '100px',
           borderRadius: '24px',
           background: '#ffffff',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           boxShadow: '0 8px 32px rgba(27,46,74,0.12), 0 2px 8px rgba(27,46,74,0.06)',
-          marginBottom: '20px',
+          marginBottom: '16px',
         }}>
           <img
             src="/logo.png"
             alt="Booming Solutions"
-            style={{ width: '82px', height: '82px', objectFit: 'contain' }}
+            style={{ width: '76px', height: '76px', objectFit: 'contain' }}
           />
         </div>
 
-        {/* BOOMING SOLUTIONS in Bookman Old Style */}
         <h1 style={{
-          fontSize: '32px',
+          fontSize: '28px',
           fontWeight: 700,
           color: '#1B2E4A',
-          letterSpacing: '0.08em',
-          marginBottom: '2px',
+          letterSpacing: '-0.02em',
+          marginBottom: '4px',
           marginTop: '0',
-          fontFamily: "'Bookman Old Style', 'Bookman', 'Georgia', 'Palatino Linotype', serif",
-          textTransform: 'uppercase',
-          textAlign: 'center',
         }}>
-          BOOMING SOLUTIONS
+          Booming Solutions
         </h1>
-
-        {/* INSIGHT PROVIDER - uitgelijnd op dezelfde breedte */}
         <p style={{
-          fontSize: '14px',
+          fontSize: '13px',
           color: '#4B7A9E',
-          letterSpacing: '0.72em',
+          fontFamily: "'IBM Plex Mono', monospace",
+          letterSpacing: '0.08em',
           textTransform: 'uppercase',
-          marginBottom: '40px',
-          marginTop: '4px',
-          fontFamily: "'Bookman Old Style', 'Bookman', 'Georgia', 'Palatino Linotype', serif",
-          textAlign: 'center',
-          fontWeight: 400,
+          marginBottom: '36px',
+          marginTop: '0',
         }}>
-          INSIGHT PROVIDER
+          CFO Dashboard Platform
         </p>
 
-        {/* Login Kaart */}
         <div style={{
           width: '100%',
           maxWidth: '400px',
@@ -119,7 +145,6 @@ export default function LoginPage() {
           border: '1px solid rgba(255,255,255,0.9)',
         }}>
           <form onSubmit={handleSubmit}>
-            {/* E-mail */}
             <div style={{ marginBottom: '24px' }}>
               <label style={{
                 display: 'block',
@@ -157,7 +182,6 @@ export default function LoginPage() {
               />
             </div>
 
-            {/* Wachtwoord */}
             <div style={{ marginBottom: '28px' }}>
               <label style={{
                 display: 'block',
@@ -215,7 +239,6 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Foutmelding */}
             {error && (
               <div style={{
                 padding: '12px 16px',
@@ -230,7 +253,6 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Succesbericht */}
             {message && (
               <div style={{
                 padding: '12px 16px',
@@ -245,7 +267,6 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Submit knop */}
             <button
               type="submit"
               disabled={loading}
@@ -271,7 +292,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Wissel login/signup */}
           <div style={{ textAlign: 'center', marginTop: '20px' }}>
             <button
               onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setMessage(''); }}
@@ -290,7 +310,6 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Vergrendelde voettekst */}
         <div style={{
           position: 'fixed',
           bottom: 0,
@@ -308,11 +327,11 @@ export default function LoginPage() {
             <rect x="3" y="11" width="18" height="11" rx="2"/>
             <path d="M7 11V7a5 5 0 0110 0v4"/>
           </svg>
-          <span style={{ fontSize: '12px', color: '#64748B', letterSpacing: '0.06em', fontFamily: 'monospace' }}>
+          <span style={{ fontSize: '12px', color: '#64748B', letterSpacing: '0.06em', fontFamily: "'IBM Plex Mono', monospace" }}>
             VERGRENDELD
           </span>
           <span style={{ fontSize: '11px', color: '#475569', margin: '0 12px' }}>·</span>
-          <span style={{ fontSize: '11px', color: '#475569', fontFamily: 'monospace' }}>
+          <span style={{ fontSize: '11px', color: '#475569', fontFamily: "'IBM Plex Mono', monospace" }}>
             © 2026 Booming Solutions
           </span>
         </div>
