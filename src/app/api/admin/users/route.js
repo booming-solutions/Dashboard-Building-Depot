@@ -1,23 +1,23 @@
 /* ============================================================
-   BESTAND: route.js (v2)
+   BESTAND: route.js (v3)
    KOPIEER NAAR: src/app/api/admin/users/route.js
    (vervang het bestaande route.js bestand)
    
-   WIJZIGINGEN t.o.v. v1:
-   - Nieuwe actie 'invite_user' toegevoegd
-   - Gebruikt supabase.auth.admin.inviteUserByEmail() 
-   - Maakt automatisch een profiel aan met rol, bedrijf, rapporten
-   - Bestaande acties (reset_password, delete_user) blijven werken
+   WIJZIGINGEN t.o.v. v2:
+   - Nieuwe actie 'create_user' toegevoegd (vervangt invite_user)
+   - Maakt account direct aan met tijdelijk wachtwoord
+   - Geeft credentials terug aan de admin (geen mail)
+   - Zet must_change_password = true op het profiel
+   - invite_user actie is verwijderd (vervangen door create_user)
+   - resend_invite vervangen door regenerate_password
    ============================================================ */
 import { createClient } from '@supabase/supabase-js';
 
-// Admin client with service role key (server-side only)
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Regular client for auth verification
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -33,6 +33,24 @@ async function verifyAdmin(request) {
   return profile && profile.role === 'admin';
 }
 
+// Genereer een sterk tijdelijk wachtwoord van 12 tekens
+// Bewust geen verwarrende tekens (0, O, 1, l, I) zodat het makkelijk door te geven is
+function generateTempPassword() {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  var symbols = '!@#$%&*';
+  var pw = '';
+  // 10 letters/cijfers
+  for (var i = 0; i < 10; i++) {
+    pw += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  // 2 symbolen voor sterkte
+  for (var j = 0; j < 2; j++) {
+    pw += symbols.charAt(Math.floor(Math.random() * symbols.length));
+  }
+  // Schud de string door elkaar
+  return pw.split('').sort(function() { return 0.5 - Math.random(); }).join('');
+}
+
 export async function POST(request) {
   try {
     if (!(await verifyAdmin(request))) {
@@ -42,8 +60,8 @@ export async function POST(request) {
     var body = await request.json();
     var action = body.action;
 
-    // ═══ INVITE NEW USER ═══
-    if (action === 'invite_user') {
+    // ═══ CREATE NEW USER WITH TEMPORARY PASSWORD ═══
+    if (action === 'create_user') {
       var email = body.email;
       var fullName = body.fullName;
       var role = body.role;
@@ -55,25 +73,28 @@ export async function POST(request) {
         return Response.json({ error: 'Missing required fields (email, fullName, role)' }, { status: 400 });
       }
 
-      // Stap 1: Stuur de invite-mail via Supabase. Dit maakt automatisch 
-      // een auth-user aan zonder wachtwoord en stuurt de invite-mail.
-      var inviteResult = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-        data: { full_name: fullName },
-        redirectTo: process.env.NEXT_PUBLIC_SITE_URL 
-          ? process.env.NEXT_PUBLIC_SITE_URL + '/auth/welcome'
-          : 'https://boomingsolutions.ai/auth/welcome',
+      // Genereer een sterk tijdelijk wachtwoord
+      var tempPassword = generateTempPassword();
+
+      // Stap 1: Maak de auth-user aan met het tijdelijke wachtwoord
+      // email_confirm: true → user kan direct inloggen, geen mail-bevestiging nodig
+      var createResult = await supabaseAdmin.auth.admin.createUser({
+        email: email,
+        password: tempPassword,
+        email_confirm: true,
+        user_metadata: { full_name: fullName },
       });
 
-      if (inviteResult.error) {
-        return Response.json({ error: inviteResult.error.message }, { status: 400 });
+      if (createResult.error) {
+        return Response.json({ error: createResult.error.message }, { status: 400 });
       }
 
-      var newUserId = inviteResult.data && inviteResult.data.user ? inviteResult.data.user.id : null;
+      var newUserId = createResult.data && createResult.data.user ? createResult.data.user.id : null;
       if (!newUserId) {
-        return Response.json({ error: 'Invite verzonden maar gebruiker-id niet ontvangen' }, { status: 500 });
+        return Response.json({ error: 'Account aangemaakt maar gebruiker-id niet ontvangen' }, { status: 500 });
       }
 
-      // Stap 2: Maak het profiel aan in profiles tabel
+      // Stap 2: Maak het profiel aan met must_change_password = true
       var profileResult = await supabaseAdmin.from('profiles').upsert({
         id: newUserId,
         email: email,
@@ -83,24 +104,58 @@ export async function POST(request) {
         company_id: companyId,
         allowed_reports: allowedReports,
         is_active: true,
+        must_change_password: true,
         updated_at: new Date().toISOString(),
       });
 
       if (profileResult.error) {
         return Response.json({ 
-          error: 'Invite verzonden maar profiel kon niet worden aangemaakt: ' + profileResult.error.message,
+          error: 'Account aangemaakt maar profiel kon niet worden opgeslagen: ' + profileResult.error.message,
           userId: newUserId 
         }, { status: 500 });
       }
 
       return Response.json({ 
         success: true, 
-        message: 'Uitnodiging verstuurd naar ' + email,
-        userId: newUserId 
+        message: 'Account aangemaakt voor ' + email,
+        userId: newUserId,
+        email: email,
+        tempPassword: tempPassword,
       });
     }
 
-    // ═══ RESET PASSWORD ═══
+    // ═══ REGENERATE TEMPORARY PASSWORD (voor als gebruiker inloggegevens kwijt is) ═══
+    if (action === 'regenerate_password') {
+      var userId = body.userId;
+      if (!userId) return Response.json({ error: 'Missing userId' }, { status: 400 });
+
+      var newTempPassword = generateTempPassword();
+
+      // Wachtwoord resetten
+      var updateResult = await supabaseAdmin.auth.admin.updateUserById(userId, { 
+        password: newTempPassword 
+      });
+      if (updateResult.error) return Response.json({ error: updateResult.error.message }, { status: 400 });
+
+      // must_change_password weer op true zetten
+      await supabaseAdmin.from('profiles').update({ 
+        must_change_password: true,
+        updated_at: new Date().toISOString(),
+      }).eq('id', userId);
+
+      // Email opzoeken voor in de response
+      var profileLookup = await supabaseAdmin.from('profiles').select('email').eq('id', userId).single();
+      var userEmail = profileLookup.data ? profileLookup.data.email : '';
+
+      return Response.json({ 
+        success: true, 
+        message: 'Tijdelijk wachtwoord opnieuw gegenereerd',
+        email: userEmail,
+        tempPassword: newTempPassword,
+      });
+    }
+
+    // ═══ RESET PASSWORD (handmatig wachtwoord, voor admin reset) ═══
     if (action === 'reset_password') {
       var userId = body.userId;
       var newPassword = body.newPassword;
@@ -109,6 +164,13 @@ export async function POST(request) {
 
       var { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { password: newPassword });
       if (error) return Response.json({ error: error.message }, { status: 400 });
+
+      // Bij admin reset: ook must_change_password op true zetten zodat user het zelf moet wijzigen
+      await supabaseAdmin.from('profiles').update({ 
+        must_change_password: true,
+        updated_at: new Date().toISOString(),
+      }).eq('id', userId);
+
       return Response.json({ success: true, message: 'Password updated' });
     }
 
@@ -117,27 +179,10 @@ export async function POST(request) {
       var userId = body.userId;
       if (!userId) return Response.json({ error: 'Missing userId' }, { status: 400 });
 
-      // Delete profile first
       await supabaseAdmin.from('profiles').delete().eq('id', userId);
-      // Delete auth user
       var { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
       if (error) return Response.json({ error: error.message }, { status: 400 });
       return Response.json({ success: true, message: 'User deleted' });
-    }
-
-    // ═══ RESEND INVITE (bonus: voor gebruikers die de mail kwijt zijn) ═══
-    if (action === 'resend_invite') {
-      var email = body.email;
-      if (!email) return Response.json({ error: 'Missing email' }, { status: 400 });
-
-      var result = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-        redirectTo: process.env.NEXT_PUBLIC_SITE_URL 
-          ? process.env.NEXT_PUBLIC_SITE_URL + '/auth/welcome'
-          : 'https://boomingsolutions.ai/auth/welcome',
-      });
-
-      if (result.error) return Response.json({ error: result.error.message }, { status: 400 });
-      return Response.json({ success: true, message: 'Uitnodiging opnieuw verstuurd' });
     }
 
     return Response.json({ error: 'Unknown action' }, { status: 400 });
