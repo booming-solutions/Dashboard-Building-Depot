@@ -1,20 +1,19 @@
 /* ============================================================
-   BESTAND: page_admin_v4.js
+   BESTAND: page_admin_v5.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGINGEN t.o.v. v3:
-   - Wachtwoord-veld verwijderd uit "Nieuwe Gebruiker" formulier
-   - handleCreate gebruikt nu /api/admin/users invite_user actie
-   - Gebruiker krijgt een uitnodigingsmail i.p.v. direct account
-   - Knop tekst aangepast naar "Uitnodiging versturen"
+   WIJZIGINGEN t.o.v. v4:
+   - handleCreate roept nu create_user aan ipv invite_user
+   - Na aanmaken verschijnt groene box met credentials + kopieer-knop
+   - Nieuwe knop "Nieuw tijdelijk wachtwoord" per gebruiker
+   - Modal toont gegenereerd tijdelijk wachtwoord
    ============================================================ */
 'use client';
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
 
-/* ── Report definitions (nog steeds hardcoded, rollen komen uit DB) ── */
 var REPORTS = [
   { id: 'sales', label: 'Omzet en Marge', group: 'Omzet', icon: '📊' },
   { id: 'sales_index', label: 'Index Rapport', group: 'Omzet', icon: '📈' },
@@ -35,7 +34,7 @@ export default function AdminUsersPage() {
   var _msg = useState(null), msg = _msg[0], setMsg = _msg[1];
   var _tab = useState('users'), tab = _tab[0], setTab = _tab[1];
 
-  // Create user (invite flow)
+  // Create user
   var _showCreate = useState(false), showCreate = _showCreate[0], setShowCreate = _showCreate[1];
   var _newEmail = useState(''), newEmail = _newEmail[0], setNewEmail = _newEmail[1];
   var _newName = useState(''), newName = _newName[0], setNewName = _newName[1];
@@ -43,6 +42,10 @@ export default function AdminUsersPage() {
   var _newDept = useState(''), newDept = _newDept[0], setNewDept = _newDept[1];
   var _newCompanyId = useState(''), newCompanyId = _newCompanyId[0], setNewCompanyId = _newCompanyId[1];
   var _creating = useState(false), creating = _creating[0], setCreating = _creating[1];
+  
+  // Credentials display (after create or regenerate)
+  var _credentials = useState(null), credentials = _credentials[0], setCredentials = _credentials[1];
+  var _copied = useState(false), copied = _copied[0], setCopied = _copied[1];
 
   // Edit user
   var _editUser = useState(null), editUser = _editUser[0], setEditUser = _editUser[1];
@@ -54,11 +57,15 @@ export default function AdminUsersPage() {
   var _editReports = useState([]), editReports = _editReports[0], setEditReports = _editReports[1];
   var _saving = useState(false), saving = _saving[0], setSaving = _saving[1];
 
-  // Password reset
+  // Password reset (manual)
   var _resetUser = useState(null), resetUser = _resetUser[0], setResetUser = _resetUser[1];
   var _resetPw = useState(''), resetPw = _resetPw[0], setResetPw = _resetPw[1];
   var _resetPw2 = useState(''), resetPw2 = _resetPw2[0], setResetPw2 = _resetPw2[1];
   var _resetting = useState(false), resetting = _resetting[0], setResetting = _resetting[1];
+
+  // Regenerate temp password
+  var _regenUser = useState(null), regenUser = _regenUser[0], setRegenUser = _regenUser[1];
+  var _regenerating = useState(false), regenerating = _regenerating[0], setRegenerating = _regenerating[1];
 
   // Delete user
   var _deleteTarget = useState(null), deleteTarget = _deleteTarget[0], setDeleteTarget = _deleteTarget[1];
@@ -117,13 +124,12 @@ export default function AdminUsersPage() {
     return result;
   }
 
-  // ═══ INVITE NEW USER (nieuwe flow via API route) ═══
+  // ═══ CREATE NEW USER (no email, returns credentials) ═══
   async function handleCreate() {
     if (!newEmail || !newName) { 
       showMessage('Vul naam en e-mail in', 'error'); 
       return; 
     }
-    // Basis e-mail validatie
     var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailPattern.test(newEmail)) {
       showMessage('Voer een geldig e-mailadres in', 'error');
@@ -135,7 +141,7 @@ export default function AdminUsersPage() {
     var preset = getPreset(newRole);
     var defaultReports = preset ? preset.reports : ['sales'];
 
-    var result = await adminApiCall('invite_user', {
+    var result = await adminApiCall('create_user', {
       email: newEmail,
       fullName: newName,
       role: newRole,
@@ -145,13 +151,62 @@ export default function AdminUsersPage() {
     });
 
     if (result && result.success) {
-      showMessage('Uitnodigingsmail verstuurd naar ' + newEmail);
+      // Toon credentials in een box
+      setCredentials({
+        email: result.email,
+        tempPassword: result.tempPassword,
+        fullName: newName,
+        isNew: true,
+      });
       setNewEmail(''); setNewName(''); setNewRole('viewer'); setNewDept('');
       setShowCreate(false);
       await loadData();
     }
 
     setCreating(false);
+  }
+
+  // ═══ REGENERATE TEMP PASSWORD ═══
+  async function handleRegenerate() {
+    if (!regenUser) return;
+    setRegenerating(true);
+
+    var result = await adminApiCall('regenerate_password', {
+      userId: regenUser.id,
+    });
+
+    if (result && result.success) {
+      setCredentials({
+        email: result.email,
+        tempPassword: result.tempPassword,
+        fullName: regenUser.full_name,
+        isNew: false,
+      });
+      setRegenUser(null);
+      await loadData();
+    }
+
+    setRegenerating(false);
+  }
+
+  // Kopieer naar klembord
+  async function copyCredentials() {
+    if (!credentials) return;
+    var loginUrl = window.location.origin + '/login';
+    var text = 'Hi ' + credentials.fullName + ',\n\n' +
+               'Je toegang voor het Booming Solutions dashboard:\n\n' +
+               'Login: ' + loginUrl + '\n' +
+               'E-mail: ' + credentials.email + '\n' +
+               'Tijdelijk wachtwoord: ' + credentials.tempPassword + '\n\n' +
+               'Bij de eerste keer inloggen wordt je gevraagd om je eigen wachtwoord in te stellen.';
+    
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(function() { setCopied(false); }, 2500);
+    } catch (err) {
+      showMessage('Kopiëren mislukt — selecteer en kopieer handmatig', 'error');
+    }
   }
 
   function startEdit(u) {
@@ -228,8 +283,7 @@ export default function AdminUsersPage() {
     await loadData();
   }
 
-  // ═══ ROLE MANAGEMENT FUNCTIES ═══
-
+  // Role management functions
   function startEditRole(role) {
     setEditRolePreset(role);
     setRpId(role.id);
@@ -372,7 +426,6 @@ export default function AdminUsersPage() {
   return (
     <div className="max-w-[1200px] mx-auto" style={{ fontFamily: "'DM Sans',-apple-system,sans-serif", color: '#1a0a04' }}>
 
-      {/* Message toast */}
       {msg && (
         <div className={'fixed top-4 right-4 z-[99] px-5 py-3 rounded-xl shadow-lg text-[13px] font-semibold ' + (msg.type === 'error' ? 'bg-red-600 text-white' : 'bg-green-600 text-white')}>{msg.text}</div>
       )}
@@ -392,21 +445,73 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
         {[['users', 'Gebruikers (' + users.length + ')'], ['roles', 'Rollen & Toegang']].map(function(item) {
           return <button key={item[0]} onClick={function() { setTab(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (tab === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
         })}
       </div>
 
+      {/* ═══ CREDENTIALS BOX (shown after create_user or regenerate_password) ═══ */}
+      {credentials && (
+        <div className="bg-green-50 border-2 border-green-500 rounded-[14px] p-5 mb-5 shadow-sm">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-green-600 flex items-center justify-center flex-shrink-0">
+              <span className="text-white text-lg">✓</span>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-[16px] font-bold text-green-900 mb-1">
+                {credentials.isNew ? 'Account aangemaakt' : 'Nieuw tijdelijk wachtwoord gegenereerd'}
+              </h3>
+              <p className="text-[12px] text-green-700">
+                Stuur onderstaande gegevens naar {credentials.fullName}. Deze worden {credentials.isNew ? 'alleen nu' : 'niet opnieuw'} getoond.
+              </p>
+            </div>
+            <button onClick={function() { setCredentials(null); }}
+              className="text-green-700 hover:text-green-900 text-xl leading-none px-2">×</button>
+          </div>
+
+          <div className="bg-white rounded-xl p-4 mb-3 border border-green-200">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <p className="text-[10px] text-green-700 font-bold uppercase tracking-wider mb-1">E-mail</p>
+                <p className="text-[14px] font-semibold text-[#1a0a04] font-mono break-all">{credentials.email}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-green-700 font-bold uppercase tracking-wider mb-1">Tijdelijk wachtwoord</p>
+                <p className="text-[16px] font-bold text-[#1a0a04] font-mono tracking-wider select-all">{credentials.tempPassword}</p>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-green-100">
+              <p className="text-[10px] text-green-700 font-bold uppercase tracking-wider mb-1">Login URL</p>
+              <p className="text-[13px] text-[#1B3A5C] font-mono break-all">{typeof window !== 'undefined' ? window.location.origin + '/login' : '/login'}</p>
+            </div>
+          </div>
+
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={copyCredentials}
+              className={'px-4 py-2 rounded-lg text-[13px] font-semibold transition-all ' + (copied ? 'bg-green-600 text-white' : 'bg-[#1B3A5C] text-white hover:bg-[#163048]')}>
+              {copied ? '✓ Gekopieerd naar klembord' : '📋 Kopieer volledige bericht'}
+            </button>
+            <a href={'mailto:' + credentials.email + '?subject=Je%20toegang%20Booming%20Solutions&body=' + encodeURIComponent('Hi ' + credentials.fullName + ',\n\nJe toegang voor het Booming Solutions dashboard:\n\nLogin: ' + (typeof window !== 'undefined' ? window.location.origin : '') + '/login\nE-mail: ' + credentials.email + '\nTijdelijk wachtwoord: ' + credentials.tempPassword + '\n\nBij de eerste keer inloggen wordt je gevraagd om je eigen wachtwoord in te stellen.')}
+              className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-white text-[#1B3A5C] border border-[#1B3A5C] hover:bg-[#e8eff7]">
+              ✉️ Open in mail-app
+            </a>
+          </div>
+
+          <p className="text-[11px] text-green-700 mt-3">
+            💡 <strong>Tip:</strong> De gebruiker moet bij eerste login zelf een nieuw wachtwoord instellen.
+          </p>
+        </div>
+      )}
+
       {/* ═══ USERS TAB ═══ */}
       {tab === 'users' && (
         <>
-          {/* Invite User Form (geen wachtwoord meer) */}
+          {/* Create User Form */}
           {showCreate && (
             <div className="bg-white rounded-[14px] border-2 border-[#E84E1B] p-5 mb-5 shadow-sm">
-              <h3 className="text-[16px] font-bold mb-1">Nieuwe Gebruiker Uitnodigen</h3>
-              <p className="text-[12px] text-[#6b5240] mb-4">De gebruiker ontvangt een uitnodigingsmail en stelt zelf zijn wachtwoord in</p>
+              <h3 className="text-[16px] font-bold mb-1">Nieuwe Gebruiker Aanmaken</h3>
+              <p className="text-[12px] text-[#6b5240] mb-4">Het systeem genereert een tijdelijk wachtwoord dat je aan de gebruiker kunt doorgeven.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Naam *</label>
@@ -428,7 +533,7 @@ export default function AdminUsersPage() {
                 <div>
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Afdeling</label>
                   <input value={newDept} onChange={function(e) { setNewDept(e.target.value); }}
-                    className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="bv. inkoop, finance (optioneel)" />
+                    className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" placeholder="optioneel" />
                 </div>
                 <div className="md:col-span-2">
                   <label className="text-[10px] text-[#6b5240] font-bold uppercase">Bedrijf</label>
@@ -448,17 +553,11 @@ export default function AdminUsersPage() {
                     return <span key={rep.id} className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold ' + (active ? 'bg-green-50 text-green-600' : 'bg-gray-50 text-gray-400')}>{rep.icon} {rep.label}</span>;
                   })}
                 </div>
-                <p className="text-[10px] text-[#a08a74] mt-1">Na aanmaken kun je de rapporttoegang per gebruiker aanpassen</p>
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                <p className="text-[12px] text-blue-800">
-                  <strong>📧 Uitnodigingsmail wordt verstuurd:</strong> De gebruiker krijgt een e-mail met een eenmalige link om zijn wachtwoord in te stellen. De link verloopt na 24 uur.
-                </p>
               </div>
               <div className="flex gap-3">
                 <button onClick={handleCreate} disabled={creating}
                   className="px-5 py-2.5 rounded-lg bg-[#E84E1B] text-white text-[13px] font-semibold disabled:opacity-50">
-                  {creating ? 'Versturen...' : '📧 Uitnodiging Versturen'}
+                  {creating ? 'Aanmaken...' : '+ Account Aanmaken'}
                 </button>
                 <button onClick={function() { setShowCreate(false); }}
                   className="px-5 py-2.5 rounded-lg bg-white text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
@@ -483,7 +582,12 @@ export default function AdminUsersPage() {
                     var reports = u.allowed_reports || [];
                     return (
                       <tr key={u.id} className="hover:bg-[#faf5f0]">
-                        <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] font-semibold">{u.full_name || '—'}</td>
+                        <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] font-semibold">
+                          {u.full_name || '—'}
+                          {u.must_change_password && (
+                            <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 text-amber-700" title="Moet nog wachtwoord wijzigen">⏳ NIEUW</span>
+                          )}
+                        </td>
                         <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-[#6b5240]">{u.email}</td>
                         <td className="p-2.5 border-b border-[#e5ddd4]">
                           <span className={'inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ' + rc.bg + ' ' + rc.text}>{rc.label}</span>
@@ -504,17 +608,19 @@ export default function AdminUsersPage() {
                           </span>
                         </td>
                         <td className="p-2.5 border-b border-[#e5ddd4]">
-                          <div className="flex gap-1.5">
+                          <div className="flex gap-1.5 flex-wrap">
                             <button onClick={function() { startEdit(u); }}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#1B3A5C] bg-[#e8eff7] hover:bg-[#d5e2f0] transition-colors">Bewerken</button>
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#1B3A5C] bg-[#e8eff7] hover:bg-[#d5e2f0]">Bewerken</button>
+                            <button onClick={function() { setRegenUser(u); }}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100" title="Genereer nieuw tijdelijk wachtwoord">🔄 Tijd. WW</button>
                             <button onClick={function() { setResetUser(u); setResetPw(''); setResetPw2(''); }}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-amber-600 bg-amber-50 hover:bg-amber-100 transition-colors">Wachtwoord</button>
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-amber-600 bg-amber-50 hover:bg-amber-100" title="Stel handmatig wachtwoord in">🔑 Wachtwoord</button>
                             <button onClick={function() { toggleActive(u); }}
-                              className={'px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ' + (u.is_active !== false ? 'text-red-600 bg-red-50 hover:bg-red-100' : 'text-green-600 bg-green-50 hover:bg-green-100')}>
+                              className={'px-2.5 py-1 rounded-lg text-[11px] font-semibold ' + (u.is_active !== false ? 'text-red-600 bg-red-50 hover:bg-red-100' : 'text-green-600 bg-green-50 hover:bg-green-100')}>
                               {u.is_active !== false ? 'Deactiveer' : 'Activeer'}
                             </button>
                             <button onClick={function() { setDeleteTarget(u); }}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors">Verwijder</button>
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 bg-red-50 hover:bg-red-100">Verwijder</button>
                           </div>
                         </td>
                       </tr>
@@ -525,7 +631,6 @@ export default function AdminUsersPage() {
             </div>
           </div>
 
-          {/* Summary */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
               <p className="text-[10px] text-[#6b5240] font-bold uppercase">Totaal</p>
@@ -580,10 +685,10 @@ export default function AdminUsersPage() {
                       </div>
                       <div className="flex gap-1.5">
                         <button onClick={function() { startEditRole(preset); }}
-                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#1B3A5C] bg-[#e8eff7] hover:bg-[#d5e2f0] transition-colors">Bewerken</button>
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#1B3A5C] bg-[#e8eff7] hover:bg-[#d5e2f0]">Bewerken</button>
                         {!preset.is_system && (
                           <button onClick={function() { setDeleteRole(preset); }}
-                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors">Verwijder</button>
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 bg-red-50 hover:bg-red-100">Verwijder</button>
                         )}
                       </div>
                     </div>
@@ -615,7 +720,7 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      {/* ═══ EDIT USER MODAL ═══ */}
+      {/* Edit user modal */}
       {editUser && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setEditUser(null); }}>
           <div className="bg-white rounded-2xl p-7 w-[520px] max-h-[90vh] overflow-y-auto shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
@@ -635,7 +740,6 @@ export default function AdminUsersPage() {
                   className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]">
                   {rolePresets.map(function(r) { return <option key={r.id} value={r.id}>{r.label}</option>; })}
                 </select>
-                <p className="text-[10px] text-[#a08a74] mt-1">Rol wijzigen past automatisch de rapporttoegang aan naar de standaard preset</p>
               </div>
               <div>
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase">Afdeling</label>
@@ -686,7 +790,7 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      {/* ═══ EDIT/NEW ROLE MODAL ═══ */}
+      {/* Role modal */}
       {editRolePreset && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setEditRolePreset(null); }}>
           <div className="bg-white rounded-2xl p-7 w-[560px] max-h-[90vh] overflow-y-auto shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
@@ -702,40 +806,28 @@ export default function AdminUsersPage() {
             <div className="space-y-3 mb-5">
               <div>
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase">Rol-ID {rpIsNew && '*'}</label>
-                <input 
-                  value={rpId} 
-                  onChange={function(e) { setRpId(e.target.value.toLowerCase()); }}
+                <input value={rpId} onChange={function(e) { setRpId(e.target.value.toLowerCase()); }}
                   disabled={!rpIsNew}
                   className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C] disabled:bg-[#faf7f4] disabled:text-[#a08a74]"
                   placeholder="bv. inkoper, finance_lead" />
-                <p className="text-[10px] text-[#a08a74] mt-1">
-                  {rpIsNew 
-                    ? 'Alleen kleine letters, cijfers en underscores. Kan later niet gewijzigd worden.' 
-                    : 'De rol-ID kan niet gewijzigd worden na aanmaken'}
-                </p>
               </div>
               <div>
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase">Label *</label>
                 <input value={rpLabel} onChange={function(e) { setRpLabel(e.target.value); }}
                   className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]"
                   placeholder="bv. Inkoper — Voorraad & bestellingen" />
-                <p className="text-[10px] text-[#a08a74] mt-1">Wordt getoond in dropdowns en overzichten</p>
               </div>
               <div>
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase">Beschrijving</label>
                 <textarea value={rpDescription} onChange={function(e) { setRpDescription(e.target.value); }}
                   className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]"
-                  rows={2}
-                  placeholder="Optionele toelichting bij de rol" />
+                  rows={2} />
               </div>
               <div>
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase">Volgorde</label>
-                <input 
-                  type="number" 
-                  value={rpSortOrder} 
+                <input type="number" value={rpSortOrder} 
                   onChange={function(e) { setRpSortOrder(parseInt(e.target.value) || 0); }}
                   className="w-full mt-1 px-3 py-2.5 border border-[#e5ddd4] rounded-lg text-[13px] focus:outline-none focus:border-[#1B3A5C]" />
-                <p className="text-[10px] text-[#a08a74] mt-1">Lager = eerder in de lijst (admin=10, viewer=50)</p>
               </div>
               <div>
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase mb-2 block">Standaard Rapporttoegang</label>
@@ -756,12 +848,6 @@ export default function AdminUsersPage() {
                   })}
                 </div>
               </div>
-              {!rpIsNew && editRolePreset.is_system && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <p className="text-[11px] text-amber-700 font-semibold">ℹ️ Systeem-rol</p>
-                  <p className="text-[11px] text-amber-600 mt-1">Deze rol kan niet verwijderd worden, maar je kunt het label, de beschrijving en de rapporttoegang wel aanpassen.</p>
-                </div>
-              )}
             </div>
             <div className="flex gap-2">
               <button onClick={function() { setEditRolePreset(null); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
@@ -773,7 +859,7 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      {/* ═══ DELETE ROLE MODAL ═══ */}
+      {/* Delete role modal */}
       {deleteRole && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setDeleteRole(null); }}>
           <div className="bg-white rounded-2xl p-7 w-[420px] shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
@@ -786,13 +872,8 @@ export default function AdminUsersPage() {
             </div>
             <div className="bg-red-50 rounded-xl p-4 mb-5">
               <p className="text-[13px] text-red-800">
-                Weet je zeker dat je de rol <strong>{deleteRole.label}</strong> (<code className="text-[11px] bg-white px-1 py-0.5 rounded">{deleteRole.id}</code>) permanent wilt verwijderen?
+                Weet je zeker dat je de rol <strong>{deleteRole.label}</strong> permanent wilt verwijderen?
               </p>
-              {users.filter(function(u) { return u.role === deleteRole.id; }).length > 0 && (
-                <p className="text-[11px] text-red-700 mt-2">
-                  ⚠️ {users.filter(function(u) { return u.role === deleteRole.id; }).length} gebruiker(s) hebben momenteel deze rol. Wijs eerst een andere rol toe voordat je kunt verwijderen.
-                </p>
-              )}
             </div>
             <div className="flex gap-2">
               <button onClick={function() { setDeleteRole(null); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
@@ -804,7 +885,33 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      {/* ═══ PASSWORD RESET MODAL ═══ */}
+      {/* Regenerate temp password confirm modal */}
+      {regenUser && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setRegenUser(null); }}>
+          <div className="bg-white rounded-2xl p-7 w-[420px] shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center"><span className="text-emerald-600 text-lg">🔄</span></div>
+              <div>
+                <h3 className="text-[16px] font-bold">Nieuw Tijdelijk Wachtwoord</h3>
+                <p className="text-[12px] text-[#6b5240]">{regenUser.full_name}</p>
+              </div>
+            </div>
+            <div className="bg-emerald-50 rounded-xl p-4 mb-5">
+              <p className="text-[13px] text-emerald-900">
+                Er wordt een nieuw tijdelijk wachtwoord gegenereerd voor <strong>{regenUser.email}</strong>. Het oude wachtwoord werkt daarna niet meer.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={function() { setRegenUser(null); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
+              <button onClick={handleRegenerate} disabled={regenerating} className="flex-1 py-2.5 rounded-lg bg-emerald-600 text-white text-[13px] font-semibold disabled:opacity-50">
+                {regenerating ? 'Genereren...' : 'Genereer Wachtwoord'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Password reset modal */}
       {resetUser && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setResetUser(null); }}>
           <div className="bg-white rounded-2xl p-7 w-[400px] shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
@@ -812,6 +919,7 @@ export default function AdminUsersPage() {
               <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center"><span className="text-amber-600 text-lg">🔑</span></div>
               <div><h3 className="text-[16px] font-bold">Wachtwoord Resetten</h3><p className="text-[12px] text-[#6b5240]">{resetUser.full_name} — {resetUser.email}</p></div>
             </div>
+            <p className="text-[11px] text-[#6b5240] mb-4">De gebruiker moet na inloggen zelf een nieuw wachtwoord instellen.</p>
             <div className="space-y-3 mb-5">
               <div>
                 <label className="text-[10px] text-[#6b5240] font-bold uppercase">Nieuw wachtwoord</label>
@@ -832,7 +940,7 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      {/* ═══ DELETE USER MODAL ═══ */}
+      {/* Delete user modal */}
       {deleteTarget && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={function() { setDeleteTarget(null); }}>
           <div className="bg-white rounded-2xl p-7 w-[400px] shadow-2xl" onClick={function(e) { e.stopPropagation(); }}>
