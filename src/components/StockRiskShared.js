@@ -1,13 +1,24 @@
 /* ============================================================
-   BESTAND: StockRiskShared.js
+   BESTAND: StockRiskShared_v2.js
    KOPIEER NAAR: src/components/StockRiskShared.js
-   (maak de map components aan als die nog niet bestaat)
+   (vervangt de huidige StockRiskShared.js)
+   VERSIE: v3.28.07
+   
+   Wijzigingen t.o.v. v1:
+   - Twee nieuwe grafieken tussen KPI-tegels en "Risico per Afdeling":
+     * Links: stacked bar van NOS-status per BUM (in stock / wordt aangevuld / niet gedekt)
+     * Rechts: trendlijn % NOS in stock per BUM over tijd (incl. TOTAAL lijn)
+   - Beide gebruiken nieuwe tabel nos_coverage_snapshots
+   - Stacked bar reageert op de Store-filter (Curacao / Bonaire / alle = Total)
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
+import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
+
+Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
 
 var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
@@ -15,6 +26,16 @@ var fmtC = function(n) { return 'Cg ' + (n || 0).toLocaleString('nl-NL', { minim
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(0) + 'K' : fmt(a)); };
 var XCG_USD = 1.82;
 var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
+
+// Color palette per BUM (used in trend chart legend)
+var BUM_COLORS = {
+  PASCAL: '#1B3A5C',
+  HENK:   '#0891b2',
+  JOHN:   '#16a34a',
+  DANIEL: '#a16207',
+  GIJS:   '#7c3aed',
+  TOTAL:  '#E84E1B',
+};
 
 function Pill({ label, active, onClick }) {
   return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
@@ -28,7 +49,6 @@ function RiskBadge({ level }) {
 }
 
 function CoverBar({ months, maxLT }) {
-  // Visual bar showing coverage vs lead time
   var maxDisplay = Math.max(maxLT * 2, 6);
   var coverPct = Math.min((months / maxDisplay) * 100, 100);
   var ltPct = Math.min((maxLT / maxDisplay) * 100, 100);
@@ -41,12 +61,9 @@ function CoverBar({ months, maxLT }) {
   );
 }
 
-/* Mini sparkline with hover tooltips */
 function Spark({ sales }) {
   var MN2 = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
   var max = Math.max.apply(null, sales.concat([1]));
-  // Build labels: sales is chronological (oldest first = index 0)
-  // 12 months back from now: index 0 = 12 months ago, index 11 = current month
   var now = new Date();
   var labels = sales.map(function(v, i) {
     var monthsBack = sales.length - 1 - i;
@@ -59,6 +76,225 @@ function Spark({ sales }) {
         var h = max > 0 ? Math.max(1, (v / max) * 18) : 1;
         return <div key={i} className="w-[4px] rounded-t-sm cursor-default" style={{ height: h + 'px', backgroundColor: v > 0 ? '#E84E1B' : '#e5ddd4' }} title={labels[i] + ': ' + fmt(Math.round(v))}></div>;
       })}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════
+   NEW: NOS Stacked Bar (per BUM)
+   ════════════════════════════════════════════════════════════ */
+function NosStackedBar({ snapshotsToday, store }) {
+  // store: 'all' (=> Total), '1' (=> Curacao), 'B' (=> Bonaire)
+  var region = store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Total';
+
+  // Filter today's snapshots for this region, exclude TOTAL bum
+  var rows = snapshotsToday.filter(function(s) {
+    return s.region === region && s.bum !== 'TOTAL';
+  });
+
+  // Sort by BU_ORDER
+  rows.sort(function(a, b) {
+    var ai = BU_ORDER.indexOf(a.bum); var bi = BU_ORDER.indexOf(b.bum);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1; if (bi !== -1) return 1;
+    return a.bum.localeCompare(b.bum);
+  });
+
+  if (rows.length === 0) {
+    return (
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+        <h3 className="text-[15px] font-bold mb-1">NOS Voorraad-status per BUM</h3>
+        <p className="text-[12px] text-[#6b5240] mb-3">Nog geen snapshot beschikbaar.</p>
+      </div>
+    );
+  }
+
+  var regionLabel = region === 'Total' ? 'Curaçao + Bonaire' : region;
+
+  return (
+    <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+      <h3 className="text-[15px] font-bold mb-1">NOS Voorraad-status per BUM</h3>
+      <p className="text-[12px] text-[#6b5240] mb-3">{regionLabel} — % van NOS-items per categorie</p>
+      <div className="flex items-center gap-4 text-[10px] mb-4">
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span> Op voorraad (QOH &gt; 0)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#d97706' }}></span> Wordt aangevuld (QOO compenseert)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span> Niet gedekt</span>
+      </div>
+      <div className="space-y-2">
+        {rows.map(function(r) {
+          var total = r.total_nos_items || 1;
+          var pIn = (r.in_stock / total) * 100;
+          var pRef = (r.refilling / total) * 100;
+          var pUnc = (r.uncovered / total) * 100;
+          return (
+            <div key={r.bum} className="flex items-center gap-2">
+              <div className="w-[80px] text-right text-[11px] font-semibold text-[#1a0a04] flex-shrink-0">
+                {r.bum}
+              </div>
+              <div className="flex-1 flex h-[20px] rounded-sm overflow-hidden bg-[#f0ebe5] relative">
+                {pIn > 0 && (
+                  <div
+                    style={{ width: pIn + '%', backgroundColor: '#16a34a' }}
+                    title={'Op voorraad: ' + r.in_stock + ' items (' + pIn.toFixed(1) + '%)'}
+                    className="flex items-center justify-center"
+                  >
+                    {pIn > 10 && <span className="text-[10px] text-white font-bold">{Math.round(pIn) + '%'}</span>}
+                  </div>
+                )}
+                {pRef > 0 && (
+                  <div
+                    style={{ width: pRef + '%', backgroundColor: '#d97706' }}
+                    title={'Wordt aangevuld: ' + r.refilling + ' items (' + pRef.toFixed(1) + '%)'}
+                    className="flex items-center justify-center"
+                  >
+                    {pRef > 10 && <span className="text-[10px] text-white font-bold">{Math.round(pRef) + '%'}</span>}
+                  </div>
+                )}
+                {pUnc > 0 && (
+                  <div
+                    style={{ width: pUnc + '%', backgroundColor: '#dc2626' }}
+                    title={'Niet gedekt: ' + r.uncovered + ' items (' + pUnc.toFixed(1) + '%)'}
+                    className="flex items-center justify-center"
+                  >
+                    {pUnc > 10 && <span className="text-[10px] text-white font-bold">{Math.round(pUnc) + '%'}</span>}
+                  </div>
+                )}
+              </div>
+              <div className="w-[60px] text-[10px] font-mono text-[#6b5240] text-right flex-shrink-0">
+                {fmt(total)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════
+   NEW: NOS Trend Chart (% in stock over time per BUM)
+   ════════════════════════════════════════════════════════════ */
+function NosTrendChart({ allSnapshots, store }) {
+  var canvasId = 'nos-trend-chart-' + (store || 'all');
+  var region = store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Total';
+
+  // Filter for this region
+  var rows = allSnapshots.filter(function(s) { return s.region === region; });
+
+  // Group by date -> { bum: pct }
+  var byDate = {};
+  rows.forEach(function(r) {
+    if (!byDate[r.snapshot_date]) byDate[r.snapshot_date] = {};
+    var pct = r.total_nos_items > 0 ? (r.in_stock / r.total_nos_items * 100) : 0;
+    byDate[r.snapshot_date][r.bum] = pct;
+  });
+  var dates = Object.keys(byDate).sort();
+
+  // Compute TOTAL line per date as average across BUMs (weighted by total_nos_items)
+  var totalsByDate = {};
+  dates.forEach(function(d) {
+    var sumIn = 0, sumTot = 0;
+    rows.filter(function(r) { return r.snapshot_date === d; }).forEach(function(r) {
+      sumIn += r.in_stock; sumTot += r.total_nos_items;
+    });
+    totalsByDate[d] = sumTot > 0 ? (sumIn / sumTot * 100) : 0;
+  });
+
+  // BUMs present in data
+  var bums = {};
+  rows.forEach(function(r) { bums[r.bum] = true; });
+  var bumList = Object.keys(bums).sort(function(a, b) {
+    var ai = BU_ORDER.indexOf(a); var bi = BU_ORDER.indexOf(b);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1; if (bi !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  useEffect(function() {
+    var existing = window['_nosChart_' + canvasId];
+    if (existing) { existing.destroy(); }
+    if (dates.length === 0) return;
+    var canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    var datasets = bumList.map(function(b) {
+      return {
+        label: b,
+        data: dates.map(function(d) { return byDate[d][b] != null ? Math.round(byDate[d][b] * 10) / 10 : null; }),
+        borderColor: BUM_COLORS[b] || '#888',
+        backgroundColor: 'transparent',
+        pointRadius: 3,
+        tension: 0.25,
+        borderWidth: 2,
+        spanGaps: true,
+      };
+    });
+
+    // TOTAAL line
+    datasets.push({
+      label: 'TOTAAL',
+      data: dates.map(function(d) { return Math.round(totalsByDate[d] * 10) / 10; }),
+      borderColor: BUM_COLORS.TOTAL,
+      backgroundColor: 'transparent',
+      borderDash: [6, 3],
+      pointRadius: 4,
+      tension: 0.25,
+      borderWidth: 3,
+    });
+
+    var labels = dates.map(function(d) {
+      var p = d.split('-');
+      return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1];
+    });
+
+    window['_nosChart_' + canvasId] = new Chart(canvas, {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 12, font: { size: 11 } } },
+          tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + (c.raw != null ? c.raw + '%' : '—'); } } },
+        },
+        scales: {
+          y: {
+            min: 0, max: 100,
+            ticks: { callback: function(v) { return v + '%'; } },
+            grid: { color: '#f0ebe5' },
+          },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+
+    return function() {
+      var c = window['_nosChart_' + canvasId];
+      if (c) { c.destroy(); window['_nosChart_' + canvasId] = null; }
+    };
+  }, [allSnapshots, store]);
+
+  var regionLabel = region === 'Total' ? 'Curaçao + Bonaire' : region;
+
+  return (
+    <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+      <h3 className="text-[15px] font-bold mb-1">% NOS op voorraad — verloop in tijd</h3>
+      <p className="text-[12px] text-[#6b5240] mb-3">{regionLabel} — per BUM, plus TOTAAL (gestreept)</p>
+      {dates.length === 0 ? (
+        <div className="py-8 text-center bg-[#faf7f4] rounded-lg">
+          <p className="text-[12px] text-[#6b5240]">Nog geen snapshots beschikbaar.</p>
+          <p className="text-[10px] text-[#a08a74] mt-1 italic">Lijn verschijnt zodra er meer dan één snapshot is.</p>
+        </div>
+      ) : dates.length === 1 ? (
+        <div className="py-6 text-center bg-[#faf7f4] rounded-lg">
+          <p className="text-[12px] text-[#6b5240]">Eerste snapshot: {(function() { var p = dates[0].split('-'); return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + ' ' + p[0]; })()}</p>
+          <p className="text-[10px] text-[#a08a74] mt-1 italic">Trendlijn verschijnt zodra er meer snapshots zijn.</p>
+        </div>
+      ) : (
+        <div style={{ height: '300px' }}>
+          <canvas id={canvasId}></canvas>
+        </div>
+      )}
     </div>
   );
 }
@@ -80,8 +316,11 @@ export default function StockRiskShared({ bumFilter }) {
   var _rows = _s(100), tableRows = _rows[0], setTableRows = _rows[1];
   var _search = _s(''), search = _search[0], setSearch = _search[1];
 
+  // NEW: NOS coverage snapshots
+  var _nosSnap = _s([]), nosSnapshots = _nosSnap[0], setNosSnapshots = _nosSnap[1];
+
   var supabase = createClient();
-  useEffect(function() { loadData(); }, [bumFilter]);
+  useEffect(function() { loadData(); loadNosSnapshots(); }, [bumFilter]);
 
   async function loadData() {
     setLoading(true);
@@ -103,6 +342,30 @@ export default function StockRiskShared({ bumFilter }) {
     setData(all); setLoading(false);
   }
 
+  async function loadNosSnapshots() {
+    var all = [], from = 0, step = 1000;
+    while (true) {
+      var q = supabase.from('nos_coverage_snapshots').select('*').order('snapshot_date', { ascending: true }).range(from, from + step - 1);
+      if (bumFilter) q = q.eq('bum', bumFilter);
+      var r = await q;
+      if (r.error) { console.error('NOS snapshots load error:', r.error.message); break; }
+      if (!r.data || !r.data.length) break;
+      all = all.concat(r.data);
+      if (r.data.length < step) break;
+      from += step;
+    }
+    setNosSnapshots(all);
+  }
+
+  // Latest snapshot date
+  var latestNosDate = useMemo(function() {
+    if (!nosSnapshots.length) return null;
+    return nosSnapshots.reduce(function(max, s) { return s.snapshot_date > max ? s.snapshot_date : max; }, nosSnapshots[0].snapshot_date);
+  }, [nosSnapshots]);
+  var todaysNosSnapshots = useMemo(function() {
+    return nosSnapshots.filter(function(s) { return s.snapshot_date === latestNosDate; });
+  }, [nosSnapshots, latestNosDate]);
+
   /* Compute risk per item */
   var items = useMemo(function() {
     if (!data.length) return [];
@@ -111,7 +374,6 @@ export default function StockRiskShared({ bumFilter }) {
     if (store === '1') filtered = data.filter(function(r) { return /^\d+$/.test(r.store_number); });
     else if (store === 'B') filtered = data.filter(function(r) { return !(/^\d+$/.test(r.store_number)); });
 
-    // Aggregate per item (across stores if 'all')
     var map = {};
     filtered.forEach(function(r) {
       var key = r.item_number;
@@ -142,44 +404,32 @@ export default function StockRiskShared({ bumFilter }) {
     var list = Object.values(map);
 
     list.forEach(function(m) {
-      // Unit cost = total inventory value / qty on hand
       m.cost = m.qoh > 0 ? m.inv_value / m.qoh : 0;
-      // Chronological sales (oldest first)
       m.salesChrono = m.sales.slice().reverse();
 
-      // Avg monthly sales (excl zero months)
       var nonZero = m.sales.filter(function(s) { return s > 0; });
       m.avg_monthly = nonZero.length ? nonZero.reduce(function(a, b) { return a + b; }, 0) / nonZero.length : 0;
       m.active_months = nonZero.length;
 
-      // Available = QOH + QOO (what you have + what's coming)
       m.available = m.qoh + m.qoo;
-
-      // Months of coverage
       m.months_cover = m.avg_monthly > 0 ? m.available / m.avg_monthly : (m.available > 0 ? 99 : 0);
 
-      // Risk level
       if (m.avg_monthly <= 0) {
-        m.risk = 'ok'; // No sales = no risk of running out
+        m.risk = 'ok';
       } else if (m.months_cover < 1) {
-        m.risk = 'critical'; // Less than 1 month left
+        m.risk = 'critical';
       } else if (m.months_cover < m.max_lt) {
-        m.risk = 'urgent'; // Can't reorder in time
+        m.risk = 'urgent';
       } else if (m.months_cover < m.max_lt * 1.5) {
-        m.risk = 'watch'; // Getting tight
+        m.risk = 'watch';
       } else {
         m.risk = 'ok';
       }
 
-      // Projected stockout date (months from now)
       m.stockout_months = m.avg_monthly > 0 ? m.qoh / m.avg_monthly : 99;
-
-      // Value at risk (inventory value of items that will run out)
       m.value_at_risk = (m.risk === 'critical' || m.risk === 'urgent') ? m.inv_value : 0;
 
-      // Suggested order qty - only for items at risk
       if (m.risk === 'critical' || m.risk === 'urgent') {
-        // Target: enough to cover until next delivery (lead time) + 1 month buffer
         var target = m.avg_monthly * (m.max_lt + 1);
         m.suggested_qty = Math.max(0, Math.round(target - m.available));
         m.suggested_value = m.suggested_qty * m.cost;
@@ -189,7 +439,6 @@ export default function StockRiskShared({ bumFilter }) {
       }
     });
 
-    // Only items with sales history (avg > 0)
     list = list.filter(function(m) { return m.avg_monthly > 0; });
 
     return list;
@@ -198,7 +447,6 @@ export default function StockRiskShared({ bumFilter }) {
   var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
   var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
 
-  /* KPI totals - respond to NOS, dept, vendor, QOH filters */
   var filteredBase = useMemo(function() {
     var src = items;
     if (nosFilter === 'yes') src = src.filter(function(m) { return m.nos; });
@@ -209,17 +457,13 @@ export default function StockRiskShared({ bumFilter }) {
     return src;
   }, [items, nosFilter, qohFilter, dept, vendor]);
 
-  /* Apply filters */
   var displayed = useMemo(function() {
     var list = filteredBase || [];
 
-    // Filter by risk level
     if (filter === 'critical') list = list.filter(function(m) { return m.risk === 'critical'; });
     else if (filter === 'urgent') list = list.filter(function(m) { return m.risk === 'critical' || m.risk === 'urgent'; });
     else if (filter === 'watch') list = list.filter(function(m) { return m.risk !== 'ok'; });
-    // 'all' shows everything
 
-    // Search
     if (search) {
       var s = search.toLowerCase();
       list = list.filter(function(m) {
@@ -229,7 +473,6 @@ export default function StockRiskShared({ bumFilter }) {
       });
     }
 
-    // Sort
     list = list.slice().sort(function(a, b) {
       var av = a[sortCol] || 0, bv = b[sortCol] || 0;
       if (typeof av === 'string') return sortDir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
@@ -259,7 +502,6 @@ export default function StockRiskShared({ bumFilter }) {
     };
   }, [filteredBase]);
 
-  /* Department risk summary */
   var deptRisk = useMemo(function() {
     var map = {};
     (filteredBase || []).forEach(function(m) {
@@ -355,6 +597,12 @@ export default function StockRiskShared({ bumFilter }) {
         })}
       </div>
 
+      {/* ═══ NEW: NOS overview charts ═══ */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+        <NosStackedBar snapshotsToday={todaysNosSnapshots} store={store} />
+        <NosTrendChart allSnapshots={nosSnapshots} store={store} />
+      </div>
+
       {/* Department risk overview */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
         <h3 className="text-[15px] font-bold mb-1">Risico per Afdeling</h3>
@@ -447,7 +695,6 @@ export default function StockRiskShared({ bumFilter }) {
               </tr>
             </thead>
             <tbody>
-              {/* Totals row */}
               {(function() {
                 var tQoh = 0, tQoo = 0, tQty = 0, tVal = 0;
                 displayed.forEach(function(m) { tQoh += m.qoh; tQoo += m.qoo; tQty += m.suggested_qty; tVal += m.suggested_value; });
