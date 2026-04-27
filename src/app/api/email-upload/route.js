@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: route_email_v6.js
+   BESTAND: route_email_v7.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v7:
+   - processBuying roept nu processNosSnapshot aan na succesvolle insert
+   - Nieuwe functie processNosSnapshot: schrijft per (BUM × regio × datum)
+     hoeveel NOS items in_stock / refilling / uncovered zijn naar
+     nos_coverage_snapshots tabel (voor trendgrafiek Stock Risk Alert)
    WIJZIGING v6:
    - processNegativeInventory schrijft nu naar de ECHTE kolomnamen
      van negative_inventory: qty_on_hand, inv_value (i.p.v. qoh/cost)
@@ -589,7 +594,161 @@ async function processBuying(json) {
     totalInserted += batch.length;
   }
 
+  // ── NOS coverage snapshot (per BUM × regio × today)
+  try {
+    await processNosSnapshot();
+  } catch (snapErr) {
+    console.error('NOS snapshot error: ' + (snapErr && snapErr.message ? snapErr.message : snapErr));
+  }
+
   return { table: 'buying_data', rows_imported: totalInserted, bums: bumList };
+}
+
+/* ── NOS coverage snapshot ──
+   Roept buying_data op nadat nieuwe data is geïnsert.
+   Aggregeert per (item, bum, regio): qoh + qoo. Categoriseert als
+   in_stock / refilling / uncovered. Telt per BUM × regio. Plus 'Total' regio
+   per BUM (item-niveau som over Cur+Bon).
+   Schrijft naar nos_coverage_snapshots (full replace voor vandaag). */
+async function processNosSnapshot() {
+  var today = new Date().toISOString().split('T')[0];
+  console.log('NOS snapshot: building for ' + today);
+
+  // Load all NOS rows from buying_data (page through 1000-row limit)
+  var all = [];
+  var from = 0;
+  var step = 1000;
+  while (true) {
+    var r = await supabase
+      .from('buying_data')
+      .select('item_number, store_number, bum, qoh, qty_on_order, nos, sales_m01, sales_m02, sales_m03, sales_m04, sales_m05, sales_m06, sales_m07, sales_m08, sales_m09, sales_m10, sales_m11, sales_m12')
+      .eq('nos', 'N')
+      .range(from, from + step - 1);
+    if (r.error) {
+      console.error('NOS snapshot load error: ' + r.error.message);
+      return;
+    }
+    if (!r.data || !r.data.length) break;
+    all = all.concat(r.data);
+    if (r.data.length < step) break;
+    from += step;
+  }
+  console.log('NOS snapshot: loaded ' + all.length + ' NOS rows');
+
+  // Aggregate per (item, bum, region)
+  // region: numeric store -> Curacao, anders Bonaire
+  var agg = {};
+  all.forEach(function(rec) {
+    var bum = String(rec.bum || '').toUpperCase();
+    if (!bum) return;
+    var sn = String(rec.store_number || '');
+    var region = /^\d+$/.test(sn) ? 'Curacao' : 'Bonaire';
+    var key = bum + '|' + region + '|' + rec.item_number;
+    if (!agg[key]) {
+      agg[key] = {
+        bum: bum,
+        region: region,
+        item_number: rec.item_number,
+        qoh: 0,
+        qoo: 0,
+        sales_total: 0,
+      };
+    }
+    agg[key].qoh += parseFloat(rec.qoh) || 0;
+    agg[key].qoo += parseFloat(rec.qty_on_order) || 0;
+    for (var i = 1; i <= 12; i++) {
+      var k = 'sales_m' + (i < 10 ? '0' + i : '' + i);
+      agg[key].sales_total += parseFloat(rec[k]) || 0;
+    }
+  });
+
+  // Filter to items with sales history (consistent with Stock Risk page)
+  var aggArr = Object.values(agg).filter(function(x) { return x.sales_total > 0; });
+
+  // Per BUM × region counts
+  var perGroup = {};      // key = bum|region
+  var perBumItems = {};   // key = bum|item -> { qoh, qoo } (combined Cur+Bon)
+
+  aggArr.forEach(function(x) {
+    var gKey = x.bum + '|' + x.region;
+    if (!perGroup[gKey]) {
+      perGroup[gKey] = { bum: x.bum, region: x.region, total: 0, in_stock: 0, refilling: 0, uncovered: 0 };
+    }
+    perGroup[gKey].total += 1;
+    if (x.qoh > 0) perGroup[gKey].in_stock += 1;
+    else if (x.qoh + x.qoo > 0) perGroup[gKey].refilling += 1;
+    else perGroup[gKey].uncovered += 1;
+
+    // Combine for Total per BUM at item level
+    var iKey = x.bum + '|' + x.item_number;
+    if (!perBumItems[iKey]) perBumItems[iKey] = { bum: x.bum, qoh: 0, qoo: 0 };
+    perBumItems[iKey].qoh += x.qoh;
+    perBumItems[iKey].qoo += x.qoo;
+  });
+
+  // Per BUM × Total
+  var perBumTotal = {};
+  Object.values(perBumItems).forEach(function(x) {
+    var key = x.bum;
+    if (!perBumTotal[key]) {
+      perBumTotal[key] = { bum: x.bum, region: 'Total', total: 0, in_stock: 0, refilling: 0, uncovered: 0 };
+    }
+    perBumTotal[key].total += 1;
+    if (x.qoh > 0) perBumTotal[key].in_stock += 1;
+    else if (x.qoh + x.qoo > 0) perBumTotal[key].refilling += 1;
+    else perBumTotal[key].uncovered += 1;
+  });
+
+  // Build snapshot rows
+  var snapRows = [];
+  Object.values(perGroup).forEach(function(g) {
+    snapRows.push({
+      snapshot_date: today,
+      bum: g.bum,
+      region: g.region,
+      total_nos_items: g.total,
+      in_stock: g.in_stock,
+      refilling: g.refilling,
+      uncovered: g.uncovered,
+    });
+  });
+  Object.values(perBumTotal).forEach(function(g) {
+    snapRows.push({
+      snapshot_date: today,
+      bum: g.bum,
+      region: g.region,
+      total_nos_items: g.total,
+      in_stock: g.in_stock,
+      refilling: g.refilling,
+      uncovered: g.uncovered,
+    });
+  });
+
+  console.log('NOS snapshot: ' + snapRows.length + ' rows ready');
+
+  if (snapRows.length === 0) {
+    console.log('NOS snapshot: no rows to insert');
+    return;
+  }
+
+  // Delete today's existing snapshot first (idempotent on re-run)
+  var del = await supabase
+    .from('nos_coverage_snapshots')
+    .delete({ count: 'exact' })
+    .eq('snapshot_date', today);
+  if (del.error) {
+    console.error('NOS snapshot delete error: ' + del.error.message);
+  } else {
+    console.log('NOS snapshot: deleted ' + (del.count || 0) + ' existing rows for ' + today);
+  }
+
+  // Insert
+  var ins = await supabase.from('nos_coverage_snapshots').insert(snapRows);
+  if (ins.error) {
+    console.error('NOS snapshot insert error: ' + ins.error.message);
+  } else {
+    console.log('NOS snapshot: inserted ' + snapRows.length + ' rows');
+  }
 }
 
 /* ══════════════════════════════════════════════
