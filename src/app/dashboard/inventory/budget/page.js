@@ -1,428 +1,272 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v6.js
-   KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
+   BESTAND: page_inventory.js
+   KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.03
-   
-   Wijzigingen t.o.v. v5:
-   - Volledig herschreven met dezelfde look & feel als
-     /dashboard/inventory/budget (Voorraad vs Budget)
-   - Tailwind (ipv inline styles), Playfair Display kop, DM Sans body
-   - Kleurenschema: #1a0a04 / #6b5240 / #e5ddd4 / #faf7f4
-   - Pills, panels, KPI cards met oranje streep
-   - Tabel met #1B3A5C header + #f0ebe5 subheader
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
-import { Chart, CategoryScale, LinearScale, LineElement, PointElement, LineController, Tooltip, Legend, Filler } from 'chart.js';
+import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend } from 'chart.js';
 
-Chart.register(CategoryScale, LinearScale, LineElement, PointElement, LineController, Tooltip, Legend, Filler);
+Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend);
 
 var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : (a / 1e3).toFixed(0) + 'K'); };
+var fmtP = function(n) { return (n || 0).toFixed(1) + '%'; };
+var SN = { '1': 'Curaçao', 'B': 'Bonaire' };
 var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
+var XCG_USD = 1.82;
 
-function fmtDate(d) {
-  if (!d) return '';
-  var p = String(d).split('-');
-  if (p.length !== 3) return d;
-  return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2);
-}
-function fmtDateFull(d) {
-  if (!d) return '';
-  var p = String(d).split('-');
-  if (p.length !== 3) return d;
-  return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + ' ' + p[0];
-}
-function fmtDateTime(d) {
-  if (!d) return '';
-  var dt = new Date(d);
-  return dt.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
-    ' ' + dt.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
-}
-function daysSince(d) {
-  if (!d) return null;
-  var ms = new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0);
-  return Math.floor(ms / 86400000);
-}
-function regionOf(storeNumber) {
-  var s = String(storeNumber || '').trim().toUpperCase();
-  if (s === 'A' || s === 'B') return 'Bonaire';
-  return 'Curacao';
+function pctColor(pct) {
+  var abs = Math.abs(pct || 0);
+  if (abs <= 15) return '#16a34a';
+  if (abs <= 25) return '#d97706';
+  return '#dc2626';
 }
 
 function Pill({ label, active, onClick }) {
+  return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
+}
+
+function PctBar({ pct, name, deptCode, actual, budget }) {
+  var _h = useState(false), hovered = _h[0], setHovered = _h[1];
+  var capped = Math.max(-80, Math.min(80, pct));
+  var isOver = pct > 0;
+  var barColor = pctColor(pct);
+  var barWidth = Math.min(Math.abs(capped), 80);
+  var label = (pct >= 0 ? '+' : '') + Math.round(pct) + '%';
   return (
-    <button
-      className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' +
-        (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')}
-      onClick={onClick}
-    >
-      {label}
-    </button>
+    <div className="flex items-center gap-2 py-[3px] relative" style={{ minHeight: '28px' }}
+      onMouseEnter={function() { setHovered(true); }} onMouseLeave={function() { setHovered(false); }}>
+      <div className="w-[180px] text-right text-[10px] text-[#1a0a04] truncate flex-shrink-0 pr-2" title={name}>
+        <span className="font-mono text-[#6b5240] mr-1">{deptCode}</span>{name ? name.replace(/^\d+\s*/, '') : ''}
+      </div>
+      <div className="flex-1 flex items-center relative" style={{ height: '22px' }}>
+        <div className="absolute left-1/2 top-0 bottom-0 w-[2px] bg-[#1B3A5C]/40" style={{ zIndex: 2 }}></div>
+        <div className="absolute top-0 bottom-0 bg-[#16a34a]/5 border-l border-r border-[#16a34a]/20" style={{ left: 'calc(50% - 7.5%)', width: '15%', zIndex: 0 }}></div>
+        <div className="absolute top-0 bottom-0 border-l border-r border-[#d97706]/15" style={{ left: 'calc(50% - 12.5%)', width: '25%', zIndex: 0 }}></div>
+        <div className="absolute top-1 bottom-1 rounded-sm transition-all" style={{ backgroundColor: barColor, width: (barWidth / 2) + '%', left: isOver ? '50%' : (50 - barWidth / 2) + '%', zIndex: 1 }}></div>
+        <div className="absolute text-[10px] font-bold font-mono whitespace-nowrap" style={{ color: barColor, left: isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, right: !isOver ? (50 + barWidth / 2 + 0.5) + '%' : undefined, top: '3px', zIndex: 3 }}>{label}</div>
+      </div>
+      {hovered && (
+        <div style={{ position: 'absolute', left: '200px', top: '-28px', backgroundColor: '#1B3A5C', color: 'white', fontSize: '10px', fontFamily: 'monospace', padding: '5px 10px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', zIndex: 100, pointerEvents: 'none' }}>
+          {'Actual: ' + fmt(Math.round(actual || 0)) + '  ·  Budget: ' + fmt(Math.round(budget || 0)) + '  ·  Verschil: ' + fmt(Math.round((actual || 0) - (budget || 0)))}
+        </div>
+      )}
+    </div>
   );
 }
 
-function StatusBadge({ status }) {
-  if (!status) return <span className="text-[#a08a74] text-[11px]">—</span>;
-  if (status === 'in_onderzoek') return <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-[10px] font-semibold">In onderzoek</span>;
-  if (status === 'opgelost') return <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-[10px] font-semibold">Opgelost</span>;
-  return <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[10px] font-semibold">{status}</span>;
-}
-
-export default function NegativeInventoryPage() {
+export default function InventoryDashboard() {
   var _s = useState;
-  var _items = _s([]), items = _items[0], setItems = _items[1];
-  var _notes = _s([]), notes = _notes[0], setNotes = _notes[1];
-  var _snap = _s([]), snapshots = _snap[0], setSnapshots = _snap[1];
-  var _fs = _s({}), firstSeen = _fs[0], setFirstSeen = _fs[1];
+  var _d = _s([]), data = _d[0], setData = _d[1];
+  var _bd = _s([]), buyingData = _bd[0], setBuyingData = _bd[1];
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
-  var _me = _s({ email: '', name: '' }), me = _me[0], setMe = _me[1];
-
-  // Filters
-  var _store = _s('all'), store = _store[0], setStore = _store[1];     // 'all' | 'Curacao' | 'Bonaire'
+  var _vw = _s('overview'), view = _vw[0], setView = _vw[1];
+  // Single unified filter state
+  var _store = _s('1'), store = _store[0], setStore = _store[1];
   var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = _s('__total__'), selDept = _dept[0], setSelDept = _dept[1];
-
-  // View
-  var _vw = _s('overview'), view = _vw[0], setView = _vw[1];           // 'overview' | 'detail'
-
-  // Detail-tab
-  var _search = _s(''), search = _search[0], setSearch = _search[1];
-  var _hide = _s(false), hideResolved = _hide[0], setHideResolved = _hide[1];
-  var _sc = _s('inv_value'), sortCol = _sc[0], setSortCol = _sc[1];
-  var _sd = _s('asc'), sortDir = _sd[0], setSortDir = _sd[1];
-
-  // Inline edit
-  var _in = _s({}), inlineNote = _in[0], setInlineNote = _in[1];
-  var _is = _s({}), inlineStatus = _is[0], setInlineStatus = _is[1];
-  var _sv = _s(null), savingRow = _sv[0], setSavingRow = _sv[1];
-
-  // Modal
-  var _hist = _s(null), historyItem = _hist[0], setHistoryItem = _hist[1];
-
-  // Chart
   var trendRef = useRef(null);
   var chartRef = useRef(null);
 
   var supabase = createClient();
-  useEffect(function() { loadAll(); }, []);
+  useEffect(function() { loadData(); }, []);
 
-  async function loadAll() {
-    var session = (await supabase.auth.getSession()).data.session;
-    if (session) {
-      var prof = (await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle()).data;
-      setMe({ email: session.user.email, name: prof?.full_name || prof?.name || session.user.email });
-    }
-    await Promise.all([loadItems(), loadNotes(), loadSnapshots(), loadFirstSeen()]);
-    setLoading(false);
-  }
-
-  async function loadItems() {
+  async function loadData() {
     var all = [], from = 0, step = 1000;
     while (true) {
-      var r = await supabase.from('negative_inventory').select('*').lt('qty_on_hand', 0).range(from, from + step - 1);
+      var r = await supabase.from('inventory_data').select('*').order('dept_code').order('inventory_date').range(from, from + step - 1);
       if (!r.data || !r.data.length) break;
       all = all.concat(r.data);
       if (r.data.length < step) break;
       from += step;
     }
-    setItems(all);
-  }
-
-  async function loadNotes() {
-    var all = [], from = 0, step = 1000;
+    var allB = []; from = 0;
     while (true) {
-      var r = await supabase.from('negative_inventory_notes').select('*').order('created_at', { ascending: false }).range(from, from + step - 1);
-      if (!r.data || !r.data.length) break;
-      all = all.concat(r.data);
-      if (r.data.length < step) break;
+      var r2 = await supabase.from('buying_data').select('dept_code,qty_on_order,min_lead_time,max_lead_time,sales_m01,sales_m02,sales_m03,sales_m04,sales_m05,sales_m06,sales_m07,sales_m08,sales_m09,sales_m10,sales_m11,sales_m12,store_number').range(from, from + step - 1);
+      if (!r2.data || !r2.data.length) break;
+      allB = allB.concat(r2.data);
+      if (r2.data.length < step) break;
       from += step;
     }
-    setNotes(all);
+    setData(all); setBuyingData(allB); setLoading(false);
   }
 
-  async function loadSnapshots() {
-    var all = [], from = 0, step = 1000;
-    while (true) {
-      var r = await supabase.from('negative_inventory_snapshots').select('*').order('snapshot_date', { ascending: true }).range(from, from + step - 1);
-      if (!r.data || !r.data.length) break;
-      all = all.concat(r.data);
-      if (r.data.length < step) break;
-      from += step;
-    }
-    setSnapshots(all);
-  }
+  // Store pills are now fixed: Totaal, Curaçao, Bonaire
 
-  async function loadFirstSeen() {
-    var all = [], from = 0, step = 1000;
-    while (true) {
-      var r = await supabase.from('negative_inventory_first_seen').select('*').range(from, from + step - 1);
-      if (!r.data || !r.data.length) break;
-      all = all.concat(r.data);
-      if (r.data.length < step) break;
-      from += step;
-    }
+  function buildDepartments(storeFilter, bumFilter) {
+    // For 'all': combine CUR + BON, converting BON to XCG
+    // For '1': CUR only (already XCG)
+    // For 'B': BON only in USD
+    var cFactor = 1; // multiplier for BON values
+    if (storeFilter === 'all') cFactor = XCG_USD; // BON→XCG in combined view
+
     var map = {};
-    all.forEach(function(x) { map[x.item_number] = x; });
-    setFirstSeen(map);
-  }
+    data.forEach(function(r) {
+      if (storeFilter !== 'all' && r.store_number !== storeFilter) return;
+      var key = r.dept_code;
+      var isBon = r.store_number === 'B';
+      var valMultiplier = (storeFilter === 'all' && isBon) ? XCG_USD : 1;
 
-  /* ── Notes map ── */
-  var notesByKey = useMemo(function() {
-    var m = {};
-    notes.forEach(function(n) {
-      var k = n.store_number + '|' + n.item_number;
-      if (!m[k]) m[k] = [];
-      m[k].push(n);
+      if (!map[key]) {
+        map[key] = { deptCode: r.dept_code, deptName: r.dept_name, bum: r.bum, budget: 0, history: {} };
+      }
+      // Budget: only CUR has budget, don't convert
+      if (!isBon) map[key].budget = parseFloat(r.budget) || 0;
+
+      var dt = r.inventory_date;
+      if (!map[key].history[dt]) map[key].history[dt] = 0;
+      map[key].history[dt] += (parseFloat(r.inventory_value) || 0) * valMultiplier;
     });
-    Object.keys(m).forEach(function(k) {
-      m[k].sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+
+    var list = Object.values(map);
+    list.forEach(function(d) {
+      // Convert history object to sorted array
+      var histArr = Object.entries(d.history).map(function(e) { return { date: e[0], value: e[1] }; });
+      histArr.sort(function(a, b) { return a.date.localeCompare(b.date); });
+      d.history = histArr;
+      d.actual = histArr.length ? histArr[histArr.length - 1].value : 0;
+      d.diff = d.actual - d.budget;
+      d.pct = d.budget ? ((d.actual - d.budget) / d.budget) * 100 : 0;
     });
-    return m;
-  }, [notes]);
 
-  function latestStatusFor(storeNumber, itemNumber) {
-    var a = notesByKey[storeNumber + '|' + itemNumber] || [];
-    return a[0]?.status || null;
+    // For BON standalone: filter out depts with all-zero history
+    if (storeFilter === 'B') {
+      list = list.filter(function(d) { return d.history.some(function(h) { return h.value !== 0; }); });
+    }
+
+    list.sort(function(a, b) { return (parseInt(a.deptCode) || 999) - (parseInt(b.deptCode) || 999); });
+    if (bumFilter && bumFilter !== 'all') list = list.filter(function(d) { return d.bum === bumFilter; });
+    return list;
   }
 
-  /* ── Apply global filters ── */
-  function matchFilters(it) {
-    if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return false;
-    if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return false;
-    if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return false;
-    if (selDept !== '__total__' && it.dept_code !== selDept) return false;
-    return true;
-  }
-  var filteredItems = useMemo(function() { return items.filter(matchFilters); }, [items, store, selBum, selDept]);
+  var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum]);
 
-  /* ── Filter options ── */
+  // Aggregate buying data per dept: QOO, lead times, avg monthly sales
+  var buyingByDept = useMemo(function() {
+    var map = {};
+    var filtered = buyingData;
+    if (store === '1') filtered = buyingData.filter(function(r) { return /^\d+$/.test(r.store_number); });
+    else if (store === 'B') filtered = buyingData.filter(function(r) { return !(/^\d+$/.test(r.store_number)); });
+    filtered.forEach(function(r) {
+      var dc = String(r.dept_code).replace(/\.0$/, '');
+      if (!map[dc]) map[dc] = { qoo: 0, minLT: 99, maxLT: 0, totalSales: 0, activeMonths: 0, itemCount: 0 };
+      var m = map[dc];
+      m.qoo += parseFloat(r.qty_on_order) || 0;
+      var mlt = parseFloat(r.min_lead_time) || 0;
+      var xlt = parseFloat(r.max_lead_time) || 0;
+      if (mlt > 0 && mlt < m.minLT) m.minLT = mlt;
+      if (xlt > m.maxLT) m.maxLT = xlt;
+      var sales = [];
+      for (var i = 1; i <= 12; i++) { sales.push(parseFloat(r['sales_m' + String(i).padStart(2, '0')]) || 0); }
+      var nonZero = sales.filter(function(s) { return s > 0; });
+      if (nonZero.length) { m.totalSales += nonZero.reduce(function(a, b) { return a + b; }, 0) / nonZero.length; }
+      m.itemCount++;
+    });
+    // Clean up minLT
+    Object.values(map).forEach(function(m) { if (m.minLT === 99) m.minLT = 0; });
+    return map;
+  }, [buyingData, store]);
+
   var bums = useMemo(function() {
     var s = {};
-    items.forEach(function(it) {
-      if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
-      if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (it.bum) s[it.bum.toUpperCase()] = true;
-    });
+    data.filter(function(r) { return store === 'all' || r.store_number === store; }).forEach(function(r) { if (r.bum) s[r.bum] = true; });
     var l = Object.keys(s);
-    l.sort(function(a, b) {
-      var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b);
-      if (ai !== -1 && bi !== -1) return ai - bi;
-      if (ai !== -1) return -1;
-      if (bi !== -1) return 1;
-      return a.localeCompare(b);
-    });
+    l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); });
     return l;
-  }, [items, store]);
+  }, [data, store]);
 
-  var departments = useMemo(function() {
-    var m = {};
-    items.forEach(function(it) {
-      if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
-      if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
-      var code = it.dept_code;
-      if (!m[code]) m[code] = { deptCode: code, deptName: it.dept_name, items: 0, value: 0 };
-      m[code].items += 1;
-      m[code].value += parseFloat(it.inv_value) || 0;
-    });
-    var arr = Object.values(m);
-    arr.sort(function(a, b) {
-      if (a.deptCode === 'OTHER') return 1;
-      if (b.deptCode === 'OTHER') return -1;
-      return (parseInt(a.deptCode) || 999) - (parseInt(b.deptCode) || 999);
-    });
-    return arr;
-  }, [items, store, selBum]);
-
-  /* ── KPI totals ── */
-  var totals = useMemo(function() {
+  var totals = useMemo(function() { 
     var src = departments;
     if (selDept !== '__total__') src = departments.filter(function(d) { return d.deptCode === selDept; });
-    var t = { items: 0, value: 0, depts: src.length };
-    src.forEach(function(d) { t.items += d.items; t.value += d.value; });
-    return t;
+    var budget = 0, actual = 0; 
+    src.forEach(function(d) { budget += d.budget; actual += d.actual; }); 
+    return { budget: budget, actual: actual, diff: actual - budget, pct: budget ? ((actual - budget) / budget) * 100 : 0 }; 
   }, [departments, selDept]);
 
-  /* ── Trend (snapshots over time) ── */
-  var trendData = useMemo(function() {
-    var byDate = {};
-    snapshots.forEach(function(s) {
-      if (store === 'Curacao' && s.region !== 'Curacao') return;
-      if (store === 'Bonaire' && s.region !== 'Bonaire') return;
-      if (selDept !== '__total__' && s.department_code !== selDept) return;
-      var d = s.snapshot_date;
-      if (!byDate[d]) byDate[d] = { date: d, items: 0, value: 0 };
-      byDate[d].items += s.items_count || 0;
-      byDate[d].value += parseFloat(s.total_negative_value) || 0;
-    });
-    return Object.values(byDate)
-      .map(function(d) { return { date: d.date, items: d.items, value: Math.round(d.value) }; })
-      .sort(function(a, b) { return a.date.localeCompare(b.date); });
-  }, [snapshots, store, selDept]);
+  var dates = useMemo(function() { var s = {}; departments.forEach(function(d) { d.history.forEach(function(h) { s[h.date] = true; }); }); return Object.keys(s).sort(); }, [departments]);
+  var historyDates = useMemo(function() { if (dates.length <= 1) return []; return dates.slice(0, -1).reverse(); }, [dates]);
 
-  /* ── Render trend chart ── */
+  /* ── Trend chart data ── */
+  var trendChartData = useMemo(function() {
+    if (!departments.length) return null;
+    var allDates = {};
+    departments.forEach(function(d) { d.history.forEach(function(h) { allDates[h.date] = true; }); });
+    var sortedDates = Object.keys(allDates).sort();
+    if (!sortedDates.length) return null;
+    var labels = sortedDates.map(function(dt) { var p = dt.split('-'); return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2); });
+    var title = '', values = [], budgetValues = [];
+    if (selDept === '__total__') {
+      title = selBum !== 'all' ? ('Totaal ' + selBum) : ('Totaal ' + (store === 'all' ? 'Building Depot' : store === '1' ? 'Curaçao' : 'Bonaire'));
+      var totalBudget = 0;
+      departments.forEach(function(d) { totalBudget += d.budget; });
+      values = sortedDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return sum; });
+      budgetValues = sortedDates.map(function() { return totalBudget; });
+    } else {
+      var dept = departments.find(function(d) { return d.deptCode === selDept; });
+      if (!dept) return null;
+      title = dept.deptCode + ' — ' + dept.deptName;
+      values = sortedDates.map(function(dt) { var h = dept.history.find(function(x) { return x.date === dt; }); return h ? h.value : 0; });
+      budgetValues = sortedDates.map(function() { return dept.budget; });
+    }
+    return { labels: labels, values: values, budgetValues: budgetValues, title: title };
+  }, [departments, selDept, selBum, store]);
+
+  /* ── Render chart ── */
   useEffect(function() {
     if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
-    if (view !== 'overview' || trendData.length < 2 || !trendRef.current) return;
+    if (view !== 'visual' || !trendChartData) return;
     var raf = requestAnimationFrame(function() {
       if (!trendRef.current) return;
       chartRef.current = new Chart(trendRef.current, {
         type: 'line',
-        data: {
-          labels: trendData.map(function(d) { return fmtDate(d.date); }),
-          datasets: [
-            {
-              label: 'Aantal items',
-              yAxisID: 'y1',
-              data: trendData.map(function(d) { return d.items; }),
-              borderColor: '#1B3A5C',
-              backgroundColor: 'rgba(27,58,92,0.06)',
-              pointBackgroundColor: '#1B3A5C',
-              pointRadius: 4,
-              tension: 0.25,
-              fill: false,
-              borderWidth: 2,
-            },
-            {
-              label: 'Waarde (XCG)',
-              yAxisID: 'y2',
-              data: trendData.map(function(d) { return d.value; }),
-              borderColor: '#E84E1B',
-              backgroundColor: 'rgba(232,78,27,0.08)',
-              pointBackgroundColor: '#E84E1B',
-              pointRadius: 4,
-              tension: 0.25,
-              fill: true,
-              borderWidth: 2.5,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } },
-            tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(Math.round(c.raw)); } } },
-          },
-          scales: {
-            y1: { type: 'linear', position: 'left', ticks: { callback: function(v) { return fmt(v); } }, grid: { color: '#f0ebe5' } },
-            y2: { type: 'linear', position: 'right', ticks: { callback: function(v) { return fmtK(v); } }, grid: { display: false } },
-            x: { grid: { display: false } },
-          },
+        data: { labels: trendChartData.labels, datasets: [
+          { label: 'Voorraad', data: trendChartData.values, borderColor: '#E84E1B', backgroundColor: 'rgba(232,78,27,0.08)', pointBackgroundColor: '#E84E1B', pointRadius: 5, tension: 0.3, fill: true, borderWidth: 2.5 },
+          { label: 'Budget', data: trendChartData.budgetValues, borderColor: '#1B3A5C', borderDash: [6, 3], pointRadius: 0, tension: 0, borderWidth: 2 },
+        ] },
+        options: { responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } }, tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(Math.round(c.raw)); } } } },
+          scales: { y: { ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } }, x: { grid: { display: false } } },
         },
       });
     });
     return function() { cancelAnimationFrame(raf); };
-  }, [trendData, view]);
+  }, [trendChartData, view]);
 
-  /* ── Detail items (sorted + searched) ── */
-  var detailItems = useMemo(function() {
-    var arr = filteredItems.slice();
-    if (hideResolved) {
-      arr = arr.filter(function(it) { return latestStatusFor(it.store_number, it.item_number) !== 'opgelost'; });
-    }
-    if (search.trim()) {
-      var q = search.trim().toLowerCase();
-      arr = arr.filter(function(it) {
-        return (it.item_number || '').toLowerCase().includes(q) ||
-               (it.item_description || '').toLowerCase().includes(q) ||
-               (it.dept_name || '').toLowerCase().includes(q);
-      });
-    }
-    var dir = sortDir === 'asc' ? 1 : -1;
-    arr.sort(function(a, b) {
-      var va, vb;
-      switch (sortCol) {
-        case 'store': va = a.store_number; vb = b.store_number; break;
-        case 'dept': va = a.dept_code; vb = b.dept_code; break;
-        case 'bum': va = a.bum || ''; vb = b.bum || ''; break;
-        case 'item': va = a.item_number; vb = b.item_number; break;
-        case 'desc': va = a.item_description || ''; vb = b.item_description || ''; break;
-        case 'qty_on_hand': va = a.qty_on_hand || 0; vb = b.qty_on_hand || 0; break;
-        case 'inv_value': va = a.inv_value || 0; vb = b.inv_value || 0; break;
-        case 'firstSeen': {
-          va = firstSeen[a.item_number]?.first_seen_date || '9999-12-31';
-          vb = firstSeen[b.item_number]?.first_seen_date || '9999-12-31';
-          break;
-        }
-        case 'status': {
-          va = latestStatusFor(a.store_number, a.item_number) || 'zzz';
-          vb = latestStatusFor(b.store_number, b.item_number) || 'zzz';
-          break;
-        }
-        default: va = a.inv_value || 0; vb = b.inv_value || 0;
-      }
-      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
-      return String(va).localeCompare(String(vb)) * dir;
-    });
-    return arr;
-  }, [filteredItems, search, hideResolved, sortCol, sortDir, notesByKey, firstSeen]);
+  if (loading) return <LoadingLogo text="Voorraad rapport laden..." />;
+  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen inventory data beschikbaar.</p></div>;
 
-  function handleSort(col) {
-    if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    else { setSortCol(col); setSortDir('asc'); }
-  }
-
-  async function handleSaveInline(it) {
-    var txt = (inlineNote[it.id] || '').trim();
-    if (!txt) return;
-    var status = inlineStatus[it.id] || 'in_onderzoek';
-    setSavingRow(it.id);
-    var row = {
-      store_number: it.store_number,
-      item_number: it.item_number,
-      item_description: it.item_description,
-      department_code: it.dept_code,
-      department_name: it.dept_name,
-      note: txt,
-      status: status,
-      created_by_email: me.email,
-      created_by_name: me.name,
-    };
-    var r = await supabase.from('negative_inventory_notes').insert(row);
-    if (r.error) alert('Opslaan mislukt: ' + r.error.message);
-    else {
-      setInlineNote(Object.assign({}, inlineNote, { [it.id]: '' }));
-      await loadNotes();
-    }
-    setSavingRow(null);
-  }
-
-  if (loading) return <LoadingLogo text="Negatieve voorraad laden..." />;
-
-  var latestSnapshotDate = snapshots.length
-    ? snapshots.reduce(function(max, s) { return s.snapshot_date > max ? s.snapshot_date : max; }, snapshots[0].snapshot_date)
-    : null;
-
-  var storeName = store === 'all' ? 'Totaal' : store === 'Curacao' ? 'Curaçao' : 'Bonaire';
-  var dateLabel = latestSnapshotDate ? fmtDateFull(latestSnapshotDate) : '';
+  var latestDate = dates.length ? dates[dates.length - 1] : '';
+  var dateParts = latestDate.split('-');
+  var dateLabel = dateParts.length === 3 ? (parseInt(dateParts[2]) + ' ' + MN[parseInt(dateParts[1]) - 1] + ' ' + dateParts[0]) : '';
+  var storeName = store === 'all' ? 'Totaal' : store === '1' ? 'Curaçao' : 'Bonaire';
+  var currencyLabel = store === 'B' ? 'USD' : 'XCG';
+  var isBonaire = store === 'B';
+  var isTotaal = store === 'all';
 
   return (
     <div className="max-w-[1600px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
 
-      {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Negatieve Voorraad</h1>
+          <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Voorraad vs Budget</h1>
           <p className="text-[13px] text-[#6b5240]">{'Building Depot — ' + storeName + (dateLabel ? ' — data t/m ' + dateLabel : '')}</p>
         </div>
-        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName + ' · XCG'}</div>
+        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeName + ' · ' + currencyLabel}</div>
       </div>
 
-      {/* Filter block */}
+      {/* Single unified filter block */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
           <div className="flex gap-1">
             <Pill label="Totaal" active={store === 'all'} onClick={function() { setStore('all'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="Curaçao" active={store === 'Curacao'} onClick={function() { setStore('Curacao'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="Bonaire" active={store === 'Bonaire'} onClick={function() { setStore('Bonaire'); setSelBum('all'); setSelDept('__total__'); }} />
+            <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setSelBum('all'); setSelDept('__total__'); }} />
+            <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setSelBum('all'); setSelDept('__total__'); }} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -434,39 +278,30 @@ export default function NegativeInventoryPage() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
-          <select
-            value={selDept}
-            onChange={function(e) { setSelDept(e.target.value); }}
-            className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[250px]"
-          >
+          <select value={selDept} onChange={function(e) { setSelDept(e.target.value); }}
+            className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[250px]">
             <option value="__total__">{selBum !== 'all' ? 'Totaal ' + selBum : 'Totaal alle departementen'}</option>
             {departments.map(function(d) { return <option key={d.deptCode} value={d.deptCode}>{d.deptCode + ' - ' + d.deptName}</option>; })}
           </select>
         </div>
+        {isBonaire && <div className="text-[11px] text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">Bonaire wordt weergegeven in USD. Budget is nog niet beschikbaar voor Bonaire.</div>}
+        {isTotaal && <div className="text-[11px] text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">Totaaloverzicht: Bonaire waarden zijn omgerekend naar XCG (×1.82). Budget geldt alleen voor Curaçao.</div>}
       </div>
 
       {/* View tabs */}
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        {[['overview', 'Overzicht'], ['detail', 'Detail']].map(function(item) {
-          return (
-            <button
-              key={item[0]}
-              onClick={function() { setView(item[0]); }}
-              className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' +
-                (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}
-            >
-              {item[1]}
-            </button>
-          );
+        {[['overview', 'Overzicht'], ['visual', 'Voorraad vs Budget']].map(function(item) {
+          return <button key={item[0]} onClick={function() { setView(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
         })}
       </div>
 
-      {/* KPI tiles */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+      {/* KPI tiles — react to all filters */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
         {[
-          { label: 'Aantal items', value: fmt(totals.items), tooltip: '' },
-          { label: 'Waarde negatief', value: fmtK(totals.value), tooltip: fmt(Math.round(totals.value)), color: '#dc2626' },
-          { label: 'Departementen', value: fmt(totals.depts), tooltip: '' },
+          { label: 'Budget Voorraad', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtK(totals.budget), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.budget)) },
+          { label: 'Actuele Voorraad', value: fmtK(totals.actual), tooltip: fmt(Math.round(totals.actual)) },
+          { label: 'Verschil', value: (isBonaire || isTotaal) ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.diff)) },
+          { label: '% vs Budget', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtP(totals.pct), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct) },
         ].map(function(k, i) {
           return (
             <div key={i} className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm" title={k.tooltip || ''}>
@@ -479,283 +314,122 @@ export default function NegativeInventoryPage() {
         })}
       </div>
 
-      {/* ═══ OVERVIEW ═══ */}
-      {view === 'overview' && (
+      {/* ═══ OVERVIEW TABLE ═══ */}
+      {view === 'overview' && (function() {
+        var noBudget = isBonaire || isTotaal;
+        var dataCols = noBudget ? 1 : 4;
+        return (
+        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[12px]" style={{ minWidth: '900px' }}>
+              <thead>
+                <tr className="bg-[#1B3A5C]">
+                  <th colSpan={2} className="p-0 border-r border-[#2a4f75]"></th>
+                  {!noBudget && <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>}
+                  {noBudget && <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual</th>}
+                  <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
+                </tr>
+                <tr className="bg-[#f0ebe5]">
+                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">DEP</th>
+                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4]">Departement</th>
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>}
+                  <th className={"text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>Actual</th>
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>}
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>}
+                  {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="bg-[#faf7f4]">
+                  <td colSpan={2} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td>
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.budget))}</td>}
+                  <td className={"p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(totals.actual))}</td>
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>}
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>}
+                  {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(sum))}</td>; })}
+                </tr>
+                {departments.map(function(d, i) {
+                  var dc = pctColor(d.pct);
+                  return (
+                    <tr key={d.deptCode} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setSelDept(d.deptCode); setView('visual'); }}>
+                      <td className="p-2 text-[12px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td>
+                      <td className="p-2 text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] truncate max-w-[180px]" title={d.deptName}>{d.deptName}</td>
+                      {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(Math.round(d.budget))}</td>}
+                      <td className={"p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(d.actual))}</td>
+                      {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: dc }}>{fmt(Math.round(d.diff))}</td>}
+                      {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: dc }}>{d.budget ? fmtP(d.pct) : '-'}</td>}
+                      {historyDates.map(function(dt) { var h = d.history.find(function(x) { return x.date === dt; }); return <td key={dt} className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{h ? fmt(Math.round(h.value)) : '-'}</td>; })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* ═══ VOORRAAD VS BUDGET (trend + bar chart) ═══ */}
+      {view === 'visual' && (
         <div className="space-y-5 mb-8">
           {/* Trend chart */}
-          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-[15px] font-bold">Verloop in de tijd</h3>
-                <p className="text-[12px] text-[#6b5240]">
-                  {selDept !== '__total__' ? 'Departement ' + selDept : (selBum !== 'all' ? 'Manager ' + selBum : storeName)}
-                </p>
+          {trendChartData && (
+            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-[15px] font-bold">{trendChartData.title}</h3>
+                  <p className="text-[12px] text-[#6b5240]">
+                    {'Store: ' + (store === 'all' ? 'Totaal' : store === '1' ? 'Curaçao' : 'Bonaire') +
+                    ' · Budget: ' + fmt(Math.round(trendChartData.budgetValues[0] || 0)) +
+                    ' · Actual: ' + fmt(Math.round(trendChartData.values[trendChartData.values.length - 1] || 0))}
+                  </p>
+                </div>
+                {trendChartData.budgetValues[0] > 0 && (function() {
+                  var lastVal = trendChartData.values[trendChartData.values.length - 1] || 0;
+                  var budVal = trendChartData.budgetValues[0] || 1;
+                  var p = ((lastVal - budVal) / budVal) * 100;
+                  return <span className="text-[20px] font-bold font-mono" style={{ color: pctColor(p) }}>{(p >= 0 ? '+' : '') + fmtP(p)}</span>;
+                })()}
               </div>
-            </div>
-            {trendData.length === 0 && <p className="text-[12px] text-[#6b5240] py-8 text-center">Nog geen snapshots beschikbaar.</p>}
-            {trendData.length === 1 && (
-              <div className="py-6 text-center bg-[#faf7f4] rounded-lg">
-                <p className="text-[12px] text-[#6b5240]">Eerste snapshot: {fmtDateFull(trendData[0].date)}</p>
-                <p className="text-[13px] mt-1">{fmt(trendData[0].items)} items · <span style={{ color: '#dc2626' }}>{fmt(trendData[0].value)} XCG</span></p>
-                <p className="text-[10px] text-[#a08a74] mt-2 italic">Grafiek verschijnt zodra er meer snapshots zijn.</p>
-              </div>
-            )}
-            {trendData.length >= 2 && (
               <div style={{ height: '320px' }}>
                 <canvas ref={trendRef}></canvas>
               </div>
-            )}
-          </div>
-
-          {/* Per department table */}
-          <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[12px]" style={{ minWidth: '600px' }}>
-                <thead>
-                  <tr className="bg-[#1B3A5C]">
-                    <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Per departement {latestSnapshotDate ? '(' + fmtDate(latestSnapshotDate) + ')' : ''}</th>
-                  </tr>
-                  <tr className="bg-[#f0ebe5]">
-                    <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] w-[70px]">DEP</th>
-                    <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Departement</th>
-                    <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] w-[130px]">Aantal items</th>
-                    <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] w-[160px]">Waarde (XCG)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="bg-[#faf7f4]">
-                    <td colSpan={2} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3]">TOTAAL</td>
-                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(totals.items)}</td>
-                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: '#dc2626' }}>{fmt(Math.round(totals.value))}</td>
-                  </tr>
-                  {departments.length === 0 && (
-                    <tr><td colSpan={4} className="p-6 text-center text-[#6b5240]">Geen negatieve voorraad binnen de filters.</td></tr>
-                  )}
-                  {departments.map(function(d, i) {
-                    return (
-                      <tr
-                        key={d.deptCode}
-                        className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'}
-                        onClick={function() { setSelDept(d.deptCode); setView('detail'); }}
-                      >
-                        <td className="p-2 text-[12px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.deptCode}</td>
-                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] truncate max-w-[300px]" title={d.deptName}>{d.deptName}</td>
-                        <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(d.items)}</td>
-                        <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(Math.round(d.value))}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ DETAIL ═══ */}
-      {view === 'detail' && (
-        <div className="space-y-5 mb-8">
-          {/* Detail filters */}
-          <div className="flex flex-wrap items-center gap-3">
-            <input
-              type="text"
-              placeholder="Zoek op itemnummer of omschrijving..."
-              value={search}
-              onChange={function(e) { setSearch(e.target.value); }}
-              className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[280px]"
-            />
-            <label className="flex items-center gap-2 text-[12px] text-[#6b5240]">
-              <input type="checkbox" checked={hideResolved} onChange={function(e) { setHideResolved(e.target.checked); }} />
-              Verberg opgeloste items
-            </label>
-            <div className="ml-auto text-[11px] text-[#a08a74]">
-              {fmt(detailItems.length)} van {fmt(filteredItems.length)} items
-            </div>
-          </div>
-
-          {/* Detail table */}
-          <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[12px]" style={{ minWidth: '1400px' }}>
-                <thead>
-                  <tr className="bg-[#1B3A5C]">
-                    <th colSpan={11} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Items met negatieve voorraad</th>
-                  </tr>
-                  <tr className="bg-[#f0ebe5]">
-                    <SortableTh col="store" current={sortCol} dir={sortDir} onClick={handleSort} w="60px">Store</SortableTh>
-                    <SortableTh col="dept" current={sortCol} dir={sortDir} onClick={handleSort} w="60px">Dep</SortableTh>
-                    <SortableTh col="bum" current={sortCol} dir={sortDir} onClick={handleSort} w="80px">Mgr</SortableTh>
-                    <SortableTh col="item" current={sortCol} dir={sortDir} onClick={handleSort} w="120px">Item</SortableTh>
-                    <SortableTh col="desc" current={sortCol} dir={sortDir} onClick={handleSort}>Omschrijving</SortableTh>
-                    <SortableTh col="qty_on_hand" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="70px">Aantal</SortableTh>
-                    <SortableTh col="inv_value" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="110px">Waarde</SortableTh>
-                    <SortableTh col="firstSeen" current={sortCol} dir={sortDir} onClick={handleSort} w="110px">Eerste neg</SortableTh>
-                    <SortableTh col="status" current={sortCol} dir={sortDir} onClick={handleSort} w="110px">Status</SortableTh>
-                    <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" style={{ width: '280px' }}>Opmerking</th>
-                    <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" style={{ width: '90px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detailItems.length === 0 && (
-                    <tr><td colSpan={11} className="p-6 text-center text-[#6b5240]">Geen items die aan de filters voldoen.</td></tr>
-                  )}
-                  {detailItems.map(function(it, i) {
-                    var itemNotes = notesByKey[it.store_number + '|' + it.item_number] || [];
-                    var status = latestStatusFor(it.store_number, it.item_number);
-                    var fs = firstSeen[it.item_number];
-                    var days = fs ? daysSince(fs.first_seen_date) : null;
-                    var rowBg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
-                    return (
-                      <tr key={it.id} className={rowBg + ' align-top'}>
-                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono">{it.store_number}</td>
-                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono text-[#6b5240]">{it.dept_code}</td>
-                        <td className="p-2 text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{it.bum || ''}</td>
-                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono">{it.item_number}</td>
-                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] truncate max-w-[280px]" title={it.item_description}>{it.item_description}</td>
-                        <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(it.qty_on_hand)}</td>
-                        <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(Math.round(it.inv_value))}</td>
-                        <td className="p-2 text-[11px] border-b border-[#f0ebe5]">
-                          {fs ? (
-                            <>
-                              {fmtDate(fs.first_seen_date)}
-                              {days !== null && days > 0 && <div className="text-[10px] text-[#a08a74]">{days} dagen</div>}
-                            </>
-                          ) : '—'}
-                        </td>
-                        <td className="p-2 border-b border-[#f0ebe5]"><StatusBadge status={status} /></td>
-                        <td className="p-2 border-b border-[#f0ebe5]">
-                          <div className="flex flex-col gap-1">
-                            <input
-                              type="text"
-                              placeholder="Nieuwe opmerking..."
-                              value={inlineNote[it.id] || ''}
-                              onChange={function(e) { setInlineNote(Object.assign({}, inlineNote, { [it.id]: e.target.value })); }}
-                              onKeyDown={function(e) { if (e.key === 'Enter') handleSaveInline(it); }}
-                              className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[11px] px-2 py-1 rounded w-full"
-                            />
-                            <div className="flex gap-1">
-                              <select
-                                value={inlineStatus[it.id] || 'in_onderzoek'}
-                                onChange={function(e) { setInlineStatus(Object.assign({}, inlineStatus, { [it.id]: e.target.value })); }}
-                                className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[10px] px-1 py-0.5 rounded"
-                              >
-                                <option value="in_onderzoek">In onderzoek</option>
-                                <option value="opgelost">Opgelost</option>
-                              </select>
-                              <button
-                                onClick={function() { handleSaveInline(it); }}
-                                disabled={savingRow === it.id || !(inlineNote[it.id] || '').trim()}
-                                className={'px-2 py-0.5 text-[10px] font-semibold rounded ' +
-                                  ((savingRow === it.id || !(inlineNote[it.id] || '').trim())
-                                    ? 'bg-[#e5ddd4] text-[#a08a74] cursor-not-allowed'
-                                    : 'bg-[#E84E1B] text-white hover:bg-[#d63f10]')}
-                              >
-                                {savingRow === it.id ? '...' : 'Opslaan'}
-                              </button>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-2 border-b border-[#f0ebe5]">
-                          <button
-                            onClick={function() { setHistoryItem(it); }}
-                            className="px-2 py-1 text-[10px] font-semibold rounded border border-[#1B3A5C] text-[#1B3A5C] bg-white hover:bg-[#1B3A5C] hover:text-white"
-                          >
-                            Historie {itemNotes.length > 0 ? '(' + itemNotes.length + ')' : ''}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* History modal */}
-      {historyItem && (
-        <HistoryModal
-          item={historyItem}
-          notes={notesByKey[historyItem.store_number + '|' + historyItem.item_number] || []}
-          firstSeen={firstSeen[historyItem.item_number]}
-          onClose={function() { setHistoryItem(null); }}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ── Sortable table header ── */
-function SortableTh({ col, current, dir, onClick, children, align, w }) {
-  var isActive = current === col;
-  var arrow = isActive ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
-  return (
-    <th
-      onClick={function() { onClick(col); }}
-      style={{ width: w || 'auto', textAlign: align || 'left', cursor: 'pointer', userSelect: 'none' }}
-      className={'p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4] ' +
-        (isActive ? 'text-[#E84E1B]' : 'text-[#6b5240]')}
-    >
-      {children}{arrow}
-    </th>
-  );
-}
-
-/* ── History modal ── */
-function HistoryModal({ item, notes, firstSeen, onClose }) {
-  return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 bg-[#1a0a04]/40 flex items-center justify-center z-[100] p-5"
-    >
-      <div
-        onClick={function(e) { e.stopPropagation(); }}
-        className="bg-white rounded-[14px] w-full max-w-[700px] max-h-[85vh] overflow-y-auto shadow-xl"
-      >
-        <div className="bg-[#1B3A5C] text-white px-5 py-3 flex items-start justify-between rounded-t-[14px]">
-          <div>
-            <div className="text-[15px] font-bold">{item.item_description || 'Geen omschrijving'}</div>
-            <div className="text-[11px] opacity-80">
-              Item <span className="font-mono">{item.item_number}</span> · Store {item.store_number} · {item.dept_code} {item.dept_name}
-            </div>
-          </div>
-          <button onClick={onClose} className="text-white text-[22px] leading-none hover:opacity-70">×</button>
-        </div>
-
-        <div className="p-5">
-          <div className="flex flex-wrap gap-4 text-[12px] mb-4">
-            <span>Aantal: <span className="font-bold" style={{ color: '#dc2626' }}>{fmt(item.qty_on_hand)}</span></span>
-            <span>Waarde: <span className="font-bold" style={{ color: '#dc2626' }}>XCG {fmt(Math.round(item.inv_value))}</span></span>
-            {firstSeen && (
-              <span>Eerste keer negatief: <span className="font-bold">{fmtDate(firstSeen.first_seen_date)}</span>
-                {' '}({daysSince(firstSeen.first_seen_date)} dagen geleden)
-              </span>
-            )}
-          </div>
-
-          <h3 className="text-[13px] font-bold mb-2">Historie ({notes.length})</h3>
-          {notes.length === 0 ? (
-            <p className="text-[12px] text-[#6b5240] italic">Nog geen opmerkingen.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {notes.map(function(n) {
-                return (
-                  <div key={n.id} className="bg-[#faf7f4] border border-[#e5ddd4] rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-[11px] text-[#6b5240]">
-                        <span className="font-semibold text-[#1a0a04]">{n.created_by_name || n.created_by_email}</span>
-                        <span className="mx-1.5 text-[#a08a74]">·</span>
-                        {fmtDateTime(n.created_at)}
-                      </div>
-                      <StatusBadge status={n.status} />
-                    </div>
-                    <div className="text-[12px] whitespace-pre-wrap">{n.note}</div>
-                  </div>
-                );
-              })}
             </div>
           )}
+
+          {/* Bar chart - only for Curacao (has budget) */}
+          {store === '1' && (
+            <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm p-6" style={{ overflow: 'visible' }}>
+              <h3 className="text-[15px] font-bold mb-1">Procentueel verschil per departement</h3>
+              <p className="text-[12px] text-[#6b5240] mb-2">t.o.v. budget — hover voor details</p>
+              <div className="flex items-center gap-4 text-[10px] mb-4">
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span> Binnen ±15%</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#d97706' }}></span> 15-25%</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span> Meer dan 25%</span>
+              </div>
+              <div style={{ overflow: 'visible' }}>
+                {departments.filter(function(d) { return d.budget > 0; }).map(function(d) {
+                  return <PctBar key={d.deptCode} pct={d.pct} name={d.deptName} deptCode={d.deptCode} actual={d.actual} budget={d.budget} />;
+                })}
+              </div>
+            </div>
+          )}
+
+          {store !== '1' && (
+            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-8 shadow-sm text-center">
+              <p className="text-[13px] text-amber-600">{store === 'B' ? 'Bonaire heeft geen budget — visuele vergelijking niet beschikbaar.' : 'Budget vergelijking alleen beschikbaar voor Curaçao.'}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
+        <div className="flex flex-wrap gap-5 text-[10px] text-[#6b5240]">
+          <span style={{ color: '#16a34a' }}>Groen = binnen ±15% van budget</span>
+          <span style={{ color: '#d97706' }}>Oranje = 15-25% afwijking</span>
+          <span style={{ color: '#dc2626' }}>Rood = meer dan 25% afwijking</span>
+          <span>Klik op een rij in het overzicht om de trend te bekijken</span>
         </div>
       </div>
     </div>
