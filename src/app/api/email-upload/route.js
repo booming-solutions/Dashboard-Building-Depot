@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: route_email_v7.js
+   BESTAND: route_email_v8.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v8:
+   - processInventory: NOW kolom wordt nu GENEGEERD (was unreliable
+     end-of-month snapshot). Actual kolom wordt nu gebruikt als
+     "vandaag" voorraadwaarde.
+   - Historische maanden (-1 MONTH t/m -6 MONTHS) blijven hetzelfde.
    WIJZIGING v7:
    - processBuying roept nu processNosSnapshot aan na succesvolle insert
    - Nieuwe functie processNosSnapshot: schrijft per (BUM × regio × datum)
@@ -161,12 +166,17 @@ async function processInventory(json) {
   var keys = Object.keys(json[0] || {});
   var today = new Date();
 
-  // Find date columns: NOW, -1 MONTH, -2 MONTHS, etc.
+  // Find date columns: Actual (=today), -1 MONTH, -2 MONTHS, etc.
+  // NOTE: 'NOW' kolom wordt GENEGEERD (was unreliable end-of-month snapshot).
+  // 'Actual' kolom wordt gebruikt als de huidige voorraadwaarde (vandaag).
+  var actualCol = null;
   var dateColumns = [];
   keys.forEach(function(k) {
     var kl = k.toLowerCase().trim();
-    if (kl === 'now') {
-      dateColumns.push({ col: k, monthsBack: 0 });
+    if (kl === 'actual') {
+      actualCol = k;
+    } else if (kl === 'now') {
+      // SKIP - NOW wordt genegeerd
     } else {
       // Match patterns like "-1 MONTH", "-2 MONTHS", "- 3 MONTHS"
       var match = kl.match(/^-\s*(\d+)\s*months?$/);
@@ -176,12 +186,17 @@ async function processInventory(json) {
     }
   });
 
-  // Sort by monthsBack ascending (NOW first)
+  // If Actual exists, treat it as monthsBack=0 (today)
+  if (actualCol) {
+    dateColumns.push({ col: actualCol, monthsBack: 0 });
+  }
+
+  // Sort by monthsBack ascending (today first)
   dateColumns.sort(function(a, b) { return a.monthsBack - b.monthsBack; });
   console.log('Detected ' + dateColumns.length + ' date columns: ' + dateColumns.map(function(d) { return d.col + ' (−' + d.monthsBack + 'm)'; }).join(', '));
 
   if (dateColumns.length === 0) {
-    throw new Error('No date columns found (expected NOW, -1 MONTH, etc.)');
+    throw new Error('No date columns found (expected Actual, -1 MONTH, etc.)');
   }
 
   // Calculate actual dates
