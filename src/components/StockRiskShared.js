@@ -1,15 +1,12 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v2.js
+   BESTAND: StockRiskShared_v3.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.07
+   VERSIE: v3.28.08
    
-   Wijzigingen t.o.v. v1:
-   - Twee nieuwe grafieken tussen KPI-tegels en "Risico per Afdeling":
-     * Links: stacked bar van NOS-status per BUM (in stock / wordt aangevuld / niet gedekt)
-     * Rechts: trendlijn % NOS in stock per BUM over tijd (incl. TOTAAL lijn)
-   - Beide gebruiken nieuwe tabel nos_coverage_snapshots
-   - Stacked bar reageert op de Store-filter (Curacao / Bonaire / alle = Total)
+   Wijzigingen t.o.v. v2:
+   - Uitlegblok onderaan toegevoegd: waarom Totaal soms minder
+     kritieke items toont dan Curaçao of Bonaire alleen
    ============================================================ */
 'use client';
 
@@ -748,7 +745,7 @@ export default function StockRiskShared({ bumFilter }) {
       </div>
 
       {/* Legend */}
-      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm mb-5">
         <div className="flex flex-wrap gap-5 text-[10px] text-[#6b5240]">
           <span><b>Dekking</b> = (QOH + QOO) ÷ gem. maandverkoop</span>
           <span><b>Max Lead Time</b> = maximale levertijd leverancier</span>
@@ -758,6 +755,27 @@ export default function StockRiskShared({ bumFilter }) {
           <span><RiskBadge level="watch" /> dekking &lt; 1.5× max lead time</span>
           <span className="text-[8px] px-1 py-0.5 rounded bg-blue-50 text-blue-600 font-bold">NOS</span> <span>Never Out of Stock items</span>
         </div>
+      </div>
+
+      {/* Uitleg over Totaal versus Curaçao + Bonaire */}
+      <div className="bg-[#faf7f4] rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+        <h3 className="text-[13px] font-bold mb-2 text-[#1a0a04]">Waarom kan &quot;Totaal&quot; minder kritieke items tonen dan Curaçao alleen?</h3>
+        <p className="text-[11px] text-[#6b5240] leading-relaxed mb-2">
+          Een item is <b>kritiek</b> als de dekking (QOH+QOO ÷ gem. maandverkoop) minder dan 1 maand is.
+          Bij <b>Totaal</b> worden QOH en QOO van Curaçao én Bonaire bij elkaar opgeteld vóór de classificatie.
+          Een item dat in Curaçao kritiek is maar op Bonaire wel voorraad heeft, kan op Totaal-niveau dus &quot;OK&quot; lijken.
+        </p>
+        <div className="bg-white border border-[#e5ddd4] rounded-lg p-3 text-[11px] text-[#1a0a04] font-mono mb-2">
+          <div className="font-bold mb-1">Voorbeeld:</div>
+          <div>Item X — gem. verkoop Curaçao: 10/mnd, Bonaire: 2/mnd</div>
+          <div>Curaçao: QOH=5, QOO=0 → dekking 0,5 mnd → <span className="text-red-600 font-bold">kritiek</span></div>
+          <div>Bonaire: QOH=20, QOO=0 → dekking 10 mnd → <span className="text-green-600 font-bold">OK</span></div>
+          <div>Totaal: QOH=25, QOO=0, verkoop=12/mnd → dekking 2,1 mnd → <span className="text-green-600 font-bold">niet kritiek</span></div>
+        </div>
+        <p className="text-[11px] text-[#6b5240] leading-relaxed">
+          De cijfers kloppen wiskundig, maar er is in de praktijk geen automatische overheveling tussen eilanden.
+          Voor inkoopbeslissingen op één locatie is daarom de view <b>Curaçao</b> of <b>Bonaire</b> meestal nuttiger dan <b>Totaal</b>.
+        </p>
       </div>
     </div>
   );
