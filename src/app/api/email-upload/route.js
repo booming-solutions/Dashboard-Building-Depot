@@ -1,12 +1,13 @@
 /* ============================================================
-   BESTAND: route_email_v8.js
+   BESTAND: route_email_v9.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v9:
+   - processInventory gebruikt nu weer NOW kolom als "vandaag"
+     (dit is de waarheid volgens Compass; Actual was verwarrend)
+   - Compass-export bevat nu alleen: NOW, -1 MONTH t/m -6 MONTHS
    WIJZIGING v8:
-   - processInventory: NOW kolom wordt nu GENEGEERD (was unreliable
-     end-of-month snapshot). Actual kolom wordt nu gebruikt als
-     "vandaag" voorraadwaarde.
-   - Historische maanden (-1 MONTH t/m -6 MONTHS) blijven hetzelfde.
+   - processInventory: NOW kolom werd genegeerd, Actual was waarheid (deze logica is omgedraaid in v9)
    WIJZIGING v7:
    - processBuying roept nu processNosSnapshot aan na succesvolle insert
    - Nieuwe functie processNosSnapshot: schrijft per (BUM × regio × datum)
@@ -166,17 +167,17 @@ async function processInventory(json) {
   var keys = Object.keys(json[0] || {});
   var today = new Date();
 
-  // Find date columns: Actual (=today), -1 MONTH, -2 MONTHS, etc.
-  // NOTE: 'NOW' kolom wordt GENEGEERD (was unreliable end-of-month snapshot).
-  // 'Actual' kolom wordt gebruikt als de huidige voorraadwaarde (vandaag).
-  var actualCol = null;
+  // Find date columns: NOW (=today), -1 MONTH, -2 MONTHS, etc.
+  // NOTE: 'Actual' kolom (indien aanwezig) wordt GENEGEERD.
+  // 'NOW' is volgens Compass de waarheid voor de huidige stand.
+  var nowCol = null;
   var dateColumns = [];
   keys.forEach(function(k) {
     var kl = k.toLowerCase().trim();
-    if (kl === 'actual') {
-      actualCol = k;
-    } else if (kl === 'now') {
-      // SKIP - NOW wordt genegeerd
+    if (kl === 'now') {
+      nowCol = k;
+    } else if (kl === 'actual') {
+      // SKIP - Actual wordt genegeerd
     } else {
       // Match patterns like "-1 MONTH", "-2 MONTHS", "- 3 MONTHS"
       var match = kl.match(/^-\s*(\d+)\s*months?$/);
@@ -186,9 +187,9 @@ async function processInventory(json) {
     }
   });
 
-  // If Actual exists, treat it as monthsBack=0 (today)
-  if (actualCol) {
-    dateColumns.push({ col: actualCol, monthsBack: 0 });
+  // If NOW exists, treat it as monthsBack=0 (today)
+  if (nowCol) {
+    dateColumns.push({ col: nowCol, monthsBack: 0 });
   }
 
   // Sort by monthsBack ascending (today first)
@@ -196,7 +197,7 @@ async function processInventory(json) {
   console.log('Detected ' + dateColumns.length + ' date columns: ' + dateColumns.map(function(d) { return d.col + ' (−' + d.monthsBack + 'm)'; }).join(', '));
 
   if (dateColumns.length === 0) {
-    throw new Error('No date columns found (expected Actual, -1 MONTH, etc.)');
+    throw new Error('No date columns found (expected NOW, -1 MONTH, etc.)');
   }
 
   // Calculate actual dates
