@@ -1,13 +1,13 @@
 /* ============================================================
-   BESTAND: route_email_v9.js
+   BESTAND: route_email_v10.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v10:
+   - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
+   - processInventory voegt niet-numerieke dept codes (FA/FC/FE/FF/XX)
+     samen tot één bucket 'OTHER' (consistent met Negatieve Voorraad)
    WIJZIGING v9:
    - processInventory gebruikt nu weer NOW kolom als "vandaag"
-     (dit is de waarheid volgens Compass; Actual was verwarrend)
-   - Compass-export bevat nu alleen: NOW, -1 MONTH t/m -6 MONTHS
-   WIJZIGING v8:
-   - processInventory: NOW kolom werd genegeerd, Actual was waarheid (deze logica is omgedraaid in v9)
    WIJZIGING v7:
    - processBuying roept nu processNosSnapshot aan na succesvolle insert
    - Nieuwe functie processNosSnapshot: schrijft per (BUM × regio × datum)
@@ -211,11 +211,21 @@ async function processInventory(json) {
   json.forEach(function(row) {
     var storeRaw = String(row[findCol(keys, ['store group'])] || '').trim().toUpperCase();
     var store = storeRaw === 'CUR' ? '1' : storeRaw === 'BON' ? 'B' : storeRaw;
-    var deptCode = String(row[findCol(keys, ['department code'])] || '');
-    var deptName = String(row[findCol(keys, ['department name'])] || '');
-    var bum = String(row[findCol(keys, ['department group'])] || '');
+    var rawDeptCode = String(row[findCol(keys, ['department code'])] || '').trim();
+    var rawDeptName = String(row[findCol(keys, ['department name'])] || '').trim();
+    var bum = String(row[findCol(keys, ['department group'])] || '').trim();
     var budgetKey = findCol(keys, ['budget']);
     var budget = budgetKey ? (parseFloat(row[budgetKey]) || 0) : 0;
+
+    // Skip empty rows and 'GRAND SUMMARIES' totaal-rij uit Compass
+    if (!rawDeptCode) return;
+    if (storeRaw === 'GRAND SUMMARIES' || storeRaw === '') return;
+    if (store !== '1' && store !== 'B') return;
+
+    // Niet-numerieke dept codes (FA/FC/FE/FF/XX) samenvoegen tot 'OTHER'
+    var isNumeric = /^\d+$/.test(rawDeptCode);
+    var deptCode = isNumeric ? rawDeptCode : 'OTHER';
+    var deptName = isNumeric ? rawDeptName : 'Other (niet-numerieke categorieën)';
 
     // Budget only for CUR
     if (store === 'B') budget = 0;
@@ -233,6 +243,28 @@ async function processInventory(json) {
       });
     });
   });
+
+  // Aggregate OTHER rijen per (store_number, dept_code, inventory_date) — anders
+  // krijgen we 5 'OTHER' rijen per maand i.p.v. 1
+  var aggregated = {};
+  rows.forEach(function(r) {
+    var key = r.store_number + '|' + r.dept_code + '|' + r.inventory_date;
+    if (!aggregated[key]) {
+      aggregated[key] = {
+        store_number: r.store_number,
+        dept_code: r.dept_code,
+        dept_name: r.dept_name,
+        bum: r.bum,
+        budget: 0,
+        inventory_value: 0,
+        inventory_date: r.inventory_date,
+      };
+    }
+    aggregated[key].inventory_value += r.inventory_value;
+    // Budget alleen 1x optellen per (store, dept) — pak 'm uit eerste rij die 'm levert
+    if (aggregated[key].budget === 0) aggregated[key].budget = r.budget;
+  });
+  rows = Object.values(aggregated);
 
   console.log('Inventory rows to insert: ' + rows.length);
 
