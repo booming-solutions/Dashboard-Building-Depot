@@ -1,11 +1,14 @@
 /* ============================================================
-   BESTAND: route_email_v10.js
+   BESTAND: route_email_v11.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v11:
+   - processInventory delete-fix: UUID kolom werd vergeleken met
+     integer 0, waardoor delete silent faalde en duplicates bleven.
+     Nu: gebruik IS NOT NULL filter (werkt voor zowel int als UUID).
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
-   - processInventory voegt niet-numerieke dept codes (FA/FC/FE/FF/XX)
-     samen tot één bucket 'OTHER' (consistent met Negatieve Voorraad)
+   - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
    WIJZIGING v9:
    - processInventory gebruikt nu weer NOW kolom als "vandaag"
    WIJZIGING v7:
@@ -268,16 +271,10 @@ async function processInventory(json) {
 
   console.log('Inventory rows to insert: ' + rows.length);
 
-  // Full replace: TRUNCATE then INSERT
-  var delResult = await supabase.from('inventory_data').delete({ count: 'exact' }).neq('id', 0);
+  // Full replace: delete all existing rows (UUID-safe filter)
+  var delResult = await supabase.from('inventory_data').delete({ count: 'exact' }).not('id', 'is', null);
   if (delResult.error) {
-    // Try alternative: delete all
-    var delResult2 = await supabase.from('inventory_data').delete({ count: 'exact' }).gte('id', 0);
-    if (delResult2.error) {
-      console.error('Delete error: ' + delResult2.error.message);
-    } else {
-      console.log('Deleted all existing inventory rows');
-    }
+    console.error('Delete error: ' + delResult.error.message);
   } else {
     console.log('Deleted ' + (delResult.count || 0) + ' existing inventory rows');
   }
