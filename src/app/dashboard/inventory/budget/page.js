@@ -1,7 +1,15 @@
 /* ============================================================
-   BESTAND: page_inventory.js
+   BESTAND: page_inventory_v2.js
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
    (hernoem naar page.js bij het plaatsen)
+   VERSIE: v3.28.09
+   
+   Wijzigingen t.o.v. v1:
+   - buying_data load + buyingByDept aggregatie verwijderd
+     (werd geladen maar nergens in de UI gebruikt — vertraagde
+     het laden met ~42.000 rauwe rijen voor niks)
+   - Voorraad vs Budget rapport laadt nu alleen inventory_data
+     (~2k rijen i.p.v. ~44k)
    ============================================================ */
 'use client';
 
@@ -63,7 +71,6 @@ function PctBar({ pct, name, deptCode, actual, budget }) {
 export default function InventoryDashboard() {
   var _s = useState;
   var _d = _s([]), data = _d[0], setData = _d[1];
-  var _bd = _s([]), buyingData = _bd[0], setBuyingData = _bd[1];
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _vw = _s('overview'), view = _vw[0], setView = _vw[1];
   // Single unified filter state
@@ -85,26 +92,14 @@ export default function InventoryDashboard() {
       if (r.data.length < step) break;
       from += step;
     }
-    var allB = []; from = 0;
-    while (true) {
-      var r2 = await supabase.from('buying_data').select('dept_code,qty_on_order,min_lead_time,max_lead_time,sales_m01,sales_m02,sales_m03,sales_m04,sales_m05,sales_m06,sales_m07,sales_m08,sales_m09,sales_m10,sales_m11,sales_m12,store_number').range(from, from + step - 1);
-      if (!r2.data || !r2.data.length) break;
-      allB = allB.concat(r2.data);
-      if (r2.data.length < step) break;
-      from += step;
-    }
-    setData(all); setBuyingData(allB); setLoading(false);
+    setData(all);
+    setLoading(false);
   }
-
-  // Store pills are now fixed: Totaal, Curaçao, Bonaire
 
   function buildDepartments(storeFilter, bumFilter) {
     // For 'all': combine CUR + BON, converting BON to XCG
     // For '1': CUR only (already XCG)
     // For 'B': BON only in USD
-    var cFactor = 1; // multiplier for BON values
-    if (storeFilter === 'all') cFactor = XCG_USD; // BON→XCG in combined view
-
     var map = {};
     data.forEach(function(r) {
       if (storeFilter !== 'all' && r.store_number !== storeFilter) return;
@@ -145,32 +140,6 @@ export default function InventoryDashboard() {
   }
 
   var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum]);
-
-  // Aggregate buying data per dept: QOO, lead times, avg monthly sales
-  var buyingByDept = useMemo(function() {
-    var map = {};
-    var filtered = buyingData;
-    if (store === '1') filtered = buyingData.filter(function(r) { return /^\d+$/.test(r.store_number); });
-    else if (store === 'B') filtered = buyingData.filter(function(r) { return !(/^\d+$/.test(r.store_number)); });
-    filtered.forEach(function(r) {
-      var dc = String(r.dept_code).replace(/\.0$/, '');
-      if (!map[dc]) map[dc] = { qoo: 0, minLT: 99, maxLT: 0, totalSales: 0, activeMonths: 0, itemCount: 0 };
-      var m = map[dc];
-      m.qoo += parseFloat(r.qty_on_order) || 0;
-      var mlt = parseFloat(r.min_lead_time) || 0;
-      var xlt = parseFloat(r.max_lead_time) || 0;
-      if (mlt > 0 && mlt < m.minLT) m.minLT = mlt;
-      if (xlt > m.maxLT) m.maxLT = xlt;
-      var sales = [];
-      for (var i = 1; i <= 12; i++) { sales.push(parseFloat(r['sales_m' + String(i).padStart(2, '0')]) || 0); }
-      var nonZero = sales.filter(function(s) { return s > 0; });
-      if (nonZero.length) { m.totalSales += nonZero.reduce(function(a, b) { return a + b; }, 0) / nonZero.length; }
-      m.itemCount++;
-    });
-    // Clean up minLT
-    Object.values(map).forEach(function(m) { if (m.minLT === 99) m.minLT = 0; });
-    return map;
-  }, [buyingData, store]);
 
   var bums = useMemo(function() {
     var s = {};
@@ -317,7 +286,6 @@ export default function InventoryDashboard() {
       {/* ═══ OVERVIEW TABLE ═══ */}
       {view === 'overview' && (function() {
         var noBudget = isBonaire || isTotaal;
-        var dataCols = noBudget ? 1 : 4;
         return (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
           <div className="overflow-x-auto">
