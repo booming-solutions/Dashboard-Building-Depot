@@ -1,13 +1,10 @@
 /* ============================================================
-   BESTAND: page_admin_v5.js
+   BESTAND: page_admin_v6.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGINGEN t.o.v. v4:
-   - handleCreate roept nu create_user aan ipv invite_user
-   - Na aanmaken verschijnt groene box met credentials + kopieer-knop
-   - Nieuwe knop "Nieuw tijdelijk wachtwoord" per gebruiker
-   - Modal toont gegenereerd tijdelijk wachtwoord
+   WIJZIGING t.o.v. v5:
+   - Nieuw rapport 'Stock Risk Alert' toegevoegd aan REPORTS lijst
    ============================================================ */
 'use client';
 
@@ -21,6 +18,7 @@ var REPORTS = [
   { id: 'inventory_budget', label: 'Voorraad vs Budget', group: 'Voorraad', icon: '📦' },
   { id: 'inventory_buying', label: 'Inkoopvoorstel', group: 'Voorraad', icon: '🛒' },
   { id: 'inventory_negative', label: 'Negatieve Voorraad', group: 'Voorraad', icon: '⚠️' },
+  { id: 'inventory_stockrisk', label: 'Stock Risk Alert', group: 'Voorraad', icon: '🚨' },
   { id: 'inventory_health', label: 'Gezondheid Voorraden', group: 'Voorraad', icon: '🏥' },
   { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
 ];
