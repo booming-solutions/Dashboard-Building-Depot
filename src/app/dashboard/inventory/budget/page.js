@@ -1,15 +1,13 @@
 /* ============================================================
-   BESTAND: page_inventory_v2.js
+   BESTAND: page_inventory_v4.js
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.09
+   VERSIE: v3.28.11
    
-   Wijzigingen t.o.v. v1:
-   - buying_data load + buyingByDept aggregatie verwijderd
-     (werd geladen maar nergens in de UI gebruikt — vertraagde
-     het laden met ~42.000 rauwe rijen voor niks)
-   - Voorraad vs Budget rapport laadt nu alleen inventory_data
-     (~2k rijen i.p.v. ~44k)
+   Wijzigingen t.o.v. v3:
+   - Kolom "Bestelling" hernoemd naar "Besteld (QOO)"
+   - KPI-tegel "Bestelling Onderweg" hernoemd naar "Besteld (QOO)"
+   - Voetnoot toegevoegd onderaan met uitleg over de QOO schatting
    ============================================================ */
 'use client';
 
@@ -71,6 +69,7 @@ function PctBar({ pct, name, deptCode, actual, budget }) {
 export default function InventoryDashboard() {
   var _s = useState;
   var _d = _s([]), data = _d[0], setData = _d[1];
+  var _qoo = _s({}), qooData = _qoo[0], setQooData = _qoo[1];   // { 'store|dept': qooValue }
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _vw = _s('overview'), view = _vw[0], setView = _vw[1];
   // Single unified filter state
@@ -92,7 +91,18 @@ export default function InventoryDashboard() {
       if (r.data.length < step) break;
       from += step;
     }
+
+    // Load QOO summary view (already aggregated per store_group + dept_code)
+    var qoo = await supabase.from('buying_dept_summary').select('*');
+    var qooMap = {};
+    if (qoo.data) {
+      qoo.data.forEach(function(row) {
+        qooMap[row.store_group + '|' + row.dept_code] = parseFloat(row.qoo_value) || 0;
+      });
+    }
+
     setData(all);
+    setQooData(qooMap);
     setLoading(false);
   }
 
@@ -127,6 +137,18 @@ export default function InventoryDashboard() {
       d.actual = histArr.length ? histArr[histArr.length - 1].value : 0;
       d.diff = d.actual - d.budget;
       d.pct = d.budget ? ((d.actual - d.budget) / d.budget) * 100 : 0;
+
+      // QOO lookup uit voorgeaggregeerde view
+      // Voor 'all' (totaal): som Curacao + Bonaire (Bonaire × XCG_USD voor consistentie)
+      var qooVal = 0;
+      if (storeFilter === '1') {
+        qooVal = qooData['1|' + d.deptCode] || 0;
+      } else if (storeFilter === 'B') {
+        qooVal = qooData['B|' + d.deptCode] || 0;
+      } else {
+        qooVal = (qooData['1|' + d.deptCode] || 0) + (qooData['B|' + d.deptCode] || 0) * XCG_USD;
+      }
+      d.qoo = qooVal;
     });
 
     // For BON standalone: filter out depts with all-zero history
@@ -139,7 +161,7 @@ export default function InventoryDashboard() {
     return list;
   }
 
-  var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum]);
+  var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum, qooData]);
 
   var bums = useMemo(function() {
     var s = {};
@@ -152,9 +174,9 @@ export default function InventoryDashboard() {
   var totals = useMemo(function() { 
     var src = departments;
     if (selDept !== '__total__') src = departments.filter(function(d) { return d.deptCode === selDept; });
-    var budget = 0, actual = 0; 
-    src.forEach(function(d) { budget += d.budget; actual += d.actual; }); 
-    return { budget: budget, actual: actual, diff: actual - budget, pct: budget ? ((actual - budget) / budget) * 100 : 0 }; 
+    var budget = 0, actual = 0, qoo = 0; 
+    src.forEach(function(d) { budget += d.budget; actual += d.actual; qoo += (d.qoo || 0); }); 
+    return { budget: budget, actual: actual, qoo: qoo, diff: actual - budget, pct: budget ? ((actual - budget) / budget) * 100 : 0 }; 
   }, [departments, selDept]);
 
   var dates = useMemo(function() { var s = {}; departments.forEach(function(d) { d.history.forEach(function(h) { s[h.date] = true; }); }); return Object.keys(s).sort(); }, [departments]);
@@ -265,12 +287,13 @@ export default function InventoryDashboard() {
       </div>
 
       {/* KPI tiles — react to all filters */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-5">
         {[
           { label: 'Budget Voorraad', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtK(totals.budget), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.budget)) },
           { label: 'Actuele Voorraad', value: fmtK(totals.actual), tooltip: fmt(Math.round(totals.actual)) },
           { label: 'Verschil', value: (isBonaire || isTotaal) ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.diff)) },
           { label: '% vs Budget', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtP(totals.pct), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct) },
+          { label: 'Besteld (QOO)', value: totals.qoo > 0 ? fmtK(totals.qoo) : '-', color: '#1B3A5C', tooltip: totals.qoo > 0 ? fmt(Math.round(totals.qoo)) : '' },
         ].map(function(k, i) {
           return (
             <div key={i} className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm" title={k.tooltip || ''}>
@@ -295,6 +318,7 @@ export default function InventoryDashboard() {
                   <th colSpan={2} className="p-0 border-r border-[#2a4f75]"></th>
                   {!noBudget && <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>}
                   {noBudget && <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual</th>}
+                  <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">QOO</th>
                   <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
                 </tr>
                 <tr className="bg-[#f0ebe5]">
@@ -304,6 +328,7 @@ export default function InventoryDashboard() {
                   <th className={"text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>Actual</th>
                   {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>}
                   {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>}
+                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">Besteld (QOO)</th>
                   {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
                 </tr>
               </thead>
@@ -314,6 +339,7 @@ export default function InventoryDashboard() {
                   <td className={"p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(totals.actual))}</td>
                   {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>}
                   {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>}
+                  <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: '#1B3A5C' }}>{totals.qoo > 0 ? fmt(Math.round(totals.qoo)) : '-'}</td>
                   {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(sum))}</td>; })}
                 </tr>
                 {departments.map(function(d, i) {
@@ -326,6 +352,7 @@ export default function InventoryDashboard() {
                       <td className={"p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(d.actual))}</td>
                       {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: dc }}>{fmt(Math.round(d.diff))}</td>}
                       {!noBudget && <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: dc }}>{d.budget ? fmtP(d.pct) : '-'}</td>}
+                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: '#1B3A5C' }}>{(d.qoo || 0) > 0 ? fmt(Math.round(d.qoo)) : '-'}</td>
                       {historyDates.map(function(dt) { var h = d.history.find(function(x) { return x.date === dt; }); return <td key={dt} className="p-2 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{h ? fmt(Math.round(h.value)) : '-'}</td>; })}
                     </tr>
                   );
@@ -392,13 +419,38 @@ export default function InventoryDashboard() {
       )}
 
       {/* Legend */}
-      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm mb-5">
         <div className="flex flex-wrap gap-5 text-[10px] text-[#6b5240]">
           <span style={{ color: '#16a34a' }}>Groen = binnen ±15% van budget</span>
           <span style={{ color: '#d97706' }}>Oranje = 15-25% afwijking</span>
           <span style={{ color: '#dc2626' }}>Rood = meer dan 25% afwijking</span>
           <span>Klik op een rij in het overzicht om de trend te bekijken</span>
         </div>
+      </div>
+
+      {/* Voetnoot QOO */}
+      <div className="bg-[#faf7f4] rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+        <h3 className="text-[13px] font-bold mb-2 text-[#1a0a04]">Over de kolom &quot;Besteld (QOO)&quot;</h3>
+        <p className="text-[11px] text-[#6b5240] leading-relaxed mb-2">
+          QOO (Quantity on Order) is de geschatte waarde van openstaande bestellingen per departement. Het is een <b>indicatie</b>, geen exacte waarde,
+          en sluit daarom niet 100% aan op de cijfers in Eagle of Compass. Hieronder uitleg over hoe dit cijfer tot stand komt.
+        </p>
+        <div className="bg-white border border-[#e5ddd4] rounded-lg p-3 text-[11px] text-[#1a0a04] mb-2">
+          <div className="font-bold mb-1">Berekening:</div>
+          <div className="font-mono text-[10px]">QOO-waarde per item = aantal stuks op order × eenheidsprijs</div>
+          <div className="font-mono text-[10px]">eenheidsprijs = inv_value_at_cost ÷ qoh (per item, gemiddeld over stores)</div>
+        </div>
+        <p className="text-[11px] text-[#6b5240] leading-relaxed mb-1"><b>Waarom is het een schatting:</b></p>
+        <ul className="text-[11px] text-[#6b5240] leading-relaxed list-disc pl-5 space-y-0.5">
+          <li>De Compass-export bevat geen vaste inkoopprijs per stuk; deze wordt afgeleid uit de voorraadwaarde gedeeld door de hoeveelheid op voorraad.</li>
+          <li>Voor items die op geen enkele store voorraad hebben (qoh = 0 overal), kan geen eenheidsprijs worden berekend. Deze items tellen niet mee in de QOO-waarde, ook al zijn ze wel besteld.</li>
+          <li>De afgeleide eenheidsprijs is een momentopname en kan licht afwijken van de werkelijke inkoopprijs op de bestelbon.</li>
+          <li>Voor het Totaaloverzicht wordt de Bonaire-waarde omgerekend naar XCG (×1,82), conform de Actual-kolom.</li>
+        </ul>
+        <p className="text-[11px] text-[#6b5240] leading-relaxed mt-2">
+          Voor de meeste departementen ligt de dekking tussen 85% en 100% van de besteldé items.
+          Gebruik deze kolom als <b>indicator</b> of er voldoende bestellingen onderweg zijn om een tekort op te vangen — niet als financiële verplichting.
+        </p>
       </div>
     </div>
   );
