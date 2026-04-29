@@ -1,11 +1,15 @@
 /* ============================================================
-   BESTAND: route_email_v11.js
+   BESTAND: route_email_v12.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v12:
+   - processInventory negeert nu de Budget-kolom uit Compass.
+     In plaats daarvan wordt het budget gejoind vanuit de nieuwe
+     tabel department_budgets (statisch, eens per jaar).
+     Reden: dept 26 had geen budget in Compass waardoor de hele
+     rij werd weggefilterd door Compass. Nu komen alle depts mee.
    WIJZIGING v11:
-   - processInventory delete-fix: UUID kolom werd vergeleken met
-     integer 0, waardoor delete silent faalde en duplicates bleven.
-     Nu: gebruik IS NOT NULL filter (werkt voor zowel int als UUID).
+   - processInventory delete-fix: UUID kolom werd vergeleken met int 0
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
    - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
@@ -169,6 +173,23 @@ async function processSales(json, batchId) {
 async function processInventory(json) {
   var keys = Object.keys(json[0] || {});
   var today = new Date();
+  var currentYear = today.getFullYear();
+
+  // Load static budgets from department_budgets table (replaces Compass Budget column)
+  // Build lookup map: 'storenum|deptcode' → budget_amount
+  var budgetMap = {};
+  var bRes = await supabase
+    .from('department_budgets')
+    .select('store_number, dept_code, budget_amount')
+    .eq('year', currentYear);
+  if (bRes.error) {
+    console.error('Budget load error: ' + bRes.error.message);
+  } else if (bRes.data) {
+    bRes.data.forEach(function(b) {
+      budgetMap[b.store_number + '|' + b.dept_code] = parseFloat(b.budget_amount) || 0;
+    });
+    console.log('Loaded ' + Object.keys(budgetMap).length + ' department budgets for year ' + currentYear);
+  }
 
   // Find date columns: NOW (=today), -1 MONTH, -2 MONTHS, etc.
   // NOTE: 'Actual' kolom (indien aanwezig) wordt GENEGEERD.
@@ -217,8 +238,8 @@ async function processInventory(json) {
     var rawDeptCode = String(row[findCol(keys, ['department code'])] || '').trim();
     var rawDeptName = String(row[findCol(keys, ['department name'])] || '').trim();
     var bum = String(row[findCol(keys, ['department group'])] || '').trim();
-    var budgetKey = findCol(keys, ['budget']);
-    var budget = budgetKey ? (parseFloat(row[budgetKey]) || 0) : 0;
+    // Budget komt nu uit department_budgets tabel, niet uit Compass
+    // (Compass Budget-kolom wordt genegeerd omdat die soms incompleet is)
 
     // Skip empty rows and 'GRAND SUMMARIES' totaal-rij uit Compass
     if (!rawDeptCode) return;
@@ -230,8 +251,8 @@ async function processInventory(json) {
     var deptCode = isNumeric ? rawDeptCode : 'OTHER';
     var deptName = isNumeric ? rawDeptName : 'Other (niet-numerieke categorieën)';
 
-    // Budget only for CUR
-    if (store === 'B') budget = 0;
+    // Lookup budget uit department_budgets map
+    var budget = budgetMap[store + '|' + deptCode] || 0;
 
     dateColumns.forEach(function(dc) {
       var val = parseFloat(row[dc.col]) || 0;
