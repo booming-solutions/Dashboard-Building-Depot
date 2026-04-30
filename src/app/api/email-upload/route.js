@@ -1,15 +1,14 @@
 /* ============================================================
-   BESTAND: route_email_v15.js
+   BESTAND: route_email_v16.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v16:
+   - processBuying: delete is nu per (BUM × store_number) i.p.v.
+     per BUM. Reden: bij aparte CUR/BON files per BUM zou de
+     2e upload de 1e wegvagen omdat alle BUM-rijen werden gewist.
+     Nu blijven andere regio's intact bij elke upload.
    WIJZIGING v15:
-   - detectFileType + processBuying gebruiken nu de echte header-rij
-     uit de Excel sheet i.p.v. Object.keys(json[0]). Reden: SheetJS
-     skipt lege cellen en als rij 1 een lege QOH heeft, ontbreekt
-     'Quantity on Hand' in de eerste rij van de json — waardoor
-     detectFileType de file niet als 'buying' herkende.
-   WIJZIGING v14:
-   - processBuying: store_number mapping CUR→1, BON→B
+   - detectFileType + processBuying gebruiken echte header-rij i.p.v. Object.keys(json[0])
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
    - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
@@ -664,14 +663,26 @@ async function processBuying(json) {
 
   console.log('Active rows: ' + rows.length + ', dead stock skipped: ' + skippedDead + ', summary/empty rows skipped: ' + skippedSummary);
 
-  // Delete existing data for this BUM (full replace per BUM)
-  for (var bi = 0; bi < bumList.length; bi++) {
-    var bum = bumList[bi];
-    var delResult = await supabase.from('buying_data').delete({ count: 'exact' }).eq('bum', bum);
+  // Determine unique (BUM, store_number) combinations in the new file
+  // Then delete only those combinations — not the entire BUM. Hierdoor
+  // blijven andere regio's intact bij CUR-only of BON-only uploads.
+  var bumStoreCombos = {};
+  rows.forEach(function(r) {
+    var key = r.bum + '||' + r.store_number;
+    bumStoreCombos[key] = { bum: r.bum, store_number: r.store_number };
+  });
+  var combos = Object.values(bumStoreCombos);
+
+  for (var ci = 0; ci < combos.length; ci++) {
+    var c = combos[ci];
+    var delResult = await supabase.from('buying_data')
+      .delete({ count: 'exact' })
+      .eq('bum', c.bum)
+      .eq('store_number', c.store_number);
     if (delResult.error) {
-      console.error('Delete error for BUM ' + bum + ': ' + delResult.error.message);
+      console.error('Delete error for ' + c.bum + '/' + c.store_number + ': ' + delResult.error.message);
     } else {
-      console.log('Deleted ' + (delResult.count || 0) + ' existing rows for BUM ' + bum);
+      console.log('Deleted ' + (delResult.count || 0) + ' existing rows for ' + c.bum + ' / store ' + c.store_number);
     }
   }
 
