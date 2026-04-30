@@ -1,19 +1,19 @@
 /* ============================================================
-   BESTAND: page_inventory_v4.js
+   BESTAND: page_inventory_v5.js
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.11
+   VERSIE: v3.28.13
    
-   Wijzigingen t.o.v. v3:
-   - Kolom "Bestelling" hernoemd naar "Besteld (QOO)"
-   - KPI-tegel "Bestelling Onderweg" hernoemd naar "Besteld (QOO)"
-   - Voetnoot toegevoegd onderaan met uitleg over de QOO schatting
+   Wijzigingen t.o.v. v4:
+   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
+   - Bevat overzicht per dept (huidige filters worden meegenomen)
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
+import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend);
@@ -279,11 +279,43 @@ export default function InventoryDashboard() {
         {isTotaal && <div className="text-[11px] text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">Totaaloverzicht: Bonaire waarden zijn omgerekend naar XCG (×1.82). Budget geldt alleen voor Curaçao.</div>}
       </div>
 
-      {/* View tabs */}
-      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        {[['overview', 'Overzicht'], ['visual', 'Voorraad vs Budget']].map(function(item) {
-          return <button key={item[0]} onClick={function() { setView(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
-        })}
+      {/* View tabs + export */}
+      <div className="flex items-center justify-between mb-5 border-b-2 border-[#e5ddd4]">
+        <div className="flex gap-1">
+          {[['overview', 'Overzicht'], ['visual', 'Voorraad vs Budget']].map(function(item) {
+            return <button key={item[0]} onClick={function() { setView(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
+          })}
+        </div>
+        <ExcelExportButton
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraad_budget_' + (selBum !== 'all' ? selBum : 'alle') + '_' + storeName.replace(/[ç]/g,'c'); })()}
+          reportTitle={'Voorraad vs Budget — ' + (selBum !== 'all' ? selBum + ' — ' : '') + storeName}
+          sheets={function() {
+            return [{
+              name: 'Per Afdeling',
+              rows: departments.map(function(d) {
+                var row = {
+                  'Dept': d.deptCode,
+                  'Departement': d.deptName,
+                  'BUM': d.bum || '',
+                };
+                if (!isBonaire && !isTotaal) {
+                  row['Budget'] = Math.round(d.budget);
+                  row['Verschil'] = Math.round(d.diff);
+                  row['% vs Budget'] = d.budget ? (Math.round(d.pct * 10) / 10) : null;
+                }
+                row['Actual'] = Math.round(d.actual);
+                row['Besteld (QOO)'] = Math.round(d.qoo || 0);
+                historyDates.forEach(function(dt) {
+                  var p = dt.split('-');
+                  var label = MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2);
+                  var h = d.history.find(function(x) { return x.date === dt; });
+                  row[label] = h ? Math.round(h.value) : 0;
+                });
+                return row;
+              }),
+            }];
+          }}
+        />
       </div>
 
       {/* KPI tiles — react to all filters */}
