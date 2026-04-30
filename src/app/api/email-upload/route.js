@@ -1,15 +1,15 @@
 /* ============================================================
-   BESTAND: route_email_v14.js
+   BESTAND: route_email_v15.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v15:
+   - detectFileType + processBuying gebruiken nu de echte header-rij
+     uit de Excel sheet i.p.v. Object.keys(json[0]). Reden: SheetJS
+     skipt lege cellen en als rij 1 een lege QOH heeft, ontbreekt
+     'Quantity on Hand' in de eerste rij van de json — waardoor
+     detectFileType de file niet als 'buying' herkende.
    WIJZIGING v14:
-   - processBuying: store_number wordt nu correct gevuld vanuit
-     'Store Group' kolom in Compass buying export. Mapping:
-     CUR → '1' (Curaçao), BON → 'B' (Bonaire).
-     Voorheen werd alleen gezocht op 'store number' wat in
-     Compass buying export niet bestaat → store_number was leeg.
-   WIJZIGING v13:
-   - processBuying skipt nu rijen zonder Item Number ('Sum=' totaal-rijen)
+   - processBuying: store_number mapping CUR→1, BON→B
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
    - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
@@ -567,7 +567,14 @@ async function processTickets(json) {
 
 /* ── Process BUYING data (per BUM, full replace) ── */
 async function processBuying(json) {
-  var keys = Object.keys(json[0] || {});
+  // Verzamel ALLE keys die in ANY rij voorkomen (niet alleen rij 1)
+  // Reden: SheetJS skipt lege cellen, dus rij 1 kan kolommen missen
+  var keysSet = {};
+  for (var ki = 0; ki < json.length; ki++) {
+    var rk = Object.keys(json[ki]);
+    for (var kj = 0; kj < rk.length; kj++) keysSet[rk[kj]] = true;
+  }
+  var keys = Object.keys(keysSet);
 
   // Detect BUM from data
   var bumCol = findCol(keys, ['department group']);
@@ -876,8 +883,17 @@ export async function POST(request) {
 
     console.log('Parsed ' + json.length + ' rows from ' + filename);
 
-    // Auto-detect file type
-    var columns = Object.keys(json[0]);
+    // Auto-detect file type — gebruik de ECHTE header-rij uit de sheet,
+    // niet Object.keys(json[0]). SheetJS skipt lege cellen, dus als rij 1
+    // ergens leeg is, mist die kolom in het object.
+    var headerRows = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 });
+    var columns = (headerRows[0] || []).map(function(c) { return String(c || '').trim(); }).filter(function(c) { return c.length > 0; });
+
+    // Fallback als header-extractie niet werkt
+    if (!columns.length) {
+      columns = Object.keys(json[0]);
+    }
+
     var fileType = detectFileType(columns);
     console.log('Detected file type: ' + fileType);
     console.log('Columns: ' + columns.join(', '));
