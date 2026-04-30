@@ -6,7 +6,7 @@
    WIJZIGINGEN T.O.V. VORIGE VERSIE:
    - Tabblad "Dashboard" hernoemd naar "Actuals"
    - Nieuw tabblad "Forecast" toegevoegd met 4 secties:
-     A) Maand-forecast (3 KPIs: Run rate / LY pacing / Budget status)
+     A) Maand-forecast (3 KPIs: Run rate / Verkooppatroon LY / Budget status)
      B) Catch-up tabel (wat moet er per dag voor budget/LY/run rate)
      C) FY forecast (3 KPIs: zelfde 3 methodes maar voor heel jaar)
      D) Forecast vs Budget chart (12 maanden visualisatie)
@@ -107,6 +107,7 @@ function CGFModal({show,onClose,onUnlock}){
 
 export default function SalesDashboard(){
   const[data,setData]=useState([]);
+  const[dailyData,setDailyData]=useState([]);
   const[budgetData,setBudgetData]=useState([]);
   const[corrections,setCorrections]=useState([]);
   const[lastDate,setLastDate]=useState(null);
@@ -154,13 +155,15 @@ export default function SalesDashboard(){
   useEffect(()=>{loadData();checkAuth();},[]);
 
   async function loadData(){
-    let allSales=[],allBudget=[],from=0;const step=1000;
+    let allSales=[],allBudget=[],allDaily=[],from=0;const step=1000;
     while(true){const{data:b}=await supabase.from('sales_monthly').select('*').order('year').order('month').range(from,from+step-1);if(!b||!b.length)break;allSales=allSales.concat(b);if(b.length<step)break;from+=step}
     from=0;while(true){const{data:b}=await supabase.from('budget_data').select('*').range(from,from+step-1);if(!b||!b.length)break;allBudget=allBudget.concat(b);if(b.length<step)break;from+=step}
+    // Daily data laden voor pacing-berekeningen op Forecast tab
+    from=0;while(true){const{data:b}=await supabase.from('sales_daily').select('*').range(from,from+step-1);if(!b||!b.length)break;allDaily=allDaily.concat(b);if(b.length<step)break;from+=step}
     const{data:corr}=await supabase.from('corrections').select('*').order('created_at',{ascending:false});
     const{data:md}=await supabase.from('sales_data').select('sale_date').order('sale_date',{ascending:false}).limit(1);
     if(md&&md.length){const d=md[0].sale_date;const[y,m,day]=d.split('-').map(Number);setLastDate(new Date(y,m-1,day))}
-    setData(allSales);setBudgetData(allBudget);if(corr)setCorrections(corr);setLoading(false);
+    setData(allSales);setDailyData(allDaily);setBudgetData(allBudget);if(corr)setCorrections(corr);setLoading(false);
   }
   async function checkAuth(){
     const{data:{user}}=await supabase.auth.getUser();
@@ -234,6 +237,7 @@ export default function SalesDashboard(){
   // FORECAST BEREKENINGEN (gebruikt op Forecast tab)
   // Gebruikt dezelfde filters: store, bum, dept (genegeerd: months/year voor maandselectie)
   // Tijd-context: huidige maand = dayFrac.month, huidig jaar = dayFrac.year
+  // LY pacing wordt berekend uit ECHTE daily data (sales_daily view), niet lineair
   // ============================================================
   const forecastData=useMemo(()=>{
     if(!lastDate||!data.length)return null;
@@ -252,35 +256,31 @@ export default function SalesDashboard(){
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       return true;
     };
-
-    // Apply corrections too (sales + margin)
     const matchCorr=c=>(store==='all'||c.store_number===store)&&(bum==='all'||c.bum===bum)&&(dept==='all'||c.dept_code===dept);
 
     // === MAAND DATA ===
-    // Actual MTD (current year, current month) — via sales_monthly aggregate
     const mtdRows=data.filter(r=>matchFilter(r)&&r.year===curYear&&r.month===curMonth);
     let mtdSales=sum(mtdRows,'net_sales');
-    // sales_monthly heeft hele maand totals, maar we zitten midden in de maand:
-    // de huidige maand bevat alleen data t/m lastDate, dus dit IS al de MTD waarde.
-    // Add corrections for this month
     const mtdCorrSales=sum(corrections.filter(c=>matchCorr(c)&&c.year===curYear&&c.month===curMonth),'sales_correction');
     mtdSales+=mtdCorrSales;
 
-    // LY full month (zelfde maand, vorig jaar, hele maand)
     const lyMonthRows=data.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth);
     const lyMonthSales=sum(lyMonthRows,'net_sales');
 
-    // LY MTD (zelfde maand, vorig jaar, t/m zelfde dag van maand)
-    // We hebben alleen monthly aggregates → moeten daily proraten via dayFrac
-    // LY MTD ≈ LY full month × (dayOfMonth / totalDaysInMonth)
-    const lyMTDFrac=dayOfMonth/totalDaysInMonth;
-    const lyMTDSales=lyMonthSales*lyMTDFrac;
-    // LY pacing % op deze dag (hoeveel % van LY maand was er op dag X gerealiseerd)
-    // Met onze data: aanname dat omzet gelijkmatig binnenkomt → pacing = dayOfMonth / totalDaysInMonth
-    // (Echte daily LY data ontbreekt in sales_monthly, maar we kunnen wel uit sales_data halen — voor nu lineair als benadering)
-    const lyPacingPct=lyMonthSales?(lyMTDSales/lyMonthSales):lyMTDFrac;
+    // ECHTE LY PACING uit sales_daily
+    // Gebruik dezelfde filters voor daily data
+    const lyDailyRows=dailyData.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth);
+    const lyDailySum=sum(lyDailyRows,'net_sales');
+    // Cumulatief tot dag X van LY's huidige maand
+    const lyDailyToDay=dailyData.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth&&r.day<=dayOfMonth);
+    const lyMTDSales=sum(lyDailyToDay,'net_sales');
+    // Pacing% = LY MTD ÷ LY hele maand
+    // Fallback naar lineair als er geen daily data is voor deze combinatie
+    let lyPacingPct=lyDailySum>0?(lyMTDSales/lyDailySum):(dayOfMonth/totalDaysInMonth);
+    // Veiligheidsclamp: als pacing% buiten 1% en 100% valt, gebruik lineair
+    if(lyPacingPct<=0.01||lyPacingPct>1)lyPacingPct=dayOfMonth/totalDaysInMonth;
 
-    // Budget hele maand (current year)
+    // Budget hele maand
     const monthBudgetRows=budgetData.filter(b=>{
       if(!matchBudget(b))return false;
       const[by,bm]=b.month.split('-').map(Number);
@@ -292,42 +292,35 @@ export default function SalesDashboard(){
     // 1) Run rate forecast: MTD / dayOfMonth * totalDaysInMonth
     const runRateForecast=dayOfMonth>0?(mtdSales/dayOfMonth)*totalDaysInMonth:0;
 
-    // 2) LY pacing forecast: MTD / pacing% (als je dezelfde verdeling volgt)
+    // 2) Verkooppatroon LY forecast: MTD / werkelijke LY pacing%
     const lyPacingForecast=lyPacingPct>0?(mtdSales/lyPacingPct):0;
 
     // 3) Budget status: hoe ver staat actual MTD voor/achter op budget volgens LY-shape pacing
     const expectedBudgetMTD=monthBudgetSales*lyPacingPct;
     const budgetVarPct=expectedBudgetMTD?((mtdSales-expectedBudgetMTD)/expectedBudgetMTD*100):0;
-    // Budget forecast eindstand: als je de huidige voor/achter % vasthoudt
-    // = monthBudget * (mtdSales / expectedBudgetMTD)
     const budgetPaceForecast=expectedBudgetMTD?monthBudgetSales*(mtdSales/expectedBudgetMTD):monthBudgetSales;
 
-    // Daily averages for catch-up
+    // Daily averages voor catch-up
     const dailyAvg=dayOfMonth>0?mtdSales/dayOfMonth:0;
     const requiredDailyForBudget=remainingDaysMonth>0?(monthBudgetSales-mtdSales)/remainingDaysMonth:0;
     const requiredDailyForLY=remainingDaysMonth>0?(lyMonthSales-mtdSales)/remainingDaysMonth:0;
 
     // === FY DATA ===
-    // YTD actuals (current year, alle maanden t/m huidige)
     const ytdRows=data.filter(r=>matchFilter(r)&&r.year===curYear&&r.month<=curMonth);
     let ytdSales=sum(ytdRows,'net_sales');
-    // Pro-rate de huidige maand naar dayFrac (omdat sales_monthly hele maand som heeft, MAAR data is alleen tot lastDate)
-    // Note: sales_monthly is een view die op sales_data aggregateert, dus alle data t/m lastDate zit erin → al correct
     const ytdCorrSales=sum(corrections.filter(c=>matchCorr(c)&&c.year===curYear&&c.month<=curMonth),'sales_correction');
     ytdSales+=ytdCorrSales;
 
-    // LY YTD: zelfde periode vorig jaar (jan t/m huidige maand-1 vol, plus huidige maand pro-rated)
+    // LY YTD: jan t/m huidige maand-1 vol + huidige maand t/m zelfde dag (uit daily)
     const lyYTDFullRows=data.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month<curMonth);
     const lyYTDFull=sum(lyYTDFullRows,'net_sales');
-    // LY huidige maand pro-rated tot dezelfde dag
-    const lyYTDPartial=lyMonthSales*lyMTDFrac;
-    const lyYTD=lyYTDFull+lyYTDPartial;
+    const lyYTD=lyYTDFull+lyMTDSales;  // gebruik echte daily MTD ipv pro-rated
 
     // LY hele jaar
     const lyFullYearRows=data.filter(r=>matchFilter(r)&&r.year===lyYear);
     const lyFullYear=sum(lyFullYearRows,'net_sales');
 
-    // FY Budget (current year, alle maanden)
+    // FY Budget
     const fyBudgetRows=budgetData.filter(b=>{
       if(!matchBudget(b))return false;
       const[by]=b.month.split('-').map(Number);
@@ -336,22 +329,19 @@ export default function SalesDashboard(){
     const fyBudget=sum(fyBudgetRows,'amount');
 
     // === FY FORECASTS ===
-    // 1) YTD run rate forecast: extrapoleer YTD over heel jaar op basis van verstreken kalenderdagen
     const dayOfYear=Math.floor((lastDate-new Date(curYear,0,0))/(1000*60*60*24));
     const totalDaysInYear=daysInMonth(curYear,2)===29?366:365;
     const fyRunRateForecast=dayOfYear>0?(ytdSales/dayOfYear)*totalDaysInYear:0;
 
-    // 2) FY LY pacing forecast: ytdSales / (lyYTD / lyFullYear)
+    // FY Verkooppatroon LY: gebruikt echte LY YTD (incl. echte daily MTD pacing)
     const fyLyPacingPct=lyFullYear?(lyYTD/lyFullYear):(dayOfYear/totalDaysInYear);
     const fyLyPacingForecast=fyLyPacingPct>0?(ytdSales/fyLyPacingPct):0;
 
-    // 3) FY Budget status
     const fyExpectedBudgetYTD=fyBudget*fyLyPacingPct;
     const fyBudgetVarPct=fyExpectedBudgetYTD?((ytdSales-fyExpectedBudgetYTD)/fyExpectedBudgetYTD*100):0;
     const fyBudgetPaceForecast=fyExpectedBudgetYTD?fyBudget*(ytdSales/fyExpectedBudgetYTD):fyBudget;
 
-    // === MONTHLY CHART DATA: actuals + forecast voor remaining months ===
-    // Voor elke maand 1-12: actuals (current year), LY full, budget
+    // === MONTHLY CHART DATA ===
     const monthlyActuals=Array(12).fill(0);
     const monthlyLY=Array(12).fill(0);
     const monthlyBudget=Array(12).fill(0);
@@ -362,9 +352,6 @@ export default function SalesDashboard(){
     data.filter(r=>matchFilter(r)&&r.year===lyYear).forEach(r=>{monthlyLY[r.month-1]+=parseFloat(r.net_sales)});
     budgetData.filter(b=>{if(!matchBudget(b))return false;const[by]=b.month.split('-').map(Number);return by===curYear&&b.budget_type===salesType}).forEach(b=>{const[,bm]=b.month.split('-').map(Number);monthlyBudget[bm-1]+=parseFloat(b.amount)});
 
-    // Forecast voor huidige maand (LY pacing methode) en alle volgende maanden (= LY in absolute, maar geschaald op LY pacing pct)
-    // Voor huidige maand: lyPacingForecast (gebaseerd op huidige MTD)
-    // Voor toekomstige maanden: LY van die maand × growth factor (= ytdSales / lyYTD)
     const growthFactor=lyYTD>0?(ytdSales/lyYTD):1;
     monthlyForecast[curMonth-1]=lyPacingForecast;
     for(let m=curMonth;m<12;m++){
@@ -383,7 +370,7 @@ export default function SalesDashboard(){
       monthlyActuals,monthlyLY,monthlyBudget,monthlyForecast,
       growthFactor,dayOfYear,totalDaysInYear
     };
-  },[data,budgetData,corrections,lastDate,dayFrac,store,bum,dept,deptBumMap,salesType]);
+  },[data,dailyData,budgetData,corrections,lastDate,dayFrac,store,bum,dept,deptBumMap,salesType]);
 
   // ============================================================
   // CHARTS — Actuals tab
@@ -505,7 +492,7 @@ export default function SalesDashboard(){
 
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
         <button onClick={()=>setTab('actuals')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='actuals'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Actuals</button>
-        <button onClick={()=>setTab('forecast')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='forecast'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Forecast</button>
+        <button onClick={()=>setTab('forecast')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='forecast'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Forecast <span className="italic font-normal text-[11px] text-[#a08a74]">(concept)</span></button>
         {corrVisible&&isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Data Source</button>}
       </div>
 
@@ -603,7 +590,7 @@ export default function SalesDashboard(){
             note={`Methode: MTD ÷ ${forecastData.dayOfMonth} dagen × ${forecastData.totalDaysInMonth} dagen`}
           />
           <ForecastKPI
-            label="LY Pacing Forecast"
+            label="Verkooppatroon LY"
             forecast={fmtMC(forecastData.lyPacingForecast)+' '+curr}
             sublabel="MTD actual"
             subvalue={fmtMC(forecastData.mtdSales)}
@@ -611,7 +598,7 @@ export default function SalesDashboard(){
             comparePct={pctChg(forecastData.lyPacingForecast,forecastData.monthBudgetSales)}
             compareLabel2="vs LY"
             comparePct2={pctChg(forecastData.lyPacingForecast,forecastData.lyMonthSales)}
-            note={`Methode: MTD ÷ LY pacing% (${(forecastData.lyPacingPct*100).toFixed(0)}%)`}
+            note={`Methode: MTD ÷ ${(forecastData.lyPacingPct*100).toFixed(1)}% — werkelijke LY pacing op dag ${forecastData.dayOfMonth}`}
           />
           <ForecastKPI
             label="Budget Status"
@@ -678,7 +665,7 @@ export default function SalesDashboard(){
             note={`Methode: YTD ÷ ${forecastData.dayOfYear} dagen × ${forecastData.totalDaysInYear} dagen`}
           />
           <ForecastKPI
-            label="FY LY Pacing Forecast"
+            label="FY Verkooppatroon LY"
             forecast={fmtMC(forecastData.fyLyPacingForecast)+' '+curr}
             sublabel="YTD actual"
             subvalue={fmtMC(forecastData.ytdSales)}
@@ -686,7 +673,7 @@ export default function SalesDashboard(){
             comparePct={pctChg(forecastData.fyLyPacingForecast,forecastData.fyBudget)}
             compareLabel2="vs LY"
             comparePct2={pctChg(forecastData.fyLyPacingForecast,forecastData.lyFullYear)}
-            note={`Methode: YTD ÷ LY pacing% (${(forecastData.fyLyPacingPct*100).toFixed(0)}%)`}
+            note={`Methode: YTD ÷ ${(forecastData.fyLyPacingPct*100).toFixed(1)}% — werkelijke LY YTD pacing`}
           />
           <ForecastKPI
             label="FY Budget Status"
@@ -702,7 +689,7 @@ export default function SalesDashboard(){
           <h3 className="text-[15px] font-bold mb-4">Maandelijks Verloop — Actual + Forecast vs LY & Budget</h3>
           <div style={{height:'320px'}}><canvas ref={forecastChartRef}/></div>
           <p className="text-[11px] text-[#a08a74] italic mt-3">
-            Donker oranje = werkelijke maanden t/m {MN[forecastData.curMonth-1]} · Lichter oranje = forecast (LY pacing methode, gegroeid met factor {forecastData.growthFactor.toFixed(2)})
+            Donker oranje = werkelijke maanden t/m {MN[forecastData.curMonth-1]} · Lichter oranje = forecast (Verkooppatroon LY, gegroeid met factor {forecastData.growthFactor.toFixed(2)})
           </p>
         </div>
       </>}
