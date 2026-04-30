@@ -1,7 +1,19 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared.js
+   BESTAND: HealthDashboardShared_v2.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
-   (maak de map components aan als die nog niet bestaat)
+   (vervangt huidige HealthDashboardShared.js)
+   VERSIE: v3.28.12
+
+   Wijzigingen t.o.v. v1:
+   - NIEUWE LOGICA: twee onafhankelijke dimensies (mutually exclusive)
+     ► Voorraad-niveau: Understock / Healthy / Overstock op basis van
+       lead time (uit max_lead_time per item, fallback 3 mnd)
+     ► Rotatie: Healthy / Slow mover / Dead stock op basis van laatste
+       verkoop (Slow >= 6 mnd, Dead >= 12 mnd; was 3 / 6)
+   - Twee stacked bars onder elkaar (i.p.v. één gecombineerde)
+   - Detail-tabel toont beide labels per item
+   - Excel-export (.xlsx) van actuele view
+   - Header tabel-overzicht aangepast aan nieuwe categorieën
    ============================================================ */
 'use client';
 
@@ -20,7 +32,6 @@ function Pill({ label, active, onClick }) {
   return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
 }
 
-/* Mini sparkline */
 function Spark({ sales }) {
   var max = Math.max.apply(null, sales.concat([1]));
   return (
@@ -33,17 +44,24 @@ function Spark({ sales }) {
   );
 }
 
-/* Health badge */
-function HealthBadge({ category }) {
+/* Twee soorten badges: voorraad-niveau en rotatie */
+function StockBadge({ category }) {
   var colors = {
-    healthy: { bg: '#dcfce7', text: '#16a34a', label: 'Gezond' },
-    watch: { bg: '#fef9c3', text: '#a16207', label: 'Aandacht' },
-    overstock: { bg: '#ffedd5', text: '#c2410c', label: 'Overstock' },
-    slow: { bg: '#fce7f3', text: '#be185d', label: 'Slow Mover' },
-    dead: { bg: '#fecaca', text: '#dc2626', label: 'Dead Stock' },
+    understock: { bg: '#fee2e2', text: '#dc2626', label: 'Understock' },
+    healthy:    { bg: '#dcfce7', text: '#16a34a', label: 'Gezond' },
+    overstock:  { bg: '#ffedd5', text: '#c2410c', label: 'Overstock' },
   };
   var c = colors[category] || colors.healthy;
-  return <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold" style={{ backgroundColor: c.bg, color: c.text }}>{c.label}</span>;
+  return <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap" style={{ backgroundColor: c.bg, color: c.text }}>{c.label}</span>;
+}
+function RotationBadge({ category }) {
+  var colors = {
+    healthy: { bg: '#dcfce7', text: '#16a34a', label: 'Gezond' },
+    slow:    { bg: '#fce7f3', text: '#be185d', label: 'Slow Mover' },
+    dead:    { bg: '#fecaca', text: '#dc2626', label: 'Dead Stock' },
+  };
+  var c = colors[category] || colors.healthy;
+  return <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap" style={{ backgroundColor: c.bg, color: c.text }}>{c.label}</span>;
 }
 
 // bumFilter: null = all BUMs (totaal), "PASCAL" = only PASCAL, etc.
@@ -56,11 +74,14 @@ export default function HealthDashboardShared({ bumFilter }) {
   var _dept = useState('all'), selDept = _dept[0], setSelDept = _dept[1];
   var _view = useState('overview'), view = _view[0], setView = _view[1];
   var _detailDept = useState(null), detailDept = _detailDept[0], setDetailDept = _detailDept[1];
-  var _filter = useState('all'), catFilter = _filter[0], setCatFilter = _filter[1];
+  // Filter op stock-niveau (understock/healthy/overstock) of rotatie (healthy/slow/dead)
+  var _stockFilter = useState('all'), stockFilter = _stockFilter[0], setStockFilter = _stockFilter[1];
+  var _rotFilter = useState('all'), rotFilter = _rotFilter[0], setRotFilter = _rotFilter[1];
   var _sort = useState('inv_value'), sortCol = _sort[0], setSortCol = _sort[1];
   var _sortDir = useState('desc'), sortDir = _sortDir[0], setSortDir = _sortDir[1];
   var _search = useState(''), search = _search[0], setSearch = _search[1];
   var _rows = useState(50), tableRows = _rows[0], setTableRows = _rows[1];
+  var _exporting = useState(false), exporting = _exporting[0], setExporting = _exporting[1];
 
   var supabase = createClient();
   useEffect(function() { loadData(); }, [bumFilter]);
@@ -106,10 +127,14 @@ export default function HealthDashboardShared({ bumFilter }) {
           bum: r.bum || '', vendor: r.vendor_name || '',
           cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
           qoh: 0, inv_value: 0,
+          max_lt: parseFloat(r.max_lead_time) || 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
         };
       }
       var m = map[key];
+      // Lead time: nemen we het maximum (worst case) over stores binnen regio
+      var rlt = parseFloat(r.max_lead_time) || 0;
+      if (rlt > m.max_lt) m.max_lt = rlt;
       m.qoh += parseFloat(r.qoh) || 0;
       m.inv_value += (parseFloat(r.inv_value_at_cost) || 0) * cFactor;
       for (var i = 0; i < 12; i++) {
@@ -120,66 +145,88 @@ export default function HealthDashboardShared({ bumFilter }) {
     var list = Object.values(map);
 
     list.forEach(function(m) {
-      // Chronological sales (oldest first)
+      // Lead time fallback: 3 maanden (consistent met Stock Risk)
+      m.lead_time = m.max_lt > 0 ? m.max_lt : 3;
+
+      // Chronological sales (oldest first → newest last)
       m.salesChrono = m.sales.slice().reverse();
 
-      // Active months (months with sales > 0)
+      // Active months
       m.active_months = m.sales.filter(function(s) { return s > 0; }).length;
 
-      // Total units sold in 12 months
+      // Total sold 12m
       m.total_sold = m.sales.reduce(function(a, b) { return a + b; }, 0);
 
-      // Avg monthly sales (units, excl zero months)
+      // Avg monthly (excl zero months) — voor MOI berekening
       var nonZero = m.sales.filter(function(s) { return s > 0; });
       m.avg_monthly = nonZero.length ? nonZero.reduce(function(a, b) { return a + b; }, 0) / nonZero.length : 0;
 
-      // Avg monthly cost of goods sold
+      // Avg monthly cost of goods sold (voor MOI)
       m.avg_monthly_cost = m.avg_monthly * (m.cost || 0);
 
-      // MOI (months of inventory)
+      // MOI (months of inventory) — informatief, niet meer voor classificatie
       m.moi = m.avg_monthly_cost > 0 ? m.inv_value / m.avg_monthly_cost : (m.inv_value > 0 ? 99 : 0);
 
-      // Last sale: how many months ago was the last sale?
-      // m.sales[0] = most recent month, m.sales[11] = oldest
+      // Voorraad in maanden (units)
+      m.stock_months = m.avg_monthly > 0 ? (m.qoh / m.avg_monthly) : (m.qoh > 0 ? 99 : 0);
+
+      // Last sale: aantal maanden geleden
+      // m.sales[0] = meest recente maand (m-1), m.sales[11] = oudste (m-12)
       m.months_since_last_sale = 12;
       for (var i = 0; i < 12; i++) {
         if (m.sales[i] > 0) { m.months_since_last_sale = i; break; }
       }
 
-      // Recent trend: last 3 months vs prior 3 months
+      // Trend laatste 3 mnd vs prior 3 mnd
       var recent3 = m.sales[0] + m.sales[1] + m.sales[2];
       var prior3 = m.sales[3] + m.sales[4] + m.sales[5];
       m.trend = prior3 > 0 ? ((recent3 - prior3) / prior3) * 100 : (recent3 > 0 ? 100 : 0);
 
-      // Classify item health
+      // ── Bar 1: Voorraad-niveau (Understock / Healthy / Overstock)
+      // Drempel = max lead time
+      // Understock: stock_months < lead_time (te weinig voorraad voor levertijd)
+      // Healthy:    lead_time ≤ stock_months < lead_time + 3
+      // Overstock:  stock_months ≥ lead_time + 3
+      // Items zonder verkoop in 12 mnd → automatisch in 'overstock' (oneindige MOI)
       if (m.qoh <= 0 || m.inv_value <= 0) {
-        m.category = 'healthy'; // no stock = not a problem
-      } else if (m.active_months === 0) {
-        m.category = 'dead'; // has stock, never sold in 12 months
-      } else if (m.months_since_last_sale >= 6) {
-        m.category = 'dead'; // hasn't sold in 6+ months
-      } else if (m.months_since_last_sale >= 3 || (m.active_months <= 3 && m.moi > 6)) {
-        m.category = 'slow'; // slow mover
-      } else if (m.moi > 9) {
-        m.category = 'overstock'; // too much stock relative to sales
-      } else if (m.moi > 5) {
-        m.category = 'watch'; // worth watching
+        m.stock_cat = 'understock'; // geen voorraad = understock
+      } else if (m.avg_monthly === 0) {
+        m.stock_cat = 'overstock'; // voorraad zonder verkoop → overstock
+      } else if (m.stock_months < m.lead_time) {
+        m.stock_cat = 'understock';
+      } else if (m.stock_months < m.lead_time + 3) {
+        m.stock_cat = 'healthy';
       } else {
-        m.category = 'healthy'; // good balance
+        m.stock_cat = 'overstock';
+      }
+
+      // ── Bar 2: Rotatie (Healthy / Slow Mover / Dead Stock)
+      // Healthy:    laatste verkoop in afgelopen 6 mnd
+      // Slow:       laatste verkoop 6 t/m 11 mnd geleden
+      // Dead:       geen verkoop in 12 mnd
+      if (m.active_months === 0) {
+        m.rot_cat = 'dead';
+      } else if (m.months_since_last_sale >= 12) {
+        m.rot_cat = 'dead';
+      } else if (m.months_since_last_sale >= 6) {
+        m.rot_cat = 'slow';
+      } else {
+        m.rot_cat = 'healthy';
       }
     });
 
-    // Only items with positive stock
+    // Alleen items met positieve voorraad voor rapportage
     return list.filter(function(m) { return m.qoh > 0 && m.inv_value > 0; });
   }, [data, store]);
 
-  /* Filter by BUM and dept */
+  /* Filter by BUM and dept (voor stacked bars en detail) */
   var filteredItems = useMemo(function() {
     return items.filter(function(m) {
       if (selBum !== 'all' && m.bum !== selBum) return false;
       if (selDept !== 'all' && m.dept_code !== selDept) return false;
       if (detailDept && m.dept_code !== detailDept) return false;
-      if (catFilter !== 'all' && m.category !== catFilter) return false;
+      if (stockFilter !== 'all' && m.stock_cat !== stockFilter) return false;
+      if (rotFilter !== 'all' && m.rot_cat !== rotFilter) return false;
       if (search) {
         var s = search.toLowerCase();
         if (!(m.item || '').toLowerCase().includes(s) &&
@@ -188,7 +235,17 @@ export default function HealthDashboardShared({ bumFilter }) {
       }
       return true;
     });
-  }, [items, selBum, selDept, detailDept, catFilter, search]);
+  }, [items, selBum, selDept, detailDept, stockFilter, rotFilter, search]);
+
+  /* Stacked bars: tellingen op basis van filters EXCL. categorie-filters */
+  var barItems = useMemo(function() {
+    return items.filter(function(m) {
+      if (selBum !== 'all' && m.bum !== selBum) return false;
+      if (selDept !== 'all' && m.dept_code !== selDept) return false;
+      if (detailDept && m.dept_code !== detailDept) return false;
+      return true;
+    });
+  }, [items, selBum, selDept, detailDept]);
 
   /* Department summary */
   var deptHealth = useMemo(function() {
@@ -199,46 +256,62 @@ export default function HealthDashboardShared({ bumFilter }) {
     });
     src.forEach(function(m) {
       var dc = m.dept_code;
-      if (!map[dc]) map[dc] = { code: dc, name: m.dept_name, bum: m.bum, items: 0, inv_value: 0, healthy: 0, watch: 0, overstock: 0, slow: 0, dead: 0, healthy_value: 0, watch_value: 0, overstock_value: 0, slow_value: 0, dead_value: 0, total_sold: 0, avg_moi: 0, moi_sum: 0, moi_count: 0 };
+      if (!map[dc]) map[dc] = {
+        code: dc, name: m.dept_name, bum: m.bum,
+        items: 0, inv_value: 0,
+        understock: 0, healthy_stock: 0, overstock: 0,
+        understock_value: 0, healthy_stock_value: 0, overstock_value: 0,
+        healthy_rot: 0, slow: 0, dead: 0,
+        healthy_rot_value: 0, slow_value: 0, dead_value: 0,
+        total_sold: 0, moi_sum: 0, moi_count: 0,
+      };
       var d = map[dc];
       d.items++;
       d.inv_value += m.inv_value;
-      d[m.category]++;
-      d[m.category + '_value'] += m.inv_value;
+      // Stock-niveau
+      var sk = m.stock_cat === 'healthy' ? 'healthy_stock' : m.stock_cat;
+      d[sk]++;
+      d[sk + '_value'] += m.inv_value;
+      // Rotatie
+      var rk = m.rot_cat === 'healthy' ? 'healthy_rot' : m.rot_cat;
+      d[rk]++;
+      d[rk + '_value'] += m.inv_value;
       d.total_sold += m.total_sold;
       if (m.moi < 99) { d.moi_sum += m.moi; d.moi_count++; }
     });
     Object.values(map).forEach(function(d) {
       d.avg_moi = d.moi_count ? d.moi_sum / d.moi_count : 0;
-      d.healthy_pct = d.items ? (d.healthy / d.items) * 100 : 0;
-      d.problem_pct = d.items ? ((d.slow + d.dead) / d.items) * 100 : 0;
-      d.problem_value = d.slow_value + d.dead_value;
+      d.problem_value = d.slow_value + d.dead_value + d.understock_value + d.overstock_value;
     });
     return Object.values(map).sort(function(a, b) { return b.problem_value - a.problem_value; });
   }, [items, selBum]);
 
-  /* Totals */
+  /* Totals (per categorie) — gebruikt door bars én KPI tegels */
   var totals = useMemo(function() {
-    var t = { items: 0, inv_value: 0, healthy: 0, watch: 0, overstock: 0, slow: 0, dead: 0, healthy_value: 0, watch_value: 0, overstock_value: 0, slow_value: 0, dead_value: 0 };
-    var src = items.filter(function(m) {
-      if (selBum !== 'all' && m.bum !== selBum) return false;
-      if (selDept !== 'all' && m.dept_code !== selDept) return false;
-      return true;
-    });
-    src.forEach(function(m) {
+    var t = {
+      items: 0, inv_value: 0,
+      understock: 0, healthy_stock: 0, overstock: 0,
+      understock_value: 0, healthy_stock_value: 0, overstock_value: 0,
+      healthy_rot: 0, slow: 0, dead: 0,
+      healthy_rot_value: 0, slow_value: 0, dead_value: 0,
+    };
+    barItems.forEach(function(m) {
       t.items++;
       t.inv_value += m.inv_value;
-      t[m.category]++;
-      t[m.category + '_value'] += m.inv_value;
+      var sk = m.stock_cat === 'healthy' ? 'healthy_stock' : m.stock_cat;
+      t[sk]++;
+      t[sk + '_value'] += m.inv_value;
+      var rk = m.rot_cat === 'healthy' ? 'healthy_rot' : m.rot_cat;
+      t[rk]++;
+      t[rk + '_value'] += m.inv_value;
     });
-    t.healthy_pct = t.items ? (t.healthy / t.items * 100) : 0;
-    t.watch_pct = t.items ? (t.watch / t.items * 100) : 0;
-    t.overstock_pct = t.items ? (t.overstock / t.items * 100) : 0;
-    t.slow_pct = t.items ? (t.slow / t.items * 100) : 0;
-    t.dead_pct = t.items ? (t.dead / t.items * 100) : 0;
+    // Percentages
+    ['understock', 'healthy_stock', 'overstock', 'healthy_rot', 'slow', 'dead'].forEach(function(k) {
+      t[k + '_pct'] = t.items ? (t[k] / t.items * 100) : 0;
+    });
     t.problem_value = t.slow_value + t.dead_value;
     return t;
-  }, [items, selBum, selDept]);
+  }, [barItems]);
 
   /* BUM list */
   var bums = useMemo(function() {
@@ -270,6 +343,8 @@ export default function HealthDashboardShared({ bumFilter }) {
       else if (sortCol === 'avg_monthly') { va = a.avg_monthly; vb = b.avg_monthly; }
       else if (sortCol === 'total_sold') { va = a.total_sold; vb = b.total_sold; }
       else if (sortCol === 'months_since') { va = a.months_since_last_sale; vb = b.months_since_last_sale; }
+      else if (sortCol === 'stock_months') { va = a.stock_months; vb = b.stock_months; }
+      else if (sortCol === 'lead_time') { va = a.lead_time; vb = b.lead_time; }
       else if (sortCol === 'item') { va = a.item; vb = b.item; return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va); }
       else { va = a.inv_value; vb = b.inv_value; }
       return sortDir === 'desc' ? vb - va : va - vb;
@@ -282,12 +357,102 @@ export default function HealthDashboardShared({ bumFilter }) {
     else { setSortCol(col); setSortDir('desc'); }
   }
 
+  /* ─────────── Excel export ─────────── */
+  async function exportXlsx() {
+    setExporting(true);
+    try {
+      // Lazy load XLSX vanaf CDN
+      if (typeof window !== 'undefined' && !window.XLSX) {
+        await new Promise(function(resolve, reject) {
+          var s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      }
+      var XLSX = window.XLSX;
+
+      // Sheet 1: Per Afdeling (deptHealth)
+      var deptRows = deptHealth.map(function(d) {
+        return {
+          'Dept': d.code,
+          'Afdeling': (d.name || '').replace(/^\d+\s*/, ''),
+          'Items': d.items,
+          'Voorraadwaarde': Math.round(d.inv_value),
+          'Verkocht 12m': d.total_sold,
+          'Gem. MOI': Math.round(d.avg_moi * 10) / 10,
+          'Understock items': d.understock,
+          'Gezond items (voorraad)': d.healthy_stock,
+          'Overstock items': d.overstock,
+          'Gezond items (rotatie)': d.healthy_rot,
+          'Slow Mover items': d.slow,
+          'Dead Stock items': d.dead,
+          'Probleem waarde': Math.round(d.problem_value),
+        };
+      });
+
+      // Sheet 2: Per Item (sortedItems)
+      var itemRows = sortedItems.map(function(m) {
+        return {
+          'Dept': m.dept_code,
+          'Afdeling': m.dept_name,
+          'Item': m.item,
+          'Omschrijving': m.desc,
+          'Vendor': m.vendor,
+          'BUM': m.bum,
+          'QOH': Math.round(m.qoh),
+          'Voorraadwaarde': Math.round(m.inv_value),
+          'Voorraad-niveau': m.stock_cat === 'understock' ? 'Understock' : m.stock_cat === 'overstock' ? 'Overstock' : 'Gezond',
+          'Rotatie': m.rot_cat === 'dead' ? 'Dead Stock' : m.rot_cat === 'slow' ? 'Slow Mover' : 'Gezond',
+          'Voorraad in maanden': Math.round(m.stock_months * 10) / 10,
+          'Lead time (mnd)': m.lead_time,
+          'MOI': Math.round(m.moi * 10) / 10,
+          'Gem/mnd verkoop': Math.round(m.avg_monthly),
+          'Verkocht 12m': m.total_sold,
+          'Laatste verkoop (mnd geleden)': m.months_since_last_sale,
+        };
+      });
+
+      var wb = XLSX.utils.book_new();
+      var ws1 = XLSX.utils.json_to_sheet(deptRows);
+      var ws2 = XLSX.utils.json_to_sheet(itemRows);
+      XLSX.utils.book_append_sheet(wb, ws1, 'Per Afdeling');
+      XLSX.utils.book_append_sheet(wb, ws2, 'Per Item');
+
+      // Filename met datum + filters
+      var d = new Date();
+      var ds = d.getFullYear() + ('0' + (d.getMonth()+1)).slice(-2) + ('0' + d.getDate()).slice(-2);
+      var label = (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : 'Bonaire');
+      XLSX.writeFile(wb, ds + '_voorraadgezondheid_' + label + '.xlsx');
+    } catch (err) {
+      console.error('Excel export error:', err);
+      alert('Excel-export mislukt: ' + (err.message || err));
+    }
+    setExporting(false);
+  }
+
   if (loading) return <LoadingLogo text={'Gezondheid laden' + (bumFilter ? ' (' + bumFilter + ')' : '') + '...'} />;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">{"Geen data beschikbaar" + (bumFilter ? " voor " + bumFilter : "") + "."}</p></div>;
 
   var storeName = store === '1' ? 'Curaçao' : 'Bonaire';
-
   var updateLabel = lastUpdate ? 'Data t/m ' + (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
+
+  // Stacked bar render helper
+  function renderStackedBar(segments) {
+    return (
+      <div className="flex h-[28px] rounded-lg overflow-hidden">
+        {segments.map(function(s, i) {
+          if (!s.pct || s.pct <= 0) return null;
+          return <div key={i} style={{ width: s.pct + '%', backgroundColor: s.color }}
+            className="transition-all flex items-center justify-center"
+            title={s.label + ': ' + fmt(s.count) + ' items (' + s.pct.toFixed(0) + '%) — ' + fmtC(s.value)}>
+            {s.pct >= 8 && <span className="text-[10px] text-white font-bold">{s.pct.toFixed(0) + '%'}</span>}
+          </div>;
+        })}
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1600px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
@@ -295,7 +460,7 @@ export default function HealthDashboardShared({ bumFilter }) {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>{bumFilter ? 'Gezondheid — ' + bumFilter : 'Gezondheid Voorraden — Totaaloverzicht'}</h1>
-          <p className="text-[13px] text-[#6b5240]">{bumFilter ? 'Voorraad gezondheid voor ' + bumFilter + ' — ' + storeName : 'Alle BUMs — ' + storeName + ' — dit overzicht kan langer laden'}{updateLabel ? ' — ' + updateLabel : ''}</p>
+          <p className="text-[13px] text-[#6b5240]">{bumFilter ? 'Voorraad gezondheid voor ' + bumFilter + ' — ' + storeName : 'Alle BUMs — ' + storeName}{updateLabel ? ' — ' + updateLabel : ''}</p>
         </div>
         <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{bumFilter ? bumFilter + ' · ' + storeName : storeName}</div>
       </div>
@@ -326,94 +491,121 @@ export default function HealthDashboardShared({ bumFilter }) {
         </div>
       </div>
 
-      {/* Health distribution bar */}
+      {/* Twee stacked bars */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[15px] font-bold">Verdeling Voorraadgezondheid</h3>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-[15px] font-bold">Verdeling Voorraadgezondheid</h3>
+            <p className="text-[11px] text-[#6b5240]">Twee onafhankelijke dimensies: voorraad-niveau (vs lead time) én rotatie (laatste verkoop)</p>
+          </div>
           <div className="text-[13px] font-mono text-[#6b5240]">{fmt(totals.items) + ' items · ' + fmtC(totals.inv_value)}</div>
         </div>
 
-        {/* Stacked bar */}
-        <div className="flex h-[32px] rounded-lg overflow-hidden mb-3">
-          {totals.healthy > 0 && <div style={{ width: totals.healthy_pct + '%', backgroundColor: '#16a34a' }} className="transition-all" title={'Gezond: ' + fmt(totals.healthy) + ' items (' + totals.healthy_pct.toFixed(0) + '%)'}></div>}
-          {totals.watch > 0 && <div style={{ width: totals.watch_pct + '%', backgroundColor: '#eab308' }} className="transition-all" title={'Aandacht: ' + fmt(totals.watch) + ' items (' + totals.watch_pct.toFixed(0) + '%)'}></div>}
-          {totals.overstock > 0 && <div style={{ width: totals.overstock_pct + '%', backgroundColor: '#f97316' }} className="transition-all" title={'Overstock: ' + fmt(totals.overstock) + ' items (' + totals.overstock_pct.toFixed(0) + '%)'}></div>}
-          {totals.slow > 0 && <div style={{ width: totals.slow_pct + '%', backgroundColor: '#ec4899' }} className="transition-all" title={'Slow Mover: ' + fmt(totals.slow) + ' items (' + totals.slow_pct.toFixed(0) + '%)'}></div>}
-          {totals.dead > 0 && <div style={{ width: totals.dead_pct + '%', backgroundColor: '#dc2626' }} className="transition-all" title={'Dead Stock: ' + fmt(totals.dead) + ' items (' + totals.dead_pct.toFixed(0) + '%)'}></div>}
+        {/* Bar 1: Voorraad-niveau */}
+        <div className="mb-5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[12px] font-semibold text-[#1a0a04]">1. Voorraad-niveau (vs maximale levertijd)</span>
+            <div className="flex items-center gap-3 text-[10px]">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span>Understock</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span>Gezond</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#f97316' }}></span>Overstock</span>
+            </div>
+          </div>
+          {renderStackedBar([
+            { label: 'Understock', count: totals.understock, value: totals.understock_value, pct: totals.understock_pct, color: '#dc2626' },
+            { label: 'Gezond',     count: totals.healthy_stock, value: totals.healthy_stock_value, pct: totals.healthy_stock_pct, color: '#16a34a' },
+            { label: 'Overstock',  count: totals.overstock, value: totals.overstock_value, pct: totals.overstock_pct, color: '#f97316' },
+          ])}
+          <div className="grid grid-cols-3 gap-3 mt-3">
+            {[
+              { label: 'Understock', key: 'understock', color: '#dc2626', desc: 'voorraad < lead time' },
+              { label: 'Gezond',     key: 'healthy_stock', color: '#16a34a', desc: 'lead time t/m lead+3' },
+              { label: 'Overstock',  key: 'overstock', color: '#f97316', desc: 'voorraad ≥ lead+3 mnd' },
+            ].map(function(cat) {
+              var k = cat.key === 'healthy_stock' ? 'healthy' : cat.key;
+              var isActive = stockFilter === k;
+              return (
+                <div key={cat.key} className={'rounded-xl p-3 cursor-pointer transition-all border-2 ' + (isActive ? 'border-[#1B3A5C] shadow-md' : 'border-transparent hover:border-[#e5ddd4]')}
+                  style={{ backgroundColor: cat.color + '10' }}
+                  onClick={function() { setStockFilter(isActive ? 'all' : k); setView('detail'); }}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }}></div>
+                    <span className="text-[11px] font-bold uppercase" style={{ color: cat.color }}>{cat.label}</span>
+                  </div>
+                  <p className="text-[18px] font-bold font-mono">{fmt(totals[cat.key])}<span className="text-[11px] text-[#6b5240] font-normal ml-1">({(totals[cat.key + '_pct'] || 0).toFixed(0)}%)</span></p>
+                  <p className="text-[11px] font-mono text-[#6b5240]">{fmtC(totals[cat.key + '_value'])}</p>
+                  <p className="text-[9px] text-[#a08a74] mt-0.5">{cat.desc}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Legend with values */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {[
-            { label: 'Gezond', key: 'healthy', color: '#16a34a', desc: 'MOI ≤ 5, actief verkopend' },
-            { label: 'Aandacht', key: 'watch', color: '#eab308', desc: 'MOI 5-9 maanden' },
-            { label: 'Overstock', key: 'overstock', color: '#f97316', desc: 'MOI > 9 maanden' },
-            { label: 'Slow Mover', key: 'slow', color: '#ec4899', desc: '3+ mnd geen verkoop' },
-            { label: 'Dead Stock', key: 'dead', color: '#dc2626', desc: '6+ mnd geen verkoop' },
-          ].map(function(cat) {
-            var count = totals[cat.key];
-            var value = totals[cat.key + '_value'];
-            var pct = totals[cat.key + '_pct'] || 0;
-            var isActive = catFilter === cat.key;
-            return (
-              <div key={cat.key} className={'rounded-xl p-3 cursor-pointer transition-all border-2 ' + (isActive ? 'border-[#1B3A5C] shadow-md' : 'border-transparent hover:border-[#e5ddd4]')}
-                style={{ backgroundColor: cat.color + '10' }}
-                onClick={function() { setCatFilter(isActive ? 'all' : cat.key); setView('detail'); }}>
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }}></div>
-                  <span className="text-[11px] font-bold uppercase" style={{ color: cat.color }}>{cat.label}</span>
+        {/* Bar 2: Rotatie */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[12px] font-semibold text-[#1a0a04]">2. Rotatie (laatste verkoop)</span>
+            <div className="flex items-center gap-3 text-[10px]">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span>Gezond</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#ec4899' }}></span>Slow Mover</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span>Dead Stock</span>
+            </div>
+          </div>
+          {renderStackedBar([
+            { label: 'Gezond',     count: totals.healthy_rot, value: totals.healthy_rot_value, pct: totals.healthy_rot_pct, color: '#16a34a' },
+            { label: 'Slow Mover', count: totals.slow, value: totals.slow_value, pct: totals.slow_pct, color: '#ec4899' },
+            { label: 'Dead Stock', count: totals.dead, value: totals.dead_value, pct: totals.dead_pct, color: '#dc2626' },
+          ])}
+          <div className="grid grid-cols-3 gap-3 mt-3">
+            {[
+              { label: 'Gezond',     key: 'healthy_rot', color: '#16a34a', desc: 'verkoop in afgelopen 6 mnd' },
+              { label: 'Slow Mover', key: 'slow', color: '#ec4899', desc: '6 t/m 11 mnd geen verkoop' },
+              { label: 'Dead Stock', key: 'dead', color: '#dc2626', desc: '12+ mnd geen verkoop' },
+            ].map(function(cat) {
+              var k = cat.key === 'healthy_rot' ? 'healthy' : cat.key;
+              var isActive = rotFilter === k;
+              return (
+                <div key={cat.key} className={'rounded-xl p-3 cursor-pointer transition-all border-2 ' + (isActive ? 'border-[#1B3A5C] shadow-md' : 'border-transparent hover:border-[#e5ddd4]')}
+                  style={{ backgroundColor: cat.color + '10' }}
+                  onClick={function() { setRotFilter(isActive ? 'all' : k); setView('detail'); }}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }}></div>
+                    <span className="text-[11px] font-bold uppercase" style={{ color: cat.color }}>{cat.label}</span>
+                  </div>
+                  <p className="text-[18px] font-bold font-mono">{fmt(totals[cat.key])}<span className="text-[11px] text-[#6b5240] font-normal ml-1">({(totals[cat.key + '_pct'] || 0).toFixed(0)}%)</span></p>
+                  <p className="text-[11px] font-mono text-[#6b5240]">{fmtC(totals[cat.key + '_value'])}</p>
+                  <p className="text-[9px] text-[#a08a74] mt-0.5">{cat.desc}</p>
                 </div>
-                <p className="text-[18px] font-bold font-mono">{fmt(count)}<span className="text-[11px] text-[#6b5240] font-normal ml-1">({pct.toFixed(0)}%)</span></p>
-                <p className="text-[11px] font-mono text-[#6b5240]">{fmtC(value)}</p>
-                <p className="text-[9px] text-[#a08a74] mt-0.5">{cat.desc}</p>
-              </div>
-            );
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Toolbar: tabs + zoek + export */}
+      <div className="flex items-center justify-between mb-5 border-b-2 border-[#e5ddd4]">
+        <div className="flex gap-1">
+          {[['overview', 'Per Afdeling'], ['detail', 'Per Item (' + fmt(filteredItems.length) + ')']].map(function(item) {
+            return <button key={item[0]} onClick={function() { setView(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
           })}
         </div>
-      </div>
-
-      {/* KPI alert tiles */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm">
-          <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#dc2626]"></div>
-          <p className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[1px]">Probleem Voorraad</p>
-          <p className="text-[28px] font-semibold font-mono text-[#dc2626]">{fmtC(totals.problem_value)}</p>
-          <p className="text-[11px] text-[#a08a74]">slow movers + dead stock waarde</p>
-        </div>
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm">
-          <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#dc2626]"></div>
-          <p className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[1px]">% Probleem van Totaal</p>
-          <p className="text-[28px] font-semibold font-mono" style={{ color: totals.inv_value ? ((totals.problem_value / totals.inv_value * 100) > 20 ? '#dc2626' : (totals.problem_value / totals.inv_value * 100) > 10 ? '#d97706' : '#16a34a') : '#1a0a04' }}>
-            {totals.inv_value ? ((totals.problem_value / totals.inv_value) * 100).toFixed(1) + '%' : '0%'}
-          </p>
-          <p className="text-[11px] text-[#a08a74]">van totale voorraadwaarde</p>
-        </div>
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm">
-          <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#E84E1B]"></div>
-          <p className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[1px]">Gezonde Voorraad</p>
-          <p className="text-[28px] font-semibold font-mono text-[#16a34a]">{totals.healthy_pct.toFixed(0)}%</p>
-          <p className="text-[11px] text-[#a08a74]">{fmt(totals.healthy)} van {fmt(totals.items)} items</p>
-        </div>
-      </div>
-
-      {/* View tabs */}
-      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        {[['overview', 'Per Afdeling'], ['detail', 'Per Item (' + fmt(filteredItems.length) + ')']].map(function(item) {
-          return <button key={item[0]} onClick={function() { setView(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
-        })}
+        <button onClick={exportXlsx} disabled={exporting}
+          className={'px-4 py-1.5 mb-1 rounded-lg text-[12px] font-semibold border ' + (exporting ? 'bg-[#e5ddd4] text-[#a08a74] border-[#e5ddd4] cursor-wait' : 'bg-white text-[#E84E1B] border-[#E84E1B] hover:bg-[#faf5f0]')}>
+          {exporting ? 'Bezig...' : '⬇ Excel export'}
+        </button>
       </div>
 
       {/* ═══ DEPARTMENT OVERVIEW ═══ */}
       {view === 'overview' && (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[12px]" style={{ minWidth: '1100px' }}>
+            <table className="w-full border-collapse text-[12px]" style={{ minWidth: '1200px' }}>
               <thead>
                 <tr className="bg-[#1B3A5C]">
                   <th colSpan={3} className="p-0 border-r border-[#2a4f75]"></th>
                   <th colSpan={2} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-1.5 border-r border-[#2a4f75]">Voorraad</th>
-                  <th colSpan={1} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-1.5 border-r border-[#2a4f75]">MOI</th>
-                  <th colSpan={5} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-1.5 border-r border-[#2a4f75]">Verdeling Items</th>
+                  <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-1.5 border-r border-[#2a4f75]">Voorraad-niveau</th>
+                  <th colSpan={2} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-1.5 border-r border-[#2a4f75]">Rotatie</th>
                   <th colSpan={2} className="text-center text-white text-[9px] font-bold uppercase tracking-wider py-1.5">Probleem</th>
                 </tr>
                 <tr className="bg-[#f0ebe5]">
@@ -422,34 +614,33 @@ export default function HealthDashboardShared({ bumFilter }) {
                   <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">Items</th>
                   <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Waarde</th>
                   <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">Verkocht</th>
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]" title="Gemiddelde Months of Inventory">Gem.</th>
+                  <th className="text-center p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4]" style={{ color: '#dc2626' }}>Under</th>
                   <th className="text-center p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4]" style={{ color: '#16a34a' }}>Gezond</th>
-                  <th className="text-center p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4]" style={{ color: '#eab308' }}>Aandacht</th>
-                  <th className="text-center p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4]" style={{ color: '#f97316' }}>Over</th>
+                  <th className="text-center p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]" style={{ color: '#f97316' }}>Over</th>
                   <th className="text-center p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4]" style={{ color: '#ec4899' }}>Slow</th>
                   <th className="text-center p-2 text-[10px] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]" style={{ color: '#dc2626' }}>Dead</th>
-                  <th className="text-right p-2 text-[10px] text-[#dc2626] font-bold uppercase border-b-2 border-[#e5ddd4]">Waarde</th>
+                  <th className="text-right p-2 text-[10px] text-[#dc2626] font-bold uppercase border-b-2 border-[#e5ddd4]">Slow+Dead</th>
                   <th className="text-right p-2 text-[10px] text-[#dc2626] font-bold uppercase border-b-2 border-[#e5ddd4]">%</th>
                 </tr>
               </thead>
               <tbody>
                 {deptHealth.map(function(d, i) {
-                  var probPct = d.inv_value ? (d.problem_value / d.inv_value * 100) : 0;
+                  var problemValue = d.slow_value + d.dead_value;
+                  var probPct = d.inv_value ? (problemValue / d.inv_value * 100) : 0;
                   var probColor = probPct > 30 ? '#dc2626' : probPct > 15 ? '#d97706' : '#16a34a';
                   return (
-                    <tr key={d.code} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setDetailDept(d.code); setView('detail'); setCatFilter('all'); }}>
+                    <tr key={d.code} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'} onClick={function() { setDetailDept(d.code); setView('detail'); setStockFilter('all'); setRotFilter('all'); }}>
                       <td className="p-2 text-[12px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{d.code}</td>
                       <td className="p-2 text-[12px] border-b border-[#f0ebe5] truncate max-w-[160px]" title={d.name}>{(d.name || '').replace(/^\d+\s*/, '')}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]">{fmt(d.items)}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmtK(d.inv_value)}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4] text-[#6b5240]">{fmt(d.total_sold)}</td>
-                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: d.avg_moi > 9 ? '#dc2626' : d.avg_moi > 5 ? '#d97706' : '#16a34a' }}>{fmtMoi(d.avg_moi)}</td>
-                      <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: '#16a34a' }}>{d.healthy || '-'}</td>
-                      <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: '#eab308' }}>{d.watch || '-'}</td>
-                      <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: '#f97316' }}>{d.overstock || '-'}</td>
+                      <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{d.understock || '-'}</td>
+                      <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: '#16a34a' }}>{d.healthy_stock || '-'}</td>
+                      <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: '#f97316' }}>{d.overstock || '-'}</td>
                       <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: '#ec4899' }}>{d.slow || '-'}</td>
                       <td className="p-2 text-center font-mono text-[11px] border-b border-[#f0ebe5] border-r border-[#e5ddd4]" style={{ color: '#dc2626' }}>{d.dead || '-'}</td>
-                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] font-semibold" style={{ color: '#dc2626' }}>{d.problem_value > 0 ? fmtK(d.problem_value) : '-'}</td>
+                      <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] font-semibold" style={{ color: '#dc2626' }}>{problemValue > 0 ? fmtK(problemValue) : '-'}</td>
                       <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] font-semibold" style={{ color: probColor }}>{probPct > 0 ? probPct.toFixed(0) + '%' : '-'}</td>
                     </tr>
                   );
@@ -463,12 +654,14 @@ export default function HealthDashboardShared({ bumFilter }) {
       {/* ═══ ITEM DETAIL VIEW ═══ */}
       {view === 'detail' && (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
-          <div className="flex items-center justify-between p-4 border-b border-[#e5ddd4]">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between p-4 border-b border-[#e5ddd4] flex-wrap gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h3 className="text-[15px] font-bold">
                 {detailDept ? ('Dept ' + detailDept + ' — Items') : 'Alle Items'}
               </h3>
               {detailDept && <button onClick={function() { setDetailDept(null); }} className="text-[11px] text-[#E84E1B] hover:underline">× Wis dept filter</button>}
+              {stockFilter !== 'all' && <button onClick={function() { setStockFilter('all'); }} className="text-[11px] text-[#E84E1B] hover:underline">× Wis voorraad-filter</button>}
+              {rotFilter !== 'all' && <button onClick={function() { setRotFilter('all'); }} className="text-[11px] text-[#E84E1B] hover:underline">× Wis rotatie-filter</button>}
             </div>
             <div className="flex items-center gap-3">
               <input value={search} onChange={function(e) { setSearch(e.target.value); }} placeholder="Zoek item..." className="px-3 py-1.5 border border-[#e5ddd4] rounded-lg text-[13px] w-[180px]" />
@@ -478,13 +671,15 @@ export default function HealthDashboardShared({ bumFilter }) {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1100px' }}>
+            <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1300px' }}>
               <thead>
                 <tr className="bg-[#f0ebe5]">
                   {[
                     ['Dept', 'dept', 'text-left'], ['Item', 'item', 'text-left'], ['Omschrijving', '', 'text-left min-w-[180px]'],
-                    ['Status', '', 'text-center'], ['QOH', 'qoh', 'text-right'], ['Waarde', 'inv_value', 'text-right'],
-                    ['MOI', 'moi', 'text-right'], ['Gem/mnd', 'avg_monthly', 'text-right'], ['Verkocht', 'total_sold', 'text-right'],
+                    ['Voorraad-niveau', '', 'text-center'], ['Rotatie', '', 'text-center'],
+                    ['QOH', 'qoh', 'text-right'], ['Waarde', 'inv_value', 'text-right'],
+                    ['Vrd. mnd', 'stock_months', 'text-right'], ['LT', 'lead_time', 'text-right'],
+                    ['Gem/mnd', 'avg_monthly', 'text-right'], ['Verkocht', 'total_sold', 'text-right'],
                     ['Laatste', 'months_since', 'text-right'], ['Trend', '', 'text-center'], ['Vendor', '', 'text-left'],
                   ].map(function(h) {
                     var clickable = h[1] ? ' cursor-pointer hover:text-[#E84E1B]' : '';
@@ -497,19 +692,20 @@ export default function HealthDashboardShared({ bumFilter }) {
               </thead>
               <tbody>
                 {sortedItems.slice(0, tableRows).map(function(m, i) {
-                  var moiColor = m.moi >= 99 ? '#dc2626' : m.moi > 9 ? '#dc2626' : m.moi > 5 ? '#d97706' : '#16a34a';
                   return (
                     <tr key={m.item + i} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}>
                       <td className="p-1.5 text-[11px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{m.dept_code}</td>
                       <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] font-mono text-[#1B3A5C]">{m.item}</td>
                       <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] truncate max-w-[200px]" title={m.desc}>{m.desc}</td>
-                      <td className="p-1.5 border-b border-[#f0ebe5] text-center"><HealthBadge category={m.category} /></td>
+                      <td className="p-1.5 border-b border-[#f0ebe5] text-center"><StockBadge category={m.stock_cat} /></td>
+                      <td className="p-1.5 border-b border-[#f0ebe5] text-center"><RotationBadge category={m.rot_cat} /></td>
                       <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmt(Math.round(m.qoh))}</td>
                       <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold">{fmt(Math.round(m.inv_value))}</td>
-                      <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold" style={{ color: moiColor }}>{fmtMoi(m.moi)}</td>
+                      <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmtMoi(m.stock_months)}</td>
+                      <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5] text-[#6b5240]">{m.lead_time + 'm'}</td>
                       <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmt(Math.round(m.avg_monthly))}</td>
                       <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{fmt(m.total_sold)}</td>
-                      <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5]" style={{ color: m.months_since_last_sale >= 6 ? '#dc2626' : m.months_since_last_sale >= 3 ? '#d97706' : '#6b5240' }}>
+                      <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5]" style={{ color: m.months_since_last_sale >= 12 ? '#dc2626' : m.months_since_last_sale >= 6 ? '#d97706' : '#6b5240' }}>
                         {m.months_since_last_sale === 0 ? 'deze mnd' : m.months_since_last_sale + ' mnd'}
                       </td>
                       <td className="p-1.5 border-b border-[#f0ebe5]"><Spark sales={m.salesChrono} /></td>
@@ -528,29 +724,29 @@ export default function HealthDashboardShared({ bumFilter }) {
         </div>
       )}
 
-      {/* Export */}
-      <div className="flex justify-end mb-5">
-        <button onClick={function() {
-          var csvRows = ['Dept,Afdeling,Item,Omschrijving,Status,QOH,Waarde,MOI,Gem/mnd,Verkocht 12m,Laatste verkoop,Vendor'];
-          sortedItems.forEach(function(m) {
-            csvRows.push([m.dept_code, '"' + (m.dept_name || '') + '"', m.item, '"' + (m.desc || '').replace(/"/g, '""') + '"', m.category, Math.round(m.qoh), Math.round(m.inv_value), m.moi.toFixed(1), Math.round(m.avg_monthly), m.total_sold, m.months_since_last_sale, '"' + (m.vendor || '') + '"'].join(','));
-          });
-          var blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
-          var a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'voorraad_gezondheid.csv';
-          a.click();
-        }} className="px-5 py-2.5 rounded-lg bg-white text-[#E84E1B] text-[13px] font-semibold border border-[#E84E1B] hover:bg-[#faf5f0]">
-          Exporteer CSV
-        </button>
-      </div>
-
-      {/* Legend */}
-      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
-        <div className="text-[10px] text-[#6b5240] space-y-1">
-          <p><strong>MOI (Months of Inventory)</strong> = voorraadwaarde ÷ gemiddelde maandelijkse kostprijs verkopen. Lager = gezonder.</p>
-          <p><strong>Classificatie:</strong> Gezond (MOI ≤5, actief) · Aandacht (MOI 5-9) · Overstock (MOI &gt;9) · Slow Mover (3-6 mnd geen verkoop) · Dead Stock (6+ mnd geen verkoop)</p>
-          <p>Klik op een afdeling om in te zoomen naar individuele items. Klik op een categorie in de verdeling om te filteren.</p>
+      {/* Legenda */}
+      <div className="bg-[#faf7f4] rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
+        <div className="text-[10px] text-[#6b5240] space-y-2">
+          <div>
+            <p className="font-bold text-[11px] text-[#1a0a04] mb-1">Voorraad-niveau (vs maximale levertijd)</p>
+            <p>
+              <strong>Voorraad in maanden</strong> = QOH ÷ gem. maandverkoop. <strong>Lead time</strong> = maximale levertijd leverancier (default 3 mnd).
+            </p>
+            <p className="mt-1">
+              <span style={{ color: '#dc2626' }}>Understock</span> = voorraad &lt; lead time (kunnen we niet aanvullen voor leeg) ·
+              <span style={{ color: '#16a34a' }}> Gezond</span> = lead time t/m lead+3 maanden ·
+              <span style={{ color: '#f97316' }}> Overstock</span> = ≥ lead+3 maanden voorraad
+            </p>
+          </div>
+          <div>
+            <p className="font-bold text-[11px] text-[#1a0a04] mb-1">Rotatie (laatste verkoop)</p>
+            <p>
+              <span style={{ color: '#16a34a' }}>Gezond</span> = verkoop in afgelopen 6 maanden ·
+              <span style={{ color: '#ec4899' }}> Slow Mover</span> = 6 t/m 11 maanden geen verkoop ·
+              <span style={{ color: '#dc2626' }}> Dead Stock</span> = 12+ maanden geen verkoop
+            </p>
+          </div>
+          <p className="pt-1 italic">Klik op een afdeling of categorie-tegel om in te zoomen. Klik nogmaals om filter te wissen.</p>
         </div>
       </div>
     </div>
