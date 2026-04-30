@@ -1,14 +1,17 @@
 /* ============================================================
-   BESTAND: route_email_v16.js
+   BESTAND: route_email_v17.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v17:
+   - processBuying schrijft nu een 'regio' kolom (CUR/BON) i.p.v.
+     CUR→1 / BON→B mapping naar store_number. Reden: store_number
+     conventie verschilt tussen tabellen (inventory_data heeft
+     1,2,4,5,9 voor CUR en A,B voor BON; buying_data is geaggregeerd).
+     Met aparte regio-kolom is filteren op CUR/BON consistent.
+     store_number wordt leeg gelaten bij buying-imports.
+   - Delete is nu per (BUM × regio).
    WIJZIGING v16:
-   - processBuying: delete is nu per (BUM × store_number) i.p.v.
-     per BUM. Reden: bij aparte CUR/BON files per BUM zou de
-     2e upload de 1e wegvagen omdat alle BUM-rijen werden gewist.
-     Nu blijven andere regio's intact bij elke upload.
-   WIJZIGING v15:
-   - detectFileType + processBuying gebruiken echte header-rij i.p.v. Object.keys(json[0])
+   - processBuying: store_number mapping CUR→1, BON→B; delete per (BUM × store)
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
    - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
@@ -630,13 +633,16 @@ async function processBuying(json) {
       salesObj['sales_m' + String(j + 1).padStart(2, '0')] = 0;
     }
 
-    // Store mapping uit Compass 'Store Group' kolom: CUR → '1', BON → 'B'
-    // (consistent met inventory_data store_number formaat)
+    // Regio mapping uit Compass 'Store Group' kolom: CUR/BON
+    // store_number blijft leeg bij buying imports (Compass export is
+    // geaggregeerd, niet per fysieke store). Filtering in dashboard
+    // gebeurt op regio.
     var rawStore = String(row[findCol(keys, ['store group', 'store number', 'store'])] || '').trim().toUpperCase();
-    var storeNum = rawStore === 'CUR' ? '1' : rawStore === 'BON' ? 'B' : rawStore;
+    var regio = rawStore === 'CUR' || rawStore === 'BON' ? rawStore : null;
 
     var r = {
-      store_number: storeNum,
+      store_number: '',
+      regio: regio,
       dept_code: String(row[findCol(keys, ['department code'])] || ''),
       dept_name: String(row[findCol(keys, ['department name'])] || ''),
       class_code: String(row[findCol(keys, ['class code'])] || ''),
@@ -663,26 +669,26 @@ async function processBuying(json) {
 
   console.log('Active rows: ' + rows.length + ', dead stock skipped: ' + skippedDead + ', summary/empty rows skipped: ' + skippedSummary);
 
-  // Determine unique (BUM, store_number) combinations in the new file
-  // Then delete only those combinations — not the entire BUM. Hierdoor
-  // blijven andere regio's intact bij CUR-only of BON-only uploads.
-  var bumStoreCombos = {};
+  // Determine unique (BUM, regio) combinations in the new file
+  // Then delete only those combinations — niet per BUM, niet per store_number.
+  // Hierdoor blijven andere regio's intact bij CUR-only of BON-only uploads.
+  var bumRegioCombos = {};
   rows.forEach(function(r) {
-    var key = r.bum + '||' + r.store_number;
-    bumStoreCombos[key] = { bum: r.bum, store_number: r.store_number };
+    var key = r.bum + '||' + r.regio;
+    bumRegioCombos[key] = { bum: r.bum, regio: r.regio };
   });
-  var combos = Object.values(bumStoreCombos);
+  var combos = Object.values(bumRegioCombos);
 
   for (var ci = 0; ci < combos.length; ci++) {
     var c = combos[ci];
     var delResult = await supabase.from('buying_data')
       .delete({ count: 'exact' })
       .eq('bum', c.bum)
-      .eq('store_number', c.store_number);
+      .eq('regio', c.regio);
     if (delResult.error) {
-      console.error('Delete error for ' + c.bum + '/' + c.store_number + ': ' + delResult.error.message);
+      console.error('Delete error for ' + c.bum + '/' + c.regio + ': ' + delResult.error.message);
     } else {
-      console.log('Deleted ' + (delResult.count || 0) + ' existing rows for ' + c.bum + ' / store ' + c.store_number);
+      console.log('Deleted ' + (delResult.count || 0) + ' existing rows for ' + c.bum + ' / regio ' + c.regio);
     }
   }
 
