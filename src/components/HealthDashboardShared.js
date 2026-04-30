@@ -1,25 +1,21 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared_v2.js
+   BESTAND: HealthDashboardShared_v3.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
    (vervangt huidige HealthDashboardShared.js)
-   VERSIE: v3.28.12
+   VERSIE: v3.28.14
 
-   Wijzigingen t.o.v. v1:
-   - NIEUWE LOGICA: twee onafhankelijke dimensies (mutually exclusive)
-     ► Voorraad-niveau: Understock / Healthy / Overstock op basis van
-       lead time (uit max_lead_time per item, fallback 3 mnd)
-     ► Rotatie: Healthy / Slow mover / Dead stock op basis van laatste
-       verkoop (Slow >= 6 mnd, Dead >= 12 mnd; was 3 / 6)
-   - Twee stacked bars onder elkaar (i.p.v. één gecombineerde)
-   - Detail-tabel toont beide labels per item
-   - Excel-export (.xlsx) van actuele view
-   - Header tabel-overzicht aangepast aan nieuwe categorieën
+   Wijzigingen t.o.v. v2:
+   - Excel-export overgeschakeld op gedeelde ExcelExportButton component
+     (zelfde opmaak als alle andere pagina's: blauwe header, frozen pane,
+      footer met datum + boomingsolutions.ai link)
+   - Eigen XLSX/SheetJS import verwijderd
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
+import ExcelExportButton from '@/components/ExcelExportButton';
 
 var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
@@ -81,7 +77,6 @@ export default function HealthDashboardShared({ bumFilter }) {
   var _sortDir = useState('desc'), sortDir = _sortDir[0], setSortDir = _sortDir[1];
   var _search = useState(''), search = _search[0], setSearch = _search[1];
   var _rows = useState(50), tableRows = _rows[0], setTableRows = _rows[1];
-  var _exporting = useState(false), exporting = _exporting[0], setExporting = _exporting[1];
 
   var supabase = createClient();
   useEffect(function() { loadData(); }, [bumFilter]);
@@ -357,80 +352,55 @@ export default function HealthDashboardShared({ bumFilter }) {
     else { setSortCol(col); setSortDir('desc'); }
   }
 
-  /* ─────────── Excel export ─────────── */
-  async function exportXlsx() {
-    setExporting(true);
-    try {
-      // Lazy load XLSX vanaf CDN
-      if (typeof window !== 'undefined' && !window.XLSX) {
-        await new Promise(function(resolve, reject) {
-          var s = document.createElement('script');
-          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-          s.onload = resolve;
-          s.onerror = reject;
-          document.head.appendChild(s);
-        });
-      }
-      var XLSX = window.XLSX;
-
-      // Sheet 1: Per Afdeling (deptHealth)
-      var deptRows = deptHealth.map(function(d) {
-        return {
-          'Dept': d.code,
-          'Afdeling': (d.name || '').replace(/^\d+\s*/, ''),
-          'Items': d.items,
-          'Voorraadwaarde': Math.round(d.inv_value),
-          'Verkocht 12m': d.total_sold,
-          'Gem. MOI': Math.round(d.avg_moi * 10) / 10,
-          'Understock items': d.understock,
-          'Gezond items (voorraad)': d.healthy_stock,
-          'Overstock items': d.overstock,
-          'Gezond items (rotatie)': d.healthy_rot,
-          'Slow Mover items': d.slow,
-          'Dead Stock items': d.dead,
-          'Probleem waarde': Math.round(d.problem_value),
-        };
-      });
-
-      // Sheet 2: Per Item (sortedItems)
-      var itemRows = sortedItems.map(function(m) {
-        return {
-          'Dept': m.dept_code,
-          'Afdeling': m.dept_name,
-          'Item': m.item,
-          'Omschrijving': m.desc,
-          'Vendor': m.vendor,
-          'BUM': m.bum,
-          'QOH': Math.round(m.qoh),
-          'Voorraadwaarde': Math.round(m.inv_value),
-          'Voorraad-niveau': m.stock_cat === 'understock' ? 'Understock' : m.stock_cat === 'overstock' ? 'Overstock' : 'Gezond',
-          'Rotatie': m.rot_cat === 'dead' ? 'Dead Stock' : m.rot_cat === 'slow' ? 'Slow Mover' : 'Gezond',
-          'Voorraad in maanden': Math.round(m.stock_months * 10) / 10,
-          'Lead time (mnd)': m.lead_time,
-          'MOI': Math.round(m.moi * 10) / 10,
-          'Gem/mnd verkoop': Math.round(m.avg_monthly),
-          'Verkocht 12m': m.total_sold,
-          'Laatste verkoop (mnd geleden)': m.months_since_last_sale,
-        };
-      });
-
-      var wb = XLSX.utils.book_new();
-      var ws1 = XLSX.utils.json_to_sheet(deptRows);
-      var ws2 = XLSX.utils.json_to_sheet(itemRows);
-      XLSX.utils.book_append_sheet(wb, ws1, 'Per Afdeling');
-      XLSX.utils.book_append_sheet(wb, ws2, 'Per Item');
-
-      // Filename met datum + filters
-      var d = new Date();
-      var ds = d.getFullYear() + ('0' + (d.getMonth()+1)).slice(-2) + ('0' + d.getDate()).slice(-2);
-      var label = (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : 'Bonaire');
-      XLSX.writeFile(wb, ds + '_voorraadgezondheid_' + label + '.xlsx');
-    } catch (err) {
-      console.error('Excel export error:', err);
-      alert('Excel-export mislukt: ' + (err.message || err));
-    }
-    setExporting(false);
+  /* ─────────── Excel export sheets builder ─────────── */
+  function buildExportSheets() {
+    return [
+      {
+        name: 'Per Afdeling',
+        rows: deptHealth.map(function(d) {
+          return {
+            'Dept': d.code,
+            'Afdeling': (d.name || '').replace(/^\d+\s*/, ''),
+            'Items': d.items,
+            'Voorraadwaarde (XCG)': Math.round(d.inv_value),
+            'Verkocht 12m': d.total_sold,
+            'Gem. MOI': Math.round(d.avg_moi * 10) / 10,
+            'Understock items': d.understock,
+            'Gezond items (voorraad)': d.healthy_stock,
+            'Overstock items': d.overstock,
+            'Gezond items (rotatie)': d.healthy_rot,
+            'Slow Mover items': d.slow,
+            'Dead Stock items': d.dead,
+            'Probleem waarde (XCG)': Math.round(d.problem_value),
+          };
+        }),
+      },
+      {
+        name: 'Per Item',
+        rows: sortedItems.map(function(m) {
+          return {
+            'Dept': m.dept_code,
+            'Afdeling': m.dept_name,
+            'Item': m.item,
+            'Omschrijving': m.desc,
+            'Vendor': m.vendor,
+            'BUM': m.bum,
+            'QOH': Math.round(m.qoh),
+            'Voorraadwaarde (XCG)': Math.round(m.inv_value),
+            'Voorraad-niveau': m.stock_cat === 'understock' ? 'Understock' : m.stock_cat === 'overstock' ? 'Overstock' : 'Gezond',
+            'Rotatie': m.rot_cat === 'dead' ? 'Dead Stock' : m.rot_cat === 'slow' ? 'Slow Mover' : 'Gezond',
+            'Voorraad in maanden': Math.round(m.stock_months * 10) / 10,
+            'Lead time (mnd)': m.lead_time,
+            'MOI': Math.round(m.moi * 10) / 10,
+            'Gem/mnd verkoop': Math.round(m.avg_monthly),
+            'Verkocht 12m': m.total_sold,
+            'Laatste verkoop (mnd geleden)': m.months_since_last_sale,
+          };
+        }),
+      },
+    ];
   }
+
 
   if (loading) return <LoadingLogo text={'Gezondheid laden' + (bumFilter ? ' (' + bumFilter + ')' : '') + '...'} />;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">{"Geen data beschikbaar" + (bumFilter ? " voor " + bumFilter : "") + "."}</p></div>;
@@ -589,10 +559,12 @@ export default function HealthDashboardShared({ bumFilter }) {
             return <button key={item[0]} onClick={function() { setView(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
           })}
         </div>
-        <button onClick={exportXlsx} disabled={exporting}
-          className={'px-4 py-1.5 mb-1 rounded-lg text-[12px] font-semibold border ' + (exporting ? 'bg-[#e5ddd4] text-[#a08a74] border-[#e5ddd4] cursor-wait' : 'bg-white text-[#E84E1B] border-[#E84E1B] hover:bg-[#faf5f0]')}>
-          {exporting ? 'Bezig...' : '⬇ Excel export'}
-        </button>
+        <ExcelExportButton
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraadgezondheid_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : 'Bonaire'); })()}
+          reportTitle={'Gezondheid Voorraden — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : 'Bonaire')}
+          sheets={buildExportSheets}
+          className="px-4 py-1.5 mb-1 rounded-lg text-[12px] font-semibold border bg-white text-[#E84E1B] border-[#E84E1B] hover:bg-[#faf5f0] transition-colors"
+        />
       </div>
 
       {/* ═══ DEPARTMENT OVERVIEW ═══ */}

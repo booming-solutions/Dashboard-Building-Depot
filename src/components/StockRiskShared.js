@@ -1,18 +1,19 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v3.js
+   BESTAND: StockRiskShared_v4.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.08
+   VERSIE: v3.28.14
    
-   Wijzigingen t.o.v. v2:
-   - Uitlegblok onderaan toegevoegd: waarom Totaal soms minder
-     kritieke items toont dan Curaçao of Bonaire alleen
+   Wijzigingen t.o.v. v3:
+   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
+   - Bevat Risico per Afdeling + hoofdtabel met items (huidige filters worden meegenomen)
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
+import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
@@ -638,16 +639,68 @@ export default function StockRiskShared({ bumFilter }) {
         </div>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        {[
-          ['critical', 'Kritiek (' + totals.critical + ')'],
-          ['urgent', 'Kritiek + Urgent (' + (totals.critical + totals.urgent) + ')'],
-          ['watch', 'Alle risico (' + (totals.critical + totals.urgent + totals.watch) + ')'],
-          ['all', 'Alle items (' + totals.total_items + ')'],
-        ].map(function(item) {
-          return <button key={item[0]} onClick={function() { setFilter(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (filter === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
-        })}
+      {/* Filter tabs + export */}
+      <div className="flex items-center justify-between mb-5 border-b-2 border-[#e5ddd4]">
+        <div className="flex gap-1">
+          {[
+            ['critical', 'Kritiek (' + totals.critical + ')'],
+            ['urgent', 'Kritiek + Urgent (' + (totals.critical + totals.urgent) + ')'],
+            ['watch', 'Alle risico (' + (totals.critical + totals.urgent + totals.watch) + ')'],
+            ['all', 'Alle items (' + totals.total_items + ')'],
+          ].map(function(item) {
+            return <button key={item[0]} onClick={function() { setFilter(item[0]); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (filter === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
+          })}
+        </div>
+        <ExcelExportButton
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_stock_risk_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Totaal'); })()}
+          reportTitle={'Stock Risk Alert — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'Totaal')}
+          sheets={function() {
+            return [
+              {
+                name: 'Risico per Afdeling',
+                rows: deptRisk.map(function(d) {
+                  return {
+                    'Dept': d.code,
+                    'Departement': d.name,
+                    'BUM': d.bum || '',
+                    'Totaal items': d.total,
+                    'Kritiek': d.critical,
+                    'Urgent': d.urgent,
+                    'Aandacht': d.watch,
+                    'OK': d.ok,
+                    'NOS at risk': d.nos_risk,
+                    'Waarde at risk (XCG)': Math.round(d.value_at_risk),
+                  };
+                }),
+              },
+              {
+                name: 'Items',
+                rows: displayed.map(function(m) {
+                  return {
+                    'Dept': m.dept_code,
+                    'Item': m.item,
+                    'Omschrijving': m.desc,
+                    'BUM': m.bum,
+                    'Vendor': m.vendor,
+                    'NOS': m.nos ? 'Ja' : 'Nee',
+                    'Status': m.risk === 'critical' ? 'Kritiek' : m.risk === 'urgent' ? 'Urgent' : m.risk === 'watch' ? 'Aandacht' : 'OK',
+                    'QOH': Math.round(m.qoh),
+                    'QOO': Math.round(m.qoo),
+                    'Beschikbaar': Math.round(m.available),
+                    'Voorraad in mnd': m.months_cover >= 99 ? 'oneindig' : Math.round(m.months_cover * 10) / 10,
+                    'Min lead time': m.min_lt,
+                    'Max lead time': m.max_lt,
+                    'Gem/mnd verkoop': Math.round(m.avg_monthly),
+                    'Actieve maanden': m.active_months,
+                    'Voorraadwaarde (XCG)': Math.round(m.inv_value),
+                    'Bestel qty (advies)': Math.round(m.suggested_qty || 0),
+                    'Bestel waarde (XCG)': Math.round(m.suggested_value || 0),
+                  };
+                }),
+              },
+            ];
+          }}
+        />
       </div>
 
       {/* Results count + rows selector */}

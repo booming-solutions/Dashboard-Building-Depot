@@ -1,19 +1,19 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v9.js
+   BESTAND: page_negative_inventory_v10.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.06
+   VERSIE: v3.28.14
    
-   Wijzigingen t.o.v. v8:
-   - Opmerking-kolom toont nu bovenaan de LAATSTE opmerking
-     (wie + wanneer + tekst, max 2 regels met ellipsis)
-   - Daaronder het invoerveld + status + opslaan voor een nieuwe opmerking
+   Wijzigingen t.o.v. v9:
+   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
+   - Bevat overzicht per dept én detail (huidige filters worden meegenomen)
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
+import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, LineElement, PointElement, LineController, Tooltip, Legend, Filler } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, LineElement, PointElement, LineController, Tooltip, Legend, Filler);
@@ -553,20 +553,62 @@ export default function NegativeInventoryPage() {
         </div>
       </div>
 
-      {/* View tabs */}
-      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        {[['overview', 'Overzicht'], ['detail', 'Detail']].map(function(item) {
-          return (
-            <button
-              key={item[0]}
-              onClick={function() { setView(item[0]); }}
-              className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' +
-                (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}
-            >
-              {item[1]}
-            </button>
-          );
-        })}
+      {/* View tabs + export */}
+      <div className="flex items-center justify-between mb-5 border-b-2 border-[#e5ddd4]">
+        <div className="flex gap-1">
+          {[['overview', 'Overzicht'], ['detail', 'Detail']].map(function(item) {
+            return (
+              <button
+                key={item[0]}
+                onClick={function() { setView(item[0]); }}
+                className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' +
+                  (view === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}
+              >
+                {item[1]}
+              </button>
+            );
+          })}
+        </div>
+        <ExcelExportButton
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_negatieve_voorraad_' + (selBum !== 'all' ? selBum : 'alle') + '_' + store.replace(/[ç]/g,'c'); })()}
+          reportTitle={'Negatieve Voorraad — ' + (selBum !== 'all' ? selBum + ' — ' : '') + store}
+          sheets={function() {
+            return [
+              {
+                name: 'Per Afdeling',
+                rows: departments.map(function(d) {
+                  return {
+                    'Dept': d.deptCode,
+                    'Departement': d.deptName,
+                    'BUM': d.bum,
+                    'Aantal items': d.items,
+                    'Negatieve waarde (XCG)': Math.round(d.value),
+                  };
+                }),
+              },
+              {
+                name: 'Detail',
+                rows: detailItems.map(function(it) {
+                  return {
+                    'Dept': it.dept_code,
+                    'Departement': it.dept_name,
+                    'BUM': it.bum || '',
+                    'Item': it.item_number,
+                    'Omschrijving': it.item_description,
+                    'Store': it.store_number,
+                    'QOH': it.qty_on_hand,
+                    'Waarde (XCG)': Math.round(it.inv_value || 0),
+                    'Eerste neg.': it.first_seen_date || '',
+                    'Status': it.status || '',
+                    'Laatste opmerking': (it.notes && it.notes[0]) ? it.notes[0].note : '',
+                    'Door': (it.notes && it.notes[0]) ? (it.notes[0].created_by_name || it.notes[0].created_by_email) : '',
+                    'Datum opmerking': (it.notes && it.notes[0]) ? it.notes[0].created_at : '',
+                  };
+                }),
+              },
+            ];
+          }}
+        />
       </div>
 
       {/* KPI tiles */}
