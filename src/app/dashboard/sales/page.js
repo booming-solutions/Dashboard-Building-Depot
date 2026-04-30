@@ -1,23 +1,19 @@
 /* ============================================================
-   BESTAND: page.js
+   BESTAND: page_sales_v2.js
    KOPIEER NAAR: src/app/dashboard/sales/page.js
    (overschrijft de bestaande page.js)
+   VERSIE: v3.28.14
 
    WIJZIGINGEN T.O.V. VORIGE VERSIE:
-   - Tabblad "Dashboard" hernoemd naar "Actuals"
-   - Nieuw tabblad "Forecast" toegevoegd met 4 secties:
-     A) Maand-forecast (3 KPIs: Run rate / Verkooppatroon LY / Budget status)
-     B) Catch-up tabel (wat moet er per dag voor budget/LY/run rate)
-     C) FY forecast (3 KPIs: zelfde 3 methodes maar voor heel jaar)
-     D) Forecast vs Budget chart (12 maanden visualisatie)
-   - Filters (Store/Manager/Departement) worden gedeeld tussen tabs
-   - Tabblad "Data Source" blijft zoals het was
+   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
+   - Bevat de detail-tabel van het Actuals tabblad (huidige filters worden meegenomen)
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
+import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
@@ -49,7 +45,6 @@ function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget}){
   );
 }
 
-// Forecast-specific KPI tile: large forecast number on top, with current actuals + comparison underneath
 function ForecastKPI({label,forecast,sublabel,subvalue,compareLabel,comparePct,compareLabel2,comparePct2,note}){
   return(
     <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm">
@@ -130,7 +125,6 @@ export default function SalesDashboard(){
   const[showCGFModal,setShowCGFModal]=useState(false);
   const[cgfUnlocked,setCgfUnlocked]=useState(false);
   const[corrVisible,setCorrVisible]=useState(false);
-  // Listen for CGF toggle from sidebar admin menu
   useEffect(()=>{
     function onCGFToggle(){setCgfUnlocked(u=>{const nv=!u;if(!nv)setBudgetMode('target');return nv})}
     function onCorrToggle(){setCorrVisible(v=>{if(!v)setTab('correcties');return!v})}
@@ -158,7 +152,6 @@ export default function SalesDashboard(){
     let allSales=[],allBudget=[],allDaily=[],from=0;const step=1000;
     while(true){const{data:b}=await supabase.from('sales_monthly').select('*').order('year').order('month').range(from,from+step-1);if(!b||!b.length)break;allSales=allSales.concat(b);if(b.length<step)break;from+=step}
     from=0;while(true){const{data:b}=await supabase.from('budget_data').select('*').range(from,from+step-1);if(!b||!b.length)break;allBudget=allBudget.concat(b);if(b.length<step)break;from+=step}
-    // Daily data laden voor pacing-berekeningen op Forecast tab
     from=0;while(true){const{data:b}=await supabase.from('sales_daily').select('*').range(from,from+step-1);if(!b||!b.length)break;allDaily=allDaily.concat(b);if(b.length<step)break;from+=step}
     const{data:corr}=await supabase.from('corrections').select('*').order('created_at',{ascending:false});
     const{data:md}=await supabase.from('sales_data').select('sale_date').order('sale_date',{ascending:false}).limit(1);
@@ -233,12 +226,6 @@ export default function SalesDashboard(){
 
   function handleMonthClick(m,e){if(m==='all'||m==='ytd'){setMonths([m]);return}if(e&&e.ctrlKey){setMonths(prev=>{const c=prev.filter(x=>x!=='all'&&x!=='ytd');if(c.includes(m))return c.filter(x=>x!==m).length?c.filter(x=>x!==m):['all'];return[...c,m]})}else setMonths([m])}
 
-  // ============================================================
-  // FORECAST BEREKENINGEN (gebruikt op Forecast tab)
-  // Gebruikt dezelfde filters: store, bum, dept (genegeerd: months/year voor maandselectie)
-  // Tijd-context: huidige maand = dayFrac.month, huidig jaar = dayFrac.year
-  // LY pacing wordt berekend uit ECHTE daily data (sales_daily view), niet lineair
-  // ============================================================
   const forecastData=useMemo(()=>{
     if(!lastDate||!data.length)return null;
     const curMonth=dayFrac.month;
@@ -248,7 +235,6 @@ export default function SalesDashboard(){
     const totalDaysInMonth=daysInMonth(curYear,curMonth);
     const remainingDaysMonth=totalDaysInMonth-dayOfMonth;
 
-    // Filter op store/bum/dept (negeert maand/jaar filters van Actuals)
     const matchFilter=r=>(store==='all'||r.store_number===store)&&(bum==='all'||r.bum===bum)&&(dept==='all'||r.dept_code===dept);
     const matchBudget=b=>{
       if(store!=='all'&&b.store_number!==store)return false;
@@ -258,7 +244,6 @@ export default function SalesDashboard(){
     };
     const matchCorr=c=>(store==='all'||c.store_number===store)&&(bum==='all'||c.bum===bum)&&(dept==='all'||c.dept_code===dept);
 
-    // === MAAND DATA ===
     const mtdRows=data.filter(r=>matchFilter(r)&&r.year===curYear&&r.month===curMonth);
     let mtdSales=sum(mtdRows,'net_sales');
     const mtdCorrSales=sum(corrections.filter(c=>matchCorr(c)&&c.year===curYear&&c.month===curMonth),'sales_correction');
@@ -267,20 +252,13 @@ export default function SalesDashboard(){
     const lyMonthRows=data.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth);
     const lyMonthSales=sum(lyMonthRows,'net_sales');
 
-    // ECHTE LY PACING uit sales_daily
-    // Gebruik dezelfde filters voor daily data
     const lyDailyRows=dailyData.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth);
     const lyDailySum=sum(lyDailyRows,'net_sales');
-    // Cumulatief tot dag X van LY's huidige maand
     const lyDailyToDay=dailyData.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth&&r.day<=dayOfMonth);
     const lyMTDSales=sum(lyDailyToDay,'net_sales');
-    // Pacing% = LY MTD ÷ LY hele maand
-    // Fallback naar lineair als er geen daily data is voor deze combinatie
     let lyPacingPct=lyDailySum>0?(lyMTDSales/lyDailySum):(dayOfMonth/totalDaysInMonth);
-    // Veiligheidsclamp: als pacing% buiten 1% en 100% valt, gebruik lineair
     if(lyPacingPct<=0.01||lyPacingPct>1)lyPacingPct=dayOfMonth/totalDaysInMonth;
 
-    // Budget hele maand
     const monthBudgetRows=budgetData.filter(b=>{
       if(!matchBudget(b))return false;
       const[by,bm]=b.month.split('-').map(Number);
@@ -288,39 +266,28 @@ export default function SalesDashboard(){
     });
     const monthBudgetSales=sum(monthBudgetRows,'amount');
 
-    // === FORECASTS (maand) ===
-    // 1) Run rate forecast: MTD / dayOfMonth * totalDaysInMonth
     const runRateForecast=dayOfMonth>0?(mtdSales/dayOfMonth)*totalDaysInMonth:0;
-
-    // 2) Verkooppatroon LY forecast: MTD / werkelijke LY pacing%
     const lyPacingForecast=lyPacingPct>0?(mtdSales/lyPacingPct):0;
-
-    // 3) Budget status: hoe ver staat actual MTD voor/achter op budget volgens LY-shape pacing
     const expectedBudgetMTD=monthBudgetSales*lyPacingPct;
     const budgetVarPct=expectedBudgetMTD?((mtdSales-expectedBudgetMTD)/expectedBudgetMTD*100):0;
     const budgetPaceForecast=expectedBudgetMTD?monthBudgetSales*(mtdSales/expectedBudgetMTD):monthBudgetSales;
 
-    // Daily averages voor catch-up
     const dailyAvg=dayOfMonth>0?mtdSales/dayOfMonth:0;
     const requiredDailyForBudget=remainingDaysMonth>0?(monthBudgetSales-mtdSales)/remainingDaysMonth:0;
     const requiredDailyForLY=remainingDaysMonth>0?(lyMonthSales-mtdSales)/remainingDaysMonth:0;
 
-    // === FY DATA ===
     const ytdRows=data.filter(r=>matchFilter(r)&&r.year===curYear&&r.month<=curMonth);
     let ytdSales=sum(ytdRows,'net_sales');
     const ytdCorrSales=sum(corrections.filter(c=>matchCorr(c)&&c.year===curYear&&c.month<=curMonth),'sales_correction');
     ytdSales+=ytdCorrSales;
 
-    // LY YTD: jan t/m huidige maand-1 vol + huidige maand t/m zelfde dag (uit daily)
     const lyYTDFullRows=data.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month<curMonth);
     const lyYTDFull=sum(lyYTDFullRows,'net_sales');
-    const lyYTD=lyYTDFull+lyMTDSales;  // gebruik echte daily MTD ipv pro-rated
+    const lyYTD=lyYTDFull+lyMTDSales;
 
-    // LY hele jaar
     const lyFullYearRows=data.filter(r=>matchFilter(r)&&r.year===lyYear);
     const lyFullYear=sum(lyFullYearRows,'net_sales');
 
-    // FY Budget
     const fyBudgetRows=budgetData.filter(b=>{
       if(!matchBudget(b))return false;
       const[by]=b.month.split('-').map(Number);
@@ -328,12 +295,10 @@ export default function SalesDashboard(){
     });
     const fyBudget=sum(fyBudgetRows,'amount');
 
-    // === FY FORECASTS ===
     const dayOfYear=Math.floor((lastDate-new Date(curYear,0,0))/(1000*60*60*24));
     const totalDaysInYear=daysInMonth(curYear,2)===29?366:365;
     const fyRunRateForecast=dayOfYear>0?(ytdSales/dayOfYear)*totalDaysInYear:0;
 
-    // FY Verkooppatroon LY: gebruikt echte LY YTD (incl. echte daily MTD pacing)
     const fyLyPacingPct=lyFullYear?(lyYTD/lyFullYear):(dayOfYear/totalDaysInYear);
     const fyLyPacingForecast=fyLyPacingPct>0?(ytdSales/fyLyPacingPct):0;
 
@@ -341,7 +306,6 @@ export default function SalesDashboard(){
     const fyBudgetVarPct=fyExpectedBudgetYTD?((ytdSales-fyExpectedBudgetYTD)/fyExpectedBudgetYTD*100):0;
     const fyBudgetPaceForecast=fyExpectedBudgetYTD?fyBudget*(ytdSales/fyExpectedBudgetYTD):fyBudget;
 
-    // === MONTHLY CHART DATA ===
     const monthlyActuals=Array(12).fill(0);
     const monthlyLY=Array(12).fill(0);
     const monthlyBudget=Array(12).fill(0);
@@ -372,9 +336,6 @@ export default function SalesDashboard(){
     };
   },[data,dailyData,budgetData,corrections,lastDate,dayFrac,store,bum,dept,deptBumMap,salesType]);
 
-  // ============================================================
-  // CHARTS — Actuals tab
-  // ============================================================
   const renderCharts=useCallback(()=>{
     Object.values(chartsRef.current).forEach(c=>c?.destroy());chartsRef.current={};
     const cM={},lM={},bM={};
@@ -399,17 +360,12 @@ export default function SalesDashboard(){
 
   useEffect(()=>{if(data.length&&tab==='actuals')renderCharts()},[renderCharts,data.length,tab]);
 
-  // ============================================================
-  // CHARTS — Forecast tab (forecastChart)
-  // ============================================================
   const renderForecastChart=useCallback(()=>{
     if(!forecastChartRef.current||!forecastData)return;
     if(chartsRef.current.forecast)chartsRef.current.forecast.destroy();
     const fd=forecastData;
     const labels=MN;
     const actualsSeries=fd.monthlyActuals.map((v,i)=>i<=fd.curMonth-1?conv(v):null);
-    // Voor de huidige maand: combineer actual+forecast in één lijn (visueel: actual loopt door tot forecast eindstand)
-    // We gebruiken aparte forecast lijn die start vanaf curMonth-1
     const forecastSeries=fd.monthlyForecast.map((v,i)=>i>=fd.curMonth-1?(v?conv(v):null):null);
     const lySeries=fd.monthlyLY.map(v=>conv(v));
     const budgetSeries=fd.monthlyBudget.map(v=>conv(v));
@@ -437,9 +393,6 @@ export default function SalesDashboard(){
 
   useEffect(()=>{if(data.length&&tab==='forecast')renderForecastChart()},[renderForecastChart,data.length,tab]);
 
-  // ============================================================
-  // TABLE DATA — Actuals tab
-  // ============================================================
   const tableData=useMemo(()=>{
     const agg={};filtered.forEach(r=>{const k=`${r.dept_name}-${r.bum}`;if(!agg[k])agg[k]={dept:r.dept_name,bum:r.bum,net_sales:0,gross_margin:0,dept_code:r.dept_code};agg[k].net_sales+=parseFloat(r.net_sales);agg[k].gross_margin+=parseFloat(r.gross_margin)});
     corrFiltered.forEach(c=>{const k=`${c.dept_name}-${c.bum}`;if(!agg[k])agg[k]={dept:c.dept_name,bum:c.bum,net_sales:0,gross_margin:0,dept_code:c.dept_code};agg[k].net_sales+=parseFloat(c.sales_correction);agg[k].gross_margin+=parseFloat(c.margin_correction)});
@@ -460,6 +413,15 @@ export default function SalesDashboard(){
   },[filtered,priorFiltered,budgetFiltered,corrFiltered,search,sortCol,sortDir,dayFrac,conv,salesType,marginType]);
 
   function toggleSort(c2){if(sortCol===c2)setSortDir(d=>d==='desc'?'asc':'desc');else{setSortCol(c2);setSortDir('desc')}}
+
+  // Excel export period label (voor filename + reportTitle)
+  const periodLabel=useMemo(()=>{
+    if(isAll)return'Alle';
+    if(isYTD)return'YTD';
+    if(selectedMonths&&selectedMonths.length===1)return MN[selectedMonths[0]-1];
+    if(selectedMonths&&selectedMonths.length>1)return selectedMonths.map(m=>MN[m-1]).join('+');
+    return'';
+  },[isAll,isYTD,selectedMonths]);
 
   async function addCorrection(){
     if(!corrDept||!corrBum)return;
@@ -490,13 +452,38 @@ export default function SalesDashboard(){
         </div>
       </div>
 
-      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        <button onClick={()=>setTab('actuals')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='actuals'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Actuals</button>
-        <button onClick={()=>setTab('forecast')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='forecast'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Forecast <span className="italic font-normal text-[11px] text-[#a08a74]">(concept)</span></button>
-        {corrVisible&&isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Data Source</button>}
+      {/* Tabs + Excel export knop */}
+      <div className="flex items-center justify-between mb-5 border-b-2 border-[#e5ddd4]">
+        <div className="flex gap-1">
+          <button onClick={()=>setTab('actuals')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='actuals'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Actuals</button>
+          <button onClick={()=>setTab('forecast')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='forecast'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Forecast <span className="italic font-normal text-[11px] text-[#a08a74]">(concept)</span></button>
+          {corrVisible&&isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Data Source</button>}
+        </div>
+        {tab==='actuals'&&<ExcelExportButton
+          filename={(function(){var d=new Date();var pad=function(n){return n<10?'0'+n:''+n;};return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_omzet_marge_'+(bum!=='all'?bum:'alle')+'_'+storeName.replace(/[ç]/g,'c')+'_'+currentYear+'_'+periodLabel;})()}
+          reportTitle={'Omzet en Marge — '+(bum!=='all'?bum+' — ':'')+storeName+' — '+currentYear+' '+periodLabel}
+          sheets={function(){
+            return[{
+              name:'Detail per Departement',
+              rows:tableData.map(function(r){
+                return{
+                  'Dept':r.dept_code,
+                  'Departement':r.dept,
+                  'Manager':r.bum,
+                  ['Omzet ('+curr+')']:Math.round(r.net_sales_conv),
+                  ['LY Omzet ('+curr+')']:Math.round(r.ly),
+                  'Var % vs LY':Math.round(r.varPct*10)/10,
+                  ['Bruto Marge ('+curr+')']:Math.round(r.gm_conv),
+                  ['Budget '+budgetLabel+' Marge ('+curr+')']:Math.round(r.budMargin),
+                  'BM %':Math.round(r.gmPct*10)/10,
+                  ['Budget '+budgetLabel+' BM %']:Math.round(r.budGmPct*10)/10,
+                };
+              }),
+            }];
+          }}
+        />}
       </div>
 
-      {/* Filters tonen voor zowel Actuals als Forecast (gedeelde state) */}
       {(tab==='actuals'||tab==='forecast')&&<div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
         {tab==='actuals'&&<div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span></div>}
@@ -504,9 +491,6 @@ export default function SalesDashboard(){
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Departement</span><select value={dept} onChange={e=>setDept(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg"><option value="all">Alle Departementen</option>{depts.map(d=>{const[c2,n]=d.split('|');return<option key={c2} value={c2}>{n}</option>})}</select></div>
       </div>}
 
-      {/* ============================================================
-          TAB: ACTUALS (voorheen Dashboard)
-          ============================================================ */}
       {tab==='actuals'&&<>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <KPI label="Netto Omzet" value={fmtMC(tS)} ly={fmtMC(lyS)} varLy={pctChg(tS,lyS)} budget={fmtMC(bS)} budgetLabel={budgetLabel} varBudget={pctChg(tS,bS)}/>
@@ -560,11 +544,7 @@ export default function SalesDashboard(){
       </div>
       </>}
 
-      {/* ============================================================
-          TAB: FORECAST (nieuw)
-          ============================================================ */}
       {tab==='forecast'&&forecastData&&<>
-        {/* Context bar */}
         <div className="bg-[#faf7f4] rounded-[14px] border border-[#e5ddd4] p-4 mb-5">
           <p className="text-[12px] text-[#6b5240]">
             Forecast op basis van data t/m <strong>{lastDate.getDate()} {MN[lastDate.getMonth()]} {lastDate.getFullYear()}</strong>
@@ -575,7 +555,6 @@ export default function SalesDashboard(){
           </p>
         </div>
 
-        {/* SECTIE A: Maand-forecast */}
         <h3 className="text-[15px] font-bold text-[#1a0a04] mb-3">Forecast Huidige Maand — {MN[forecastData.curMonth-1]} {forecastData.curYear}</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <ForecastKPI
@@ -609,7 +588,6 @@ export default function SalesDashboard(){
           />
         </div>
 
-        {/* SECTIE B: Catch-up tabel */}
         <h3 className="text-[15px] font-bold text-[#1a0a04] mb-3">Wat Moet Er Per Dag — Resterende {forecastData.remainingDaysMonth} Dagen</h3>
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-6 overflow-x-auto">
           <table className="w-full border-collapse">
@@ -650,7 +628,6 @@ export default function SalesDashboard(){
           </table>
         </div>
 
-        {/* SECTIE C: FY forecast */}
         <h3 className="text-[15px] font-bold text-[#1a0a04] mb-3">Forecast Heel Jaar — {forecastData.curYear}</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <ForecastKPI
@@ -684,7 +661,6 @@ export default function SalesDashboard(){
           />
         </div>
 
-        {/* SECTIE D: Forecast chart */}
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
           <h3 className="text-[15px] font-bold mb-4">Maandelijks Verloop — Actual + Forecast vs LY & Budget</h3>
           <div style={{height:'320px'}}><canvas ref={forecastChartRef}/></div>
@@ -694,9 +670,6 @@ export default function SalesDashboard(){
         </div>
       </>}
 
-      {/* ============================================================
-          TAB: DATA SOURCE (correcties) — ongewijzigd
-          ============================================================ */}
       {tab==='correcties'&&<div className="bg-white rounded-[14px] border border-[#e5ddd4] p-6 shadow-sm mb-5">
         <h3 className="text-[16px] font-bold mb-1">Handmatige Correcties Invoeren</h3>
         <p className="text-[13px] text-[#6b5240] mb-5">Voer hier afrondingsverschillen, ontbrekende boekingen of andere handmatige correcties in. Deze worden automatisch verwerkt in alle dashboard cijfers en blijven bewaard bij refresh.</p>
