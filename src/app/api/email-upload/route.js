@@ -1,15 +1,15 @@
 /* ============================================================
-   BESTAND: route_email_v13.js
+   BESTAND: route_email_v14.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v14:
+   - processBuying: store_number wordt nu correct gevuld vanuit
+     'Store Group' kolom in Compass buying export. Mapping:
+     CUR → '1' (Curaçao), BON → 'B' (Bonaire).
+     Voorheen werd alleen gezocht op 'store number' wat in
+     Compass buying export niet bestaat → store_number was leeg.
    WIJZIGING v13:
-   - processBuying skipt nu rijen zonder Item Number (zoals de
-     'Sum = X' totaal-rij die Compass toevoegt). Voorheen werd
-     deze rij in JSON gezet met qoh=NaN, wat in JSON.stringify
-     null wordt en de hele batch insert deed falen.
-     Symptoom: import stopte op exact 10.000 rijen.
-   WIJZIGING v12:
-   - processInventory: budgets uit department_budgets table
+   - processBuying skipt nu rijen zonder Item Number ('Sum=' totaal-rijen)
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
    - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
@@ -624,8 +624,13 @@ async function processBuying(json) {
       salesObj['sales_m' + String(j + 1).padStart(2, '0')] = 0;
     }
 
+    // Store mapping uit Compass 'Store Group' kolom: CUR → '1', BON → 'B'
+    // (consistent met inventory_data store_number formaat)
+    var rawStore = String(row[findCol(keys, ['store group', 'store number', 'store'])] || '').trim().toUpperCase();
+    var storeNum = rawStore === 'CUR' ? '1' : rawStore === 'BON' ? 'B' : rawStore;
+
     var r = {
-      store_number: String(row[findCol(keys, ['store number'])] || ''),
+      store_number: storeNum,
       dept_code: String(row[findCol(keys, ['department code'])] || ''),
       dept_name: String(row[findCol(keys, ['department name'])] || ''),
       class_code: String(row[findCol(keys, ['class code'])] || ''),
