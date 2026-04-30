@@ -1,15 +1,15 @@
 /* ============================================================
-   BESTAND: route_email_v12.js
+   BESTAND: route_email_v13.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v13:
+   - processBuying skipt nu rijen zonder Item Number (zoals de
+     'Sum = X' totaal-rij die Compass toevoegt). Voorheen werd
+     deze rij in JSON gezet met qoh=NaN, wat in JSON.stringify
+     null wordt en de hele batch insert deed falen.
+     Symptoom: import stopte op exact 10.000 rijen.
    WIJZIGING v12:
-   - processInventory negeert nu de Budget-kolom uit Compass.
-     In plaats daarvan wordt het budget gejoind vanuit de nieuwe
-     tabel department_budgets (statisch, eens per jaar).
-     Reden: dept 26 had geen budget in Compass waardoor de hele
-     rij werd weggefilterd door Compass. Nu komen alle depts mee.
-   WIJZIGING v11:
-   - processInventory delete-fix: UUID kolom werd vergeleken met int 0
+   - processInventory: budgets uit department_budgets table
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
    - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
@@ -586,8 +586,23 @@ async function processBuying(json) {
   // Map rows to buying_data format, filtering dead stock
   var rows = [];
   var skippedDead = 0;
+  var skippedSummary = 0;
   json.forEach(function(row) {
+    // Skip totaal-rijen ('Sum = X') die Compass onderaan toevoegt
+    // Deze hebben geen Item Number en bevatten string-waardes als 'Sum = 12345'
+    var itemNum = String(row[findCol(keys, ['item number'])] || '').trim();
+    if (!itemNum) {
+      skippedSummary++;
+      return;
+    }
+
     var qoh = parseFloat(row[findCol(keys, ['quantity on hand'])] || 0);
+
+    // Sanity check: als qoh NaN is na parseFloat, skip de rij (defensief)
+    if (Number.isNaN(qoh)) {
+      skippedSummary++;
+      return;
+    }
 
     // Check dead stock: QOH=0 AND no sales in first 6 months (most recent)
     var recentSales = 0;
@@ -635,7 +650,7 @@ async function processBuying(json) {
     rows.push(r);
   });
 
-  console.log('Active rows: ' + rows.length + ', dead stock skipped: ' + skippedDead);
+  console.log('Active rows: ' + rows.length + ', dead stock skipped: ' + skippedDead + ', summary/empty rows skipped: ' + skippedSummary);
 
   // Delete existing data for this BUM (full replace per BUM)
   for (var bi = 0; bi < bumList.length; bi++) {
