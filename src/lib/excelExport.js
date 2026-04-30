@@ -1,49 +1,42 @@
 /* ============================================================
    BESTAND: excelExport.js
    KOPIEER NAAR: src/lib/excelExport.js
-   (maak src/lib/ aan als die nog niet bestaat)
-   VERSIE: v3.28.13
+   VERSIE: v3.28.14
 
-   Centrale helper voor Excel-export. Gebruikt door alle dashboards
-   die naar XLSX exporteren. Eén plek voor opmaak en consistentie.
+   Wijzigingen t.o.v. v3.28.13:
+   - Overgestapt van SheetJS (xlsx) naar exceljs voor BETROUWBARE styling
+     (SheetJS community ignoreerde header-kleur en tekstkleur)
+   - Donkerblauwe header (#1B3A5C) met witte vette tekst werkt nu wel
+   - Footer behoudt datum + klikbare link naar boomingsolutions.ai
 
    Gebruik:
      import { exportToExcel } from '@/lib/excelExport';
-
      await exportToExcel({
-       filename: '20260430_voorraadgezondheid_PASCAL_Curacao',
-       reportTitle: 'Gezondheid Voorraden - PASCAL - Curaçao',
-       sheets: [
-         {
-           name: 'Per Afdeling',
-           rows: [ {Dept:'01', Naam:'STEEL', ...}, ... ],
-         },
-         {
-           name: 'Per Item',
-           rows: [ ... ],
-         },
-       ],
+       filename: '...',
+       reportTitle: '...',
+       sheets: [{ name: 'X', rows: [{...}] }],
      });
-
-   Opmaak per sheet:
-   - Header rij donkerblauw (#1B3A5C), witte vette tekst
-   - Kolombreedtes auto op basis van inhoud (max 50 chars)
-   - Header rij bevroren (freeze pane row 1)
-   - Footer: 1 blanco rij + export datum/tijd + link naar boomingsolutions.ai
    ============================================================ */
 
-var SCRIPT_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+var EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+var FILESAVER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js';
 
-async function loadXlsxLib() {
+async function loadScript(src, globalName) {
   if (typeof window === 'undefined') throw new Error('Excel export werkt alleen in de browser');
-  if (window.XLSX) return window.XLSX;
+  if (window[globalName]) return window[globalName];
   return new Promise(function(resolve, reject) {
     var s = document.createElement('script');
-    s.src = SCRIPT_URL;
-    s.onload = function() { resolve(window.XLSX); };
-    s.onerror = function() { reject(new Error('Kon XLSX library niet laden')); };
+    s.src = src;
+    s.onload = function() { resolve(window[globalName]); };
+    s.onerror = function() { reject(new Error('Kon script ' + src + ' niet laden')); };
     document.head.appendChild(s);
   });
+}
+
+async function loadLibs() {
+  var ExcelJS = await loadScript(EXCELJS_URL, 'ExcelJS');
+  var saveAs = await loadScript(FILESAVER_URL, 'saveAs');
+  return { ExcelJS: ExcelJS, saveAs: saveAs };
 }
 
 function formatTimestamp(d) {
@@ -52,112 +45,101 @@ function formatTimestamp(d) {
          pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
-function calcColumnWidths(rows, headers) {
-  // Kolombreedte = max(header lengte, max inhoud lengte) met cap op 50
-  var widths = headers.map(function(h) { return String(h || '').length; });
+function calcColumnWidth(header, rows) {
+  var w = String(header || '').length;
   rows.forEach(function(row) {
-    headers.forEach(function(h, i) {
-      var v = row[h];
-      var len = v == null ? 0 : String(v).length;
-      if (len > widths[i]) widths[i] = len;
-    });
+    var v = row[header];
+    var len = v == null ? 0 : String(v).length;
+    if (len > w) w = len;
   });
-  return widths.map(function(w) { return { wch: Math.min(Math.max(w + 2, 8), 50) }; });
-}
-
-function applyHeaderStyle(ws, headerRow, numCols) {
-  // Header opmaak: donkerblauw bg, witte vette tekst, gecentreerd
-  // (NB: SheetJS community versie ondersteunt cellStyles alleen als de file
-  // wordt geschreven met bookSST / cellStyles. We schrijven ze toch want
-  // de meeste Excel-viewers respecteren deze attributen.)
-  var XLSX = window.XLSX;
-  for (var c = 0; c < numCols; c++) {
-    var cellRef = XLSX.utils.encode_cell({ r: headerRow, c: c });
-    if (!ws[cellRef]) continue;
-    ws[cellRef].s = {
-      fill: { fgColor: { rgb: '1B3A5C' }, patternType: 'solid' },
-      font: { color: { rgb: 'FFFFFF' }, bold: true, sz: 11 },
-      alignment: { horizontal: 'left', vertical: 'center' },
-      border: {
-        bottom: { style: 'thin', color: { rgb: 'FFFFFF' } },
-      },
-    };
-  }
-}
-
-function applyFooterStyle(ws, footerStartRow, numCols) {
-  var XLSX = window.XLSX;
-  for (var r = footerStartRow; r < footerStartRow + 3; r++) {
-    for (var c = 0; c < numCols; c++) {
-      var cellRef = XLSX.utils.encode_cell({ r: r, c: c });
-      if (!ws[cellRef]) continue;
-      ws[cellRef].s = {
-        font: { color: { rgb: '6b5240' }, italic: true, sz: 9 },
-      };
-    }
-  }
-  // Link cel
-  var linkRef = XLSX.utils.encode_cell({ r: footerStartRow + 1, c: 0 });
-  if (ws[linkRef]) {
-    ws[linkRef].l = { Target: 'https://www.boomingsolutions.ai', Tooltip: 'Open dashboard' };
-    ws[linkRef].s = {
-      font: { color: { rgb: 'E84E1B' }, underline: true, sz: 9 },
-    };
-  }
+  return Math.min(Math.max(w + 2, 10), 50);
 }
 
 export async function exportToExcel(opts) {
-  var XLSX = await loadXlsxLib();
+  var libs = await loadLibs();
+  var ExcelJS = libs.ExcelJS;
+  var saveAs = libs.saveAs;
 
   var sheets = opts.sheets || [];
   if (sheets.length === 0) throw new Error('Geen sheets opgegeven');
 
-  var wb = XLSX.utils.book_new();
   var now = new Date();
   var stamp = formatTimestamp(now);
   var reportTitle = opts.reportTitle || 'Booming Solutions Export';
+
+  var workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Booming Solutions';
+  workbook.created = now;
 
   sheets.forEach(function(sheet) {
     var rows = sheet.rows || [];
     var headers = sheet.headers;
     if (!headers || !headers.length) {
-      headers = rows.length ? Object.keys(rows[0]) : [];
-    }
-    if (!headers.length) {
-      headers = ['(geen data)'];
+      headers = rows.length ? Object.keys(rows[0]) : ['(geen data)'];
     }
 
-    // Build AOA: header + data + footer
-    var aoa = [];
-    aoa.push(headers); // row 0 = header
-    rows.forEach(function(row) {
-      aoa.push(headers.map(function(h) {
-        var v = row[h];
-        return v == null ? '' : v;
-      }));
-    });
-    // Footer: 1 lege rij, dan export-info + link
-    var footerStart = aoa.length + 1;
-    aoa.push([]);
-    aoa.push(['www.boomingsolutions.ai']);
-    aoa.push(['Geëxporteerd: ' + stamp + '  ·  ' + reportTitle]);
-
-    var ws = XLSX.utils.aoa_to_sheet(aoa);
-
-    // Kolombreedtes
-    ws['!cols'] = calcColumnWidths(rows, headers);
-
-    // Freeze header row (row 1 = index 1, dus ySplit = 1)
-    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
-    ws['!views'] = [{ state: 'frozen', ySplit: 1, xSplit: 0, topLeftCell: 'A2', activePane: 'bottomLeft' }];
-
-    // Apply styles
-    applyHeaderStyle(ws, 0, headers.length);
-    applyFooterStyle(ws, footerStart, headers.length);
-
-    // Voeg toe aan workbook (sheet name max 31 chars en zonder \ / ? * [ ])
     var sheetName = String(sheet.name || 'Sheet').replace(/[\\\/\?\*\[\]]/g, '_').slice(0, 31);
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    var ws = workbook.addWorksheet(sheetName, {
+      views: [{ state: 'frozen', ySplit: 1 }], // freeze header rij
+    });
+
+    // Kolommen definiëren
+    ws.columns = headers.map(function(h) {
+      return {
+        header: h,
+        key: h,
+        width: calcColumnWidth(h, rows),
+      };
+    });
+
+    // Header opmaak: donkerblauw bg, witte vette tekst
+    var headerRow = ws.getRow(1);
+    headerRow.height = 22;
+    headerRow.eachCell(function(cell) {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1B3A5C' },
+      };
+      cell.font = {
+        color: { argb: 'FFFFFFFF' },
+        bold: true,
+        size: 11,
+      };
+      cell.alignment = {
+        horizontal: 'left',
+        vertical: 'middle',
+      };
+      cell.border = {
+        bottom: { style: 'thin', color: { argb: 'FFFFFFFF' } },
+      };
+    });
+
+    // Data rijen
+    rows.forEach(function(row) {
+      ws.addRow(row);
+    });
+
+    // Footer: lege rij, link, export info
+    ws.addRow([]);
+    var linkRow = ws.addRow(['www.boomingsolutions.ai']);
+    var linkCell = linkRow.getCell(1);
+    linkCell.value = {
+      text: 'www.boomingsolutions.ai',
+      hyperlink: 'https://www.boomingsolutions.ai',
+    };
+    linkCell.font = {
+      color: { argb: 'FFE84E1B' },
+      underline: true,
+      italic: true,
+      size: 9,
+    };
+    var infoRow = ws.addRow(['Geëxporteerd: ' + stamp + '  ·  ' + reportTitle]);
+    infoRow.getCell(1).font = {
+      color: { argb: 'FF6B5240' },
+      italic: true,
+      size: 9,
+    };
   });
 
   // Filename
@@ -166,8 +148,11 @@ export async function exportToExcel(opts) {
   var baseName = opts.filename || (datePrefix + '_export');
   if (!/\.xlsx$/i.test(baseName)) baseName += '.xlsx';
 
-  // Schrijf met cellStyles enabled
-  XLSX.writeFile(wb, baseName, { cellStyles: true });
+  var buf = await workbook.xlsx.writeBuffer();
+  var blob = new Blob([buf], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  saveAs(blob, baseName);
 }
 
 export default exportToExcel;
