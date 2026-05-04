@@ -104,9 +104,17 @@ export default function TrafficDashboard() {
   var currentYear = useMemo(function() { return lastDate ? parseInt(lastDate.split('-')[0]) : 2026; }, [lastDate]);
 
   // Aggregate daily → monthly with correct visitor source
+  // BELANGRIJK: voor het huidige jaar knippen we alle data op lastVisitorDate, en voor LY op de equivalente datum.
+  // Anders heeft april 2026: bezoekers t/m 16 apr (lastVisitorDate) maar tickets t/m 30 apr (recenter),
+  // wat een verkeerde conversie van 92% geeft. Door consistent te clippen wordt de chart eerlijk.
   var monthly = useMemo(function() {
+    var cyClip = lastVisitorDate;
+    var lyClip = lastVisitorDate ? (currentYear - 1) + lastVisitorDate.substring(4) : null;
     var map = {};
     storeData.forEach(function(r) {
+      // Clip current year op lastVisitorDate (zelfde voor LY op zelfde dag-van-jaar)
+      if (cyClip && r.date.startsWith(String(currentYear)) && r.date > cyClip) return;
+      if (lyClip && r.date.startsWith(String(currentYear - 1)) && r.date > lyClip) return;
       var parts = r.date.split('-');
       var y = parseInt(parts[0]); var m = parseInt(parts[1]);
       var key = y + '-' + String(m).padStart(2, '0');
@@ -117,7 +125,7 @@ export default function TrafficDashboard() {
       map[key].sales += parseFloat(r.total_sales) || 0;
     });
     return Object.values(map).sort(function(a, b) { return (b.year * 100 + b.month) - (a.year * 100 + a.month); });
-  }, [storeData, tab]);
+  }, [storeData, tab, lastVisitorDate, currentYear]);
 
   var years = useMemo(function() {
     var s = {}; monthly.forEach(function(r) { s[r.year] = true; });
@@ -129,19 +137,22 @@ export default function TrafficDashboard() {
     return monthly.filter(function(r) { return String(r.year) === yearFilter; });
   }, [monthly, yearFilter]);
 
-  // YTD exact same day comparison
+  // YTD exact same day comparison — alles geknipt op lastVisitorDate voor consistente conversie
+  // (bezoekers loopt vaak achter op tickets; door alles op visitor-cutoff te knippen
+  //  zijn de drie KPI's onderling consistent en klopt conversie = tickets/visitors)
+  var ytdCutoffDate = lastVisitorDate || lastDate;
   var cyYTD = useMemo(function() {
-    if (!lastDate) return { visitors: 0, tickets: 0, sales: 0 };
-    var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear)) && r.date <= lastDate; });
+    if (!ytdCutoffDate) return { visitors: 0, tickets: 0, sales: 0 };
+    var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear)) && r.date <= ytdCutoffDate; });
     return { visitors: d.reduce(function(s, r) { return s + getVisitors(r); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
-  }, [storeData, currentYear, lastDate, tab]);
+  }, [storeData, currentYear, ytdCutoffDate, tab]);
 
   var lyYTD = useMemo(function() {
-    if (!lastDate) return { visitors: 0, tickets: 0, sales: 0 };
-    var lyCutoff = (currentYear - 1) + lastDate.substring(4);
+    if (!ytdCutoffDate) return { visitors: 0, tickets: 0, sales: 0 };
+    var lyCutoff = (currentYear - 1) + ytdCutoffDate.substring(4);
     var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear - 1)) && r.date <= lyCutoff; });
     return { visitors: d.reduce(function(s, r) { return s + getVisitors(r); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
-  }, [storeData, currentYear, lastDate, tab]);
+  }, [storeData, currentYear, ytdCutoffDate, tab]);
 
   // Day of week analysis for current year
   var dowData = useMemo(function() {
@@ -297,9 +308,9 @@ export default function TrafficDashboard() {
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Bezoekers & Conversie</h1>
           <p className="text-[13px] text-[#6b5240]">{tabNames[tab] + ' vs ' + (currentYear - 1)}</p>
-          <div className="flex gap-4 mt-1">
-            <span className="text-[11px] text-[#a08a74]">{'Bezoekers t/m ' + fmtDate(lastVisitorDate)}</span>
-            <span className="text-[11px] text-[#a08a74]">{'Facturen & bonbedrag t/m ' + fmtDate(lastTicketDate)}</span>
+          <div className="flex flex-col gap-0.5 mt-1">
+            <span className="text-[11px] text-[#a08a74]">{'Alle vergelijkingen t/m ' + fmtDate(lastVisitorDate) + ' (laatste bezoekersdag)'}</span>
+            {lastTicketDate && lastTicketDate !== lastVisitorDate && <span className="text-[10px] text-[#c4a890] italic">{'Recentere bonbedrag-data beschikbaar t/m ' + fmtDate(lastTicketDate) + ', maar genegeerd voor consistente conversie'}</span>}
           </div>
         </div>
       </div>
