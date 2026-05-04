@@ -1,8 +1,12 @@
 /* ============================================================
-   BESTAND: layout_dashboard.js
+   BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (hernoem naar layout.js bij het plaatsen)
-   VERSIE: v3.27.02
+   (overschrijft de bestaande layout.js)
+
+   WIJZIGINGEN T.O.V. v3.27.02:
+   - Menu items "Overzicht", "Rapportages" en "Bestanden" verborgen
+   - Sales submenu uitgebreid: Actuals, Forecast (concept), Index, Bezoekers en Conversie
+   - Versie aangepast naar V26.02
    ============================================================ */
 'use client';
 
@@ -12,7 +16,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 
-const APP_VERSION = 'v3.27.02';
+const APP_VERSION = 'V26.02';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -27,7 +31,8 @@ function NavSubItem({ item, pathname, sidebarOpen }) {
       <Link href={item.href}
         className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
         <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: pathname === item.href ? '#1B3A5C' : 'transparent', border: pathname === item.href ? 'none' : '1px solid rgba(27,58,92,0.25)' }} />
-        {item.label}
+        <span className="flex-1">{item.label}</span>
+        {item.badge && <span className="text-[9px] italic text-[#1B3A5C]/40 font-normal">{item.badge}</span>}
       </Link>
     );
   }
@@ -78,7 +83,7 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
                 </div>
               );
             }
-            return <Link key={item.href} href={item.href} className={`block px-3 py-2 text-sm transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{item.label}</Link>;
+            return <Link key={item.href} href={item.href} className={`block px-3 py-2 text-sm transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{item.label}{item.badge ? <span className="text-[9px] italic text-gray-400 ml-2">{item.badge}</span> : ''}</Link>;
           })}
         </div>
       </div>
@@ -154,7 +159,6 @@ export default function DashboardLayout({ children }) {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
       if (error) {
         console.warn('Profile load failed, retrying in 1s...', error.message);
-        // Retry once after a short delay (session might not be ready)
         setTimeout(async () => {
           const { data: retryData } = await supabase.from('profiles').select('*').eq('id', userId).single();
           if (retryData) {
@@ -173,25 +177,20 @@ export default function DashboardLayout({ children }) {
 
   useEffect(() => {
     async function init() {
-      // First wait for the session to be established
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setUser(session.user);
         await loadProfile(session.user.id);
       }
-
-      // Listen for auth changes (login/logout)
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (session?.user) {
           setUser(session.user);
-          // Small delay to ensure session cookie is set for RLS
           setTimeout(() => loadProfile(session.user.id), 500);
         } else {
           setUser(null);
           setProfile(null);
         }
       });
-
       return () => subscription?.unsubscribe();
     }
     init();
@@ -217,6 +216,7 @@ export default function DashboardLayout({ children }) {
 
   const REPORT_MAP = {
     '/dashboard/sales': 'sales',
+    '/dashboard/sales/forecast': 'sales',
     '/dashboard/sales/index': 'sales_index',
     '/dashboard/sales/traffic': 'sales_traffic',
     '/dashboard/inventory/budget': 'inventory_budget',
@@ -227,10 +227,12 @@ export default function DashboardLayout({ children }) {
     '/dashboard/hr/salary': 'hr_payroll',
   };
 
+  // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
   const omzetItemsAll = [
-    { href: '/dashboard/sales', label: 'Omzet en Marge' },
-    { href: '/dashboard/sales/index', label: 'Index Rapport' },
-    { href: '/dashboard/sales/traffic', label: 'Bezoekers & Conversie' },
+    { href: '/dashboard/sales', label: 'Actuals' },
+    { href: '/dashboard/sales/forecast', label: 'Forecast', badge: '(concept)' },
+    { href: '/dashboard/sales/index', label: 'Index' },
+    { href: '/dashboard/sales/traffic', label: 'Bezoekers en Conversie' },
   ];
   const voorraadItemsAll = [
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
@@ -256,7 +258,6 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/salary', label: 'Salariskosten' },
   ];
 
-  // Filter navigation items based on allowed_reports
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const hrItems = hrItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
@@ -279,18 +280,10 @@ export default function DashboardLayout({ children }) {
 
         <nav className="flex-1 py-4 px-3 overflow-y-auto">
           <div className="space-y-1">
-            <Link href="/dashboard" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === '/dashboard' ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-              <span className="text-base flex-shrink-0">📊</span>{sidebarOpen && <span>Overzicht</span>}
-            </Link>
+            {/* Overzicht, Rapportages en Bestanden zijn verborgen */}
             {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            <Link href="/dashboard/reports" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === '/dashboard/reports' ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-              <span className="text-base flex-shrink-0">📋</span>{sidebarOpen && <span>Rapportages</span>}
-            </Link>
-            <Link href="/dashboard/files" className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === '/dashboard/files' ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-              <span className="text-base flex-shrink-0">📁</span>{sidebarOpen && <span>Bestanden</span>}
-            </Link>
           </div>
           {isAdmin && (
             <div className="mt-6 pt-4 border-t border-[#c5d4e6]">

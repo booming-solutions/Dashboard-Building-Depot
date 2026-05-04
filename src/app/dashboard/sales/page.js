@@ -1,19 +1,17 @@
 /* ============================================================
-   BESTAND: page_sales_v2.js
+   BESTAND: page.js (sales / Actuals)
    KOPIEER NAAR: src/app/dashboard/sales/page.js
    (overschrijft de bestaande page.js)
-   VERSIE: v3.28.14
 
-   WIJZIGINGEN T.O.V. VORIGE VERSIE:
-   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
-   - Bevat de detail-tabel van het Actuals tabblad (huidige filters worden meegenomen)
+   Deze pagina is nu UITSLUITEND voor Actuals + Data Source.
+   De Forecast (concept) is verplaatst naar
+   src/app/dashboard/sales/forecast/page.js
    ============================================================ */
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
-import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
@@ -24,8 +22,6 @@ const fmtM=n=>{const a=Math.abs(n||0);return(n<0?'-':'')+(a>=1e6?(a/1e6).toFixed
 const fmtP=n=>(n||0).toFixed(1)+'%';
 const pctChg=(c,p)=>p?((c-p)/Math.abs(p)*100):0;
 const SN={'1':'Curaçao','B':'Bonaire'};
-const XCG_USD=1.82;
-const daysInMonth=(y,m)=>new Date(y,m,0).getDate();
 
 function Pill({label,active,onClick}){
   return <button className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ${active?"bg-[#E84E1B] text-white border-[#E84E1B]":"bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]"}`} onClick={onClick}>{label}</button>;
@@ -41,40 +37,6 @@ function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget}){
       {varLy!==undefined&&<span className={`inline-block px-2 py-0.5 rounded text-[12px] font-semibold font-mono mt-1 ${varLy>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{varLy>=0?'+':''}{fmtP(varLy)}</span>}
       {budget!==undefined&&<p className="text-[13px] text-[#6b5240] font-mono mt-1">{budgetLabel}: {budget}</p>}
       {varBudget!==undefined&&<span className={`inline-block px-2 py-0.5 rounded text-[12px] font-semibold font-mono mt-1 ${varBudget>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{varBudget>=0?'+':''}{fmtP(varBudget)}</span>}
-    </div>
-  );
-}
-
-function ForecastKPI({label,forecast,sublabel,subvalue,compareLabel,comparePct,compareLabel2,comparePct2,note}){
-  return(
-    <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm">
-      <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#E84E1B]"/>
-      <p className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[1px]">{label}</p>
-      <p className="text-[32px] font-semibold text-[#1a0a04] mt-1 font-mono tracking-tight leading-tight">{forecast}</p>
-      {sublabel&&<p className="text-[12px] text-[#6b5240] font-mono mt-1">{sublabel}: {subvalue}</p>}
-      <div className="flex flex-wrap gap-1.5 mt-2">
-        {comparePct!==undefined&&comparePct!==null&&<span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold font-mono ${comparePct>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{compareLabel}: {comparePct>=0?'+':''}{fmtP(comparePct)}</span>}
-        {comparePct2!==undefined&&comparePct2!==null&&<span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold font-mono ${comparePct2>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{compareLabel2}: {comparePct2>=0?'+':''}{fmtP(comparePct2)}</span>}
-      </div>
-      {note&&<p className="text-[10px] text-[#a08a74] italic mt-2">{note}</p>}
-    </div>
-  );
-}
-
-function LogoMenu({show,onClose,onCGF,onCorrections,cgfUnlocked,corrVisible}){
-  if(!show)return null;
-  return(
-    <div className="fixed inset-0 z-50" onClick={onClose}>
-      <div className="absolute top-[80px] left-[28px] bg-white border border-[#e5ddd4] rounded-xl shadow-xl min-w-[220px] overflow-hidden" onClick={e=>e.stopPropagation()}>
-        <button onClick={onCGF} className="flex items-center gap-3 w-full px-4 py-3 text-left hover:bg-[#faf7f4] border-b border-[#e5ddd4]">
-          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs ${cgfUnlocked?'bg-green-50 text-green-600':'bg-orange-50 text-[#E84E1B]'}`}>{cgfUnlocked?'✓':'🔒'}</div>
-          <div><p className="text-[13px] font-semibold text-[#1a0a04]">CGF Access</p><p className="text-[11px] text-[#6b5240]">{cgfUnlocked?'Ontgrendeld':'Vergrendeld'}</p></div>
-        </button>
-        <button onClick={onCorrections} className="flex items-center gap-3 w-full px-4 py-3 text-left hover:bg-[#faf7f4]">
-          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs ${corrVisible?'bg-green-50 text-green-600':'bg-blue-50 text-blue-600'}`}>{corrVisible?'✓':'🔒'}</div>
-          <div><p className="text-[13px] font-semibold text-[#1a0a04]">Data Source</p><p className="text-[11px] text-[#6b5240]">{corrVisible?'Zichtbaar':'Verborgen'}</p></div>
-        </button>
-      </div>
     </div>
   );
 }
@@ -102,7 +64,6 @@ function CGFModal({show,onClose,onUnlock}){
 
 export default function SalesDashboard(){
   const[data,setData]=useState([]);
-  const[dailyData,setDailyData]=useState([]);
   const[budgetData,setBudgetData]=useState([]);
   const[corrections,setCorrections]=useState([]);
   const[lastDate,setLastDate]=useState(null);
@@ -141,22 +102,19 @@ export default function SalesDashboard(){
   const[corrSales,setCorrSales]=useState('');
   const[corrMargin,setCorrMargin]=useState('');
   const[corrNotes,setCorrNotes]=useState('');
-  const monthlyRef=useRef(null);const gmRef=useRef(null);const mgrRef=useRef(null);const deptRef=useRef(null);
-  const forecastChartRef=useRef(null);
-  const chartsRef=useRef({});
+  const monthlyRef=useRef(null);const gmRef=useRef(null);const mgrRef=useRef(null);const deptRef=useRef(null);const chartsRef=useRef({});
   const supabase=createClient();
 
   useEffect(()=>{loadData();checkAuth();},[]);
 
   async function loadData(){
-    let allSales=[],allBudget=[],allDaily=[],from=0;const step=1000;
+    let allSales=[],allBudget=[],from=0;const step=1000;
     while(true){const{data:b}=await supabase.from('sales_monthly').select('*').order('year').order('month').range(from,from+step-1);if(!b||!b.length)break;allSales=allSales.concat(b);if(b.length<step)break;from+=step}
     from=0;while(true){const{data:b}=await supabase.from('budget_data').select('*').range(from,from+step-1);if(!b||!b.length)break;allBudget=allBudget.concat(b);if(b.length<step)break;from+=step}
-    from=0;while(true){const{data:b}=await supabase.from('sales_daily').select('*').range(from,from+step-1);if(!b||!b.length)break;allDaily=allDaily.concat(b);if(b.length<step)break;from+=step}
     const{data:corr}=await supabase.from('corrections').select('*').order('created_at',{ascending:false});
     const{data:md}=await supabase.from('sales_data').select('sale_date').order('sale_date',{ascending:false}).limit(1);
     if(md&&md.length){const d=md[0].sale_date;const[y,m,day]=d.split('-').map(Number);setLastDate(new Date(y,m-1,day))}
-    setData(allSales);setDailyData(allDaily);setBudgetData(allBudget);if(corr)setCorrections(corr);setLoading(false);
+    setData(allSales);setBudgetData(allBudget);if(corr)setCorrections(corr);setLoading(false);
   }
   async function checkAuth(){
     const{data:{user}}=await supabase.auth.getUser();
@@ -226,116 +184,6 @@ export default function SalesDashboard(){
 
   function handleMonthClick(m,e){if(m==='all'||m==='ytd'){setMonths([m]);return}if(e&&e.ctrlKey){setMonths(prev=>{const c=prev.filter(x=>x!=='all'&&x!=='ytd');if(c.includes(m))return c.filter(x=>x!==m).length?c.filter(x=>x!==m):['all'];return[...c,m]})}else setMonths([m])}
 
-  const forecastData=useMemo(()=>{
-    if(!lastDate||!data.length)return null;
-    const curMonth=dayFrac.month;
-    const curYear=dayFrac.year;
-    const lyYear=curYear-1;
-    const dayOfMonth=dayFrac.day;
-    const totalDaysInMonth=daysInMonth(curYear,curMonth);
-    const remainingDaysMonth=totalDaysInMonth-dayOfMonth;
-
-    const matchFilter=r=>(store==='all'||r.store_number===store)&&(bum==='all'||r.bum===bum)&&(dept==='all'||r.dept_code===dept);
-    const matchBudget=b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
-      if(dept!=='all'&&b.dept_code!==dept)return false;
-      if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
-      return true;
-    };
-    const matchCorr=c=>(store==='all'||c.store_number===store)&&(bum==='all'||c.bum===bum)&&(dept==='all'||c.dept_code===dept);
-
-    const mtdRows=data.filter(r=>matchFilter(r)&&r.year===curYear&&r.month===curMonth);
-    let mtdSales=sum(mtdRows,'net_sales');
-    const mtdCorrSales=sum(corrections.filter(c=>matchCorr(c)&&c.year===curYear&&c.month===curMonth),'sales_correction');
-    mtdSales+=mtdCorrSales;
-
-    const lyMonthRows=data.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth);
-    const lyMonthSales=sum(lyMonthRows,'net_sales');
-
-    const lyDailyRows=dailyData.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth);
-    const lyDailySum=sum(lyDailyRows,'net_sales');
-    const lyDailyToDay=dailyData.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month===curMonth&&r.day<=dayOfMonth);
-    const lyMTDSales=sum(lyDailyToDay,'net_sales');
-    let lyPacingPct=lyDailySum>0?(lyMTDSales/lyDailySum):(dayOfMonth/totalDaysInMonth);
-    if(lyPacingPct<=0.01||lyPacingPct>1)lyPacingPct=dayOfMonth/totalDaysInMonth;
-
-    const monthBudgetRows=budgetData.filter(b=>{
-      if(!matchBudget(b))return false;
-      const[by,bm]=b.month.split('-').map(Number);
-      return by===curYear&&bm===curMonth&&b.budget_type===salesType;
-    });
-    const monthBudgetSales=sum(monthBudgetRows,'amount');
-
-    const runRateForecast=dayOfMonth>0?(mtdSales/dayOfMonth)*totalDaysInMonth:0;
-    const lyPacingForecast=lyPacingPct>0?(mtdSales/lyPacingPct):0;
-    const expectedBudgetMTD=monthBudgetSales*lyPacingPct;
-    const budgetVarPct=expectedBudgetMTD?((mtdSales-expectedBudgetMTD)/expectedBudgetMTD*100):0;
-    const budgetPaceForecast=expectedBudgetMTD?monthBudgetSales*(mtdSales/expectedBudgetMTD):monthBudgetSales;
-
-    const dailyAvg=dayOfMonth>0?mtdSales/dayOfMonth:0;
-    const requiredDailyForBudget=remainingDaysMonth>0?(monthBudgetSales-mtdSales)/remainingDaysMonth:0;
-    const requiredDailyForLY=remainingDaysMonth>0?(lyMonthSales-mtdSales)/remainingDaysMonth:0;
-
-    const ytdRows=data.filter(r=>matchFilter(r)&&r.year===curYear&&r.month<=curMonth);
-    let ytdSales=sum(ytdRows,'net_sales');
-    const ytdCorrSales=sum(corrections.filter(c=>matchCorr(c)&&c.year===curYear&&c.month<=curMonth),'sales_correction');
-    ytdSales+=ytdCorrSales;
-
-    const lyYTDFullRows=data.filter(r=>matchFilter(r)&&r.year===lyYear&&r.month<curMonth);
-    const lyYTDFull=sum(lyYTDFullRows,'net_sales');
-    const lyYTD=lyYTDFull+lyMTDSales;
-
-    const lyFullYearRows=data.filter(r=>matchFilter(r)&&r.year===lyYear);
-    const lyFullYear=sum(lyFullYearRows,'net_sales');
-
-    const fyBudgetRows=budgetData.filter(b=>{
-      if(!matchBudget(b))return false;
-      const[by]=b.month.split('-').map(Number);
-      return by===curYear&&b.budget_type===salesType;
-    });
-    const fyBudget=sum(fyBudgetRows,'amount');
-
-    const dayOfYear=Math.floor((lastDate-new Date(curYear,0,0))/(1000*60*60*24));
-    const totalDaysInYear=daysInMonth(curYear,2)===29?366:365;
-    const fyRunRateForecast=dayOfYear>0?(ytdSales/dayOfYear)*totalDaysInYear:0;
-
-    const fyLyPacingPct=lyFullYear?(lyYTD/lyFullYear):(dayOfYear/totalDaysInYear);
-    const fyLyPacingForecast=fyLyPacingPct>0?(ytdSales/fyLyPacingPct):0;
-
-    const fyExpectedBudgetYTD=fyBudget*fyLyPacingPct;
-    const fyBudgetVarPct=fyExpectedBudgetYTD?((ytdSales-fyExpectedBudgetYTD)/fyExpectedBudgetYTD*100):0;
-    const fyBudgetPaceForecast=fyExpectedBudgetYTD?fyBudget*(ytdSales/fyExpectedBudgetYTD):fyBudget;
-
-    const monthlyActuals=Array(12).fill(0);
-    const monthlyLY=Array(12).fill(0);
-    const monthlyBudget=Array(12).fill(0);
-    const monthlyForecast=Array(12).fill(null);
-
-    data.filter(r=>matchFilter(r)&&r.year===curYear).forEach(r=>{monthlyActuals[r.month-1]+=parseFloat(r.net_sales)});
-    corrections.filter(c=>matchCorr(c)&&c.year===curYear).forEach(c=>{monthlyActuals[c.month-1]+=parseFloat(c.sales_correction)});
-    data.filter(r=>matchFilter(r)&&r.year===lyYear).forEach(r=>{monthlyLY[r.month-1]+=parseFloat(r.net_sales)});
-    budgetData.filter(b=>{if(!matchBudget(b))return false;const[by]=b.month.split('-').map(Number);return by===curYear&&b.budget_type===salesType}).forEach(b=>{const[,bm]=b.month.split('-').map(Number);monthlyBudget[bm-1]+=parseFloat(b.amount)});
-
-    const growthFactor=lyYTD>0?(ytdSales/lyYTD):1;
-    monthlyForecast[curMonth-1]=lyPacingForecast;
-    for(let m=curMonth;m<12;m++){
-      monthlyForecast[m]=monthlyLY[m]*growthFactor;
-    }
-
-    return{
-      curMonth,curYear,dayOfMonth,totalDaysInMonth,remainingDaysMonth,
-      mtdSales,lyMonthSales,lyMTDSales,monthBudgetSales,
-      runRateForecast,lyPacingForecast,budgetPaceForecast,
-      lyPacingPct,expectedBudgetMTD,budgetVarPct,
-      dailyAvg,requiredDailyForBudget,requiredDailyForLY,
-      ytdSales,lyYTD,lyFullYear,fyBudget,
-      fyRunRateForecast,fyLyPacingForecast,fyBudgetPaceForecast,
-      fyExpectedBudgetYTD,fyBudgetVarPct,fyLyPacingPct,
-      monthlyActuals,monthlyLY,monthlyBudget,monthlyForecast,
-      growthFactor,dayOfYear,totalDaysInYear
-    };
-  },[data,dailyData,budgetData,corrections,lastDate,dayFrac,store,bum,dept,deptBumMap,salesType]);
-
   const renderCharts=useCallback(()=>{
     Object.values(chartsRef.current).forEach(c=>c?.destroy());chartsRef.current={};
     const cM={},lM={},bM={};
@@ -360,39 +208,6 @@ export default function SalesDashboard(){
 
   useEffect(()=>{if(data.length&&tab==='actuals')renderCharts()},[renderCharts,data.length,tab]);
 
-  const renderForecastChart=useCallback(()=>{
-    if(!forecastChartRef.current||!forecastData)return;
-    if(chartsRef.current.forecast)chartsRef.current.forecast.destroy();
-    const fd=forecastData;
-    const labels=MN;
-    const actualsSeries=fd.monthlyActuals.map((v,i)=>i<=fd.curMonth-1?conv(v):null);
-    const forecastSeries=fd.monthlyForecast.map((v,i)=>i>=fd.curMonth-1?(v?conv(v):null):null);
-    const lySeries=fd.monthlyLY.map(v=>conv(v));
-    const budgetSeries=fd.monthlyBudget.map(v=>conv(v));
-    chartsRef.current.forecast=new Chart(forecastChartRef.current,{
-      type:'bar',
-      data:{
-        labels,
-        datasets:[
-          {label:fd.curYear+' Actual',data:actualsSeries,backgroundColor:'rgba(232,78,27,0.55)',borderColor:'#E84E1B',borderWidth:1,borderRadius:4,order:3},
-          {label:fd.curYear+' Forecast',data:forecastSeries,backgroundColor:'rgba(232,78,27,0.18)',borderColor:'#E84E1B',borderWidth:1,borderDash:[4,4],borderRadius:4,order:2},
-          {label:'LY '+(fd.curYear-1),data:lySeries,type:'line',borderColor:'#888',borderDash:[5,5],pointBackgroundColor:'#888',pointRadius:3,tension:0.3,fill:false,order:1},
-          {label:budgetLabel+' Budget',data:budgetSeries,type:'line',borderColor:'#d97706',borderDash:[3,3],pointBackgroundColor:'#d97706',pointRadius:3,tension:0.3,fill:false,order:0}
-        ]
-      },
-      options:{
-        responsive:true,maintainAspectRatio:false,
-        plugins:{
-          legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:16,font:{size:11}}},
-          tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.raw)} ${curr}`}}
-        },
-        scales:{y:{ticks:{callback:v=>fmtM(v)},grid:{color:'#f0ebe5'}},x:{grid:{display:false}}}
-      }
-    });
-  },[forecastData,budgetLabel,conv,curr]);
-
-  useEffect(()=>{if(data.length&&tab==='forecast')renderForecastChart()},[renderForecastChart,data.length,tab]);
-
   const tableData=useMemo(()=>{
     const agg={};filtered.forEach(r=>{const k=`${r.dept_name}-${r.bum}`;if(!agg[k])agg[k]={dept:r.dept_name,bum:r.bum,net_sales:0,gross_margin:0,dept_code:r.dept_code};agg[k].net_sales+=parseFloat(r.net_sales);agg[k].gross_margin+=parseFloat(r.gross_margin)});
     corrFiltered.forEach(c=>{const k=`${c.dept_name}-${c.bum}`;if(!agg[k])agg[k]={dept:c.dept_name,bum:c.bum,net_sales:0,gross_margin:0,dept_code:c.dept_code};agg[k].net_sales+=parseFloat(c.sales_correction);agg[k].gross_margin+=parseFloat(c.margin_correction)});
@@ -413,15 +228,6 @@ export default function SalesDashboard(){
   },[filtered,priorFiltered,budgetFiltered,corrFiltered,search,sortCol,sortDir,dayFrac,conv,salesType,marginType]);
 
   function toggleSort(c2){if(sortCol===c2)setSortDir(d=>d==='desc'?'asc':'desc');else{setSortCol(c2);setSortDir('desc')}}
-
-  // Excel export period label (voor filename + reportTitle)
-  const periodLabel=useMemo(()=>{
-    if(isAll)return'Alle';
-    if(isYTD)return'YTD';
-    if(selectedMonths&&selectedMonths.length===1)return MN[selectedMonths[0]-1];
-    if(selectedMonths&&selectedMonths.length>1)return selectedMonths.map(m=>MN[m-1]).join('+');
-    return'';
-  },[isAll,isYTD,selectedMonths]);
 
   async function addCorrection(){
     if(!corrDept||!corrBum)return;
@@ -452,46 +258,20 @@ export default function SalesDashboard(){
         </div>
       </div>
 
-      {/* Tabs + Excel export knop */}
-      <div className="flex items-center justify-between mb-5 border-b-2 border-[#e5ddd4]">
-        <div className="flex gap-1">
-          <button onClick={()=>setTab('actuals')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='actuals'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Actuals</button>
-          <button onClick={()=>setTab('forecast')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='forecast'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Forecast <span className="italic font-normal text-[11px] text-[#a08a74]">(concept)</span></button>
-          {corrVisible&&isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Data Source</button>}
-        </div>
-        {tab==='actuals'&&<ExcelExportButton
-          filename={(function(){var d=new Date();var pad=function(n){return n<10?'0'+n:''+n;};return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_omzet_marge_'+(bum!=='all'?bum:'alle')+'_'+storeName.replace(/[ç]/g,'c')+'_'+currentYear+'_'+periodLabel;})()}
-          reportTitle={'Omzet en Marge — '+(bum!=='all'?bum+' — ':'')+storeName+' — '+currentYear+' '+periodLabel}
-          sheets={function(){
-            return[{
-              name:'Detail per Departement',
-              rows:tableData.map(function(r){
-                return{
-                  'Dept':r.dept_code,
-                  'Departement':r.dept,
-                  'Manager':r.bum,
-                  ['Omzet ('+curr+')']:Math.round(r.net_sales_conv),
-                  ['LY Omzet ('+curr+')']:Math.round(r.ly),
-                  'Var % vs LY':Math.round(r.varPct*10)/10,
-                  ['Bruto Marge ('+curr+')']:Math.round(r.gm_conv),
-                  ['Budget '+budgetLabel+' Marge ('+curr+')']:Math.round(r.budMargin),
-                  'BM %':Math.round(r.gmPct*10)/10,
-                  ['Budget '+budgetLabel+' BM %']:Math.round(r.budGmPct*10)/10,
-                };
-              }),
-            }];
-          }}
-        />}
+      {/* Tabs: alleen Actuals (en Data Source als admin) */}
+      <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
+        <button onClick={()=>setTab('actuals')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='actuals'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Actuals</button>
+        {corrVisible&&isAdmin&&<button onClick={()=>setTab('correcties')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab==='correcties'?'text-[#E84E1B] border-[#E84E1B]':'text-[#6b5240] border-transparent'}`}>Data Source</button>}
       </div>
 
-      {(tab==='actuals'||tab==='forecast')&&<div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
+      {tab==='actuals'&&<>
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
-        {tab==='actuals'&&<div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span></div>}
+        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Manager</span><div className="flex gap-1"><Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>{bums.map(b=><Pill key={b} label={b} active={bum===b} onClick={()=>setBum(b)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Budget</span><div className="flex gap-1"><Pill label="Target (70M)" active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label="CGF (65M)" active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Departement</span><select value={dept} onChange={e=>setDept(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg"><option value="all">Alle Departementen</option>{depts.map(d=>{const[c2,n]=d.split('|');return<option key={c2} value={c2}>{n}</option>})}</select></div>
-      </div>}
+      </div>
 
-      {tab==='actuals'&&<>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <KPI label="Netto Omzet" value={fmtMC(tS)} ly={fmtMC(lyS)} varLy={pctChg(tS,lyS)} budget={fmtMC(bS)} budgetLabel={budgetLabel} varBudget={pctChg(tS,bS)}/>
         <KPI label="Bruto Marge" value={fmtMC(tG)} ly={fmtMC(lyG)} varLy={pctChg(tG,lyG)} budget={fmtMC(bG)} budgetLabel={budgetLabel} varBudget={pctChg(tG,bG)}/>
@@ -542,132 +322,6 @@ export default function SalesDashboard(){
           </tbody></table>
         </div>
       </div>
-      </>}
-
-      {tab==='forecast'&&forecastData&&<>
-        <div className="bg-[#faf7f4] rounded-[14px] border border-[#e5ddd4] p-4 mb-5">
-          <p className="text-[12px] text-[#6b5240]">
-            Forecast op basis van data t/m <strong>{lastDate.getDate()} {MN[lastDate.getMonth()]} {lastDate.getFullYear()}</strong>
-            {' — '}<strong>dag {forecastData.dayOfMonth} van {forecastData.totalDaysInMonth}</strong> in {MN[forecastData.curMonth-1]}
-            {' ('}{((forecastData.dayOfMonth/forecastData.totalDaysInMonth)*100).toFixed(0)}% verstreken{')'}
-            {' · '}<strong>dag {forecastData.dayOfYear} van {forecastData.totalDaysInYear}</strong> in {forecastData.curYear}
-            {' ('}{((forecastData.dayOfYear/forecastData.totalDaysInYear)*100).toFixed(0)}% verstreken{')'}
-          </p>
-        </div>
-
-        <h3 className="text-[15px] font-bold text-[#1a0a04] mb-3">Forecast Huidige Maand — {MN[forecastData.curMonth-1]} {forecastData.curYear}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <ForecastKPI
-            label="Run Rate Forecast"
-            forecast={fmtMC(forecastData.runRateForecast)+' '+curr}
-            sublabel="MTD actual"
-            subvalue={fmtMC(forecastData.mtdSales)}
-            compareLabel="vs Budget"
-            comparePct={pctChg(forecastData.runRateForecast,forecastData.monthBudgetSales)}
-            compareLabel2="vs LY"
-            comparePct2={pctChg(forecastData.runRateForecast,forecastData.lyMonthSales)}
-            note={`Methode: MTD ÷ ${forecastData.dayOfMonth} dagen × ${forecastData.totalDaysInMonth} dagen`}
-          />
-          <ForecastKPI
-            label="Verkooppatroon LY"
-            forecast={fmtMC(forecastData.lyPacingForecast)+' '+curr}
-            sublabel="MTD actual"
-            subvalue={fmtMC(forecastData.mtdSales)}
-            compareLabel="vs Budget"
-            comparePct={pctChg(forecastData.lyPacingForecast,forecastData.monthBudgetSales)}
-            compareLabel2="vs LY"
-            comparePct2={pctChg(forecastData.lyPacingForecast,forecastData.lyMonthSales)}
-            note={`Methode: MTD ÷ ${(forecastData.lyPacingPct*100).toFixed(1)}% — werkelijke LY pacing op dag ${forecastData.dayOfMonth}`}
-          />
-          <ForecastKPI
-            label="Budget Status"
-            forecast={(forecastData.budgetVarPct>=0?'+':'')+fmtP(forecastData.budgetVarPct)}
-            sublabel="MTD vs verwacht"
-            subvalue={fmtMC(forecastData.mtdSales)+' / '+fmtMC(forecastData.expectedBudgetMTD)}
-            note={`Forecast eindstand bij dit tempo: ${fmtMC(forecastData.budgetPaceForecast)} ${curr}`}
-          />
-        </div>
-
-        <h3 className="text-[15px] font-bold text-[#1a0a04] mb-3">Wat Moet Er Per Dag — Resterende {forecastData.remainingDaysMonth} Dagen</h3>
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-6 overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <th className="text-left p-2.5 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4]">Doel</th>
-                <th className="text-right p-2.5 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4]">Maand-doel</th>
-                <th className="text-right p-2.5 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4]">Te gaan</th>
-                <th className="text-right p-2.5 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4]">Per dag nodig</th>
-                <th className="text-right p-2.5 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4]">vs huidig daily avg</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                {label:'Budget halen',target:forecastData.monthBudgetSales,required:forecastData.requiredDailyForBudget},
-                {label:'LY evenaren',target:forecastData.lyMonthSales,required:forecastData.requiredDailyForLY},
-                {label:'Run rate volhouden',target:forecastData.runRateForecast,required:forecastData.dailyAvg}
-              ].map((row,i)=>{
-                const togo=row.target-forecastData.mtdSales;
-                const deltaVsAvg=row.required-forecastData.dailyAvg;
-                const deltaPct=forecastData.dailyAvg?(deltaVsAvg/forecastData.dailyAvg*100):0;
-                return(
-                  <tr key={i} className="hover:bg-[#faf5f0]">
-                    <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] font-semibold">{row.label}</td>
-                    <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmtMC(row.target)} {curr}</td>
-                    <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={{color:togo>0?'#dc2626':'#16a34a'}}>{togo>0?'+':''}{fmtMC(togo)}</td>
-                    <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold">{fmtMC(row.required)}</td>
-                    <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={{color:deltaVsAvg>0?'#dc2626':'#16a34a'}}>{deltaVsAvg>0?'+':''}{fmtP(deltaPct)}</td>
-                  </tr>
-                );
-              })}
-              <tr className="bg-[#faf7f4]">
-                <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-[#6b5240] italic" colSpan={5}>
-                  Huidig daily average: <strong>{fmtMC(forecastData.dailyAvg)} {curr}/dag</strong> · MTD: <strong>{fmtMC(forecastData.mtdSales)} {curr}</strong>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 className="text-[15px] font-bold text-[#1a0a04] mb-3">Forecast Heel Jaar — {forecastData.curYear}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <ForecastKPI
-            label="FY Run Rate Forecast"
-            forecast={fmtMC(forecastData.fyRunRateForecast)+' '+curr}
-            sublabel="YTD actual"
-            subvalue={fmtMC(forecastData.ytdSales)}
-            compareLabel="vs FY Budget"
-            comparePct={pctChg(forecastData.fyRunRateForecast,forecastData.fyBudget)}
-            compareLabel2="vs LY"
-            comparePct2={pctChg(forecastData.fyRunRateForecast,forecastData.lyFullYear)}
-            note={`Methode: YTD ÷ ${forecastData.dayOfYear} dagen × ${forecastData.totalDaysInYear} dagen`}
-          />
-          <ForecastKPI
-            label="FY Verkooppatroon LY"
-            forecast={fmtMC(forecastData.fyLyPacingForecast)+' '+curr}
-            sublabel="YTD actual"
-            subvalue={fmtMC(forecastData.ytdSales)}
-            compareLabel="vs FY Budget"
-            comparePct={pctChg(forecastData.fyLyPacingForecast,forecastData.fyBudget)}
-            compareLabel2="vs LY"
-            comparePct2={pctChg(forecastData.fyLyPacingForecast,forecastData.lyFullYear)}
-            note={`Methode: YTD ÷ ${(forecastData.fyLyPacingPct*100).toFixed(1)}% — werkelijke LY YTD pacing`}
-          />
-          <ForecastKPI
-            label="FY Budget Status"
-            forecast={(forecastData.fyBudgetVarPct>=0?'+':'')+fmtP(forecastData.fyBudgetVarPct)}
-            sublabel="YTD vs verwacht"
-            subvalue={fmtMC(forecastData.ytdSales)+' / '+fmtMC(forecastData.fyExpectedBudgetYTD)}
-            note={`Forecast eindstand bij dit tempo: ${fmtMC(forecastData.fyBudgetPaceForecast)} ${curr}`}
-          />
-        </div>
-
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
-          <h3 className="text-[15px] font-bold mb-4">Maandelijks Verloop — Actual + Forecast vs LY & Budget</h3>
-          <div style={{height:'320px'}}><canvas ref={forecastChartRef}/></div>
-          <p className="text-[11px] text-[#a08a74] italic mt-3">
-            Donker oranje = werkelijke maanden t/m {MN[forecastData.curMonth-1]} · Lichter oranje = forecast (Verkooppatroon LY, gegroeid met factor {forecastData.growthFactor.toFixed(2)})
-          </p>
-        </div>
       </>}
 
       {tab==='correcties'&&<div className="bg-white rounded-[14px] border border-[#e5ddd4] p-6 shadow-sm mb-5">
