@@ -369,13 +369,15 @@ export default function StockRiskShared({ bumFilter }) {
     if (!data.length) return [];
 
     var filtered = data;
-    if (store === '1') filtered = data.filter(function(r) { return /^\d+$/.test(r.store_number); });
-    else if (store === 'B') filtered = data.filter(function(r) { return !(/^\d+$/.test(r.store_number)); });
+    // FIX: filter op regio (CUR/BON) i.p.v. store_number
+    // Sinds buying-pipeline v17 is store_number leeg en regio gevuld
+    if (store === '1') filtered = data.filter(function(r) { return r.regio === 'CUR'; });
+    else if (store === 'B') filtered = data.filter(function(r) { return r.regio === 'BON'; });
 
     var map = {};
     filtered.forEach(function(r) {
       var key = r.item_number;
-      var isBon = !(/^\d+$/.test(r.store_number));
+      var isBon = r.regio === 'BON';
       var cFactor = isBon ? XCG_USD : 1;
       if (!map[key]) {
         map[key] = {
