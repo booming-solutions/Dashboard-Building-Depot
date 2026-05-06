@@ -1,12 +1,12 @@
 /* ============================================================
-   BESTAND: page_inventory_v5.js
+   BESTAND: page_inventory_v6.js
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.13
+   VERSIE: v3.28.14
    
-   Wijzigingen t.o.v. v4:
-   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
-   - Bevat overzicht per dept (huidige filters worden meegenomen)
+   Wijzigingen t.o.v. v5:
+   - Sticky header: blauwe balk + kolom-headers blijven zichtbaar
+     bij scrollen door lange tabel
    ============================================================ */
 'use client';
 
@@ -346,22 +346,22 @@ export default function InventoryDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-[12px]" style={{ minWidth: '900px' }}>
               <thead>
-                <tr className="bg-[#1B3A5C]">
-                  <th colSpan={2} className="p-0 border-r border-[#2a4f75]"></th>
-                  {!noBudget && <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual vs Budget</th>}
-                  {noBudget && <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">Actual</th>}
-                  <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75]">QOO</th>
-                  <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Maandelijks Verloop</th>
+                <tr className="bg-[#1B3A5C]" style={{ position: 'sticky', top: 0, zIndex: 20 }}>
+                  <th colSpan={2} className="p-0 border-r border-[#2a4f75] bg-[#1B3A5C]"></th>
+                  {!noBudget && <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">Actual vs Budget</th>}
+                  {noBudget && <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">Actual</th>}
+                  <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">QOO</th>
+                  <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 bg-[#1B3A5C]">Maandelijks Verloop</th>
                 </tr>
-                <tr className="bg-[#f0ebe5]">
-                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">DEP</th>
-                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4]">Departement</th>
-                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Budget</th>}
-                  <th className={"text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>Actual</th>
-                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">Verschil</th>}
-                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">%</th>}
-                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4]">Besteld (QOO)</th>
-                  {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
+                <tr className="bg-[#f0ebe5]" style={{ position: 'sticky', top: '34px', zIndex: 19 }}>
+                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]">DEP</th>
+                  <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4] bg-[#f0ebe5]">Departement</th>
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]">Budget</th>}
+                  <th className={"text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>Actual</th>
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]">Verschil</th>}
+                  {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4] bg-[#f0ebe5]">%</th>}
+                  <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] border-r border-[#e5ddd4] bg-[#f0ebe5]">Besteld (QOO)</th>
+                  {historyDates.map(function(dt) { var p = dt.split('-'); return <th key={dt} className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap bg-[#f0ebe5]">{MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2)}</th>; })}
                 </tr>
               </thead>
               <tbody>
