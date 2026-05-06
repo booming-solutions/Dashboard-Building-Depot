@@ -342,18 +342,18 @@ export default function InventoryDashboard() {
       {view === 'overview' && (function() {
         var noBudget = isBonaire || isTotaal;
         return (
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
-          <div className="overflow-x-auto">
+        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm mb-8">
+          <div className="overflow-x-auto rounded-[14px]">
             <table className="w-full border-collapse text-[12px]" style={{ minWidth: '900px' }}>
               <thead>
-                <tr className="bg-[#1B3A5C]" style={{ position: 'sticky', top: 0, zIndex: 20 }}>
+                <tr className="bg-[#1B3A5C]" style={{ position: 'sticky', top: '65px', zIndex: 20 }}>
                   <th colSpan={2} className="p-0 border-r border-[#2a4f75] bg-[#1B3A5C]"></th>
                   {!noBudget && <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">Actual vs Budget</th>}
                   {noBudget && <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">Actual</th>}
                   <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">QOO</th>
                   <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 bg-[#1B3A5C]">Maandelijks Verloop</th>
                 </tr>
-                <tr className="bg-[#f0ebe5]" style={{ position: 'sticky', top: '34px', zIndex: 19 }}>
+                <tr className="bg-[#f0ebe5]" style={{ position: 'sticky', top: '99px', zIndex: 19 }}>
                   <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]">DEP</th>
                   <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4] bg-[#f0ebe5]">Departement</th>
                   {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]">Budget</th>}
