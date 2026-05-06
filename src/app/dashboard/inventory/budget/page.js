@@ -1,12 +1,13 @@
 /* ============================================================
-   BESTAND: page_inventory_v6.js
+   BESTAND: page_inventory_v8.js
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.14
+   VERSIE: v3.28.16
    
    Wijzigingen t.o.v. v5:
-   - Sticky header: blauwe balk + kolom-headers blijven zichtbaar
-     bij scrollen door lange tabel
+   - Tabel-container heeft nu max-height met eigen scroll
+   - Thead is sticky binnen de container — blauwe balk + kolom-namen
+     blijven zichtbaar bij scrollen door rijen
    ============================================================ */
 'use client';
 
@@ -342,18 +343,18 @@ export default function InventoryDashboard() {
       {view === 'overview' && (function() {
         var noBudget = isBonaire || isTotaal;
         return (
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm mb-8">
-          <div className="overflow-x-auto rounded-[14px]">
+        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
+          <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
             <table className="w-full border-collapse text-[12px]" style={{ minWidth: '900px' }}>
               <thead>
-                <tr className="bg-[#1B3A5C]" style={{ position: 'sticky', top: '65px', zIndex: 20 }}>
+                <tr className="bg-[#1B3A5C]" style={{ position: 'sticky', top: 0, zIndex: 20 }}>
                   <th colSpan={2} className="p-0 border-r border-[#2a4f75] bg-[#1B3A5C]"></th>
                   {!noBudget && <th colSpan={4} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">Actual vs Budget</th>}
                   {noBudget && <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">Actual</th>}
                   <th className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 border-r border-[#2a4f75] bg-[#1B3A5C]">QOO</th>
                   <th colSpan={historyDates.length} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2 bg-[#1B3A5C]">Maandelijks Verloop</th>
                 </tr>
-                <tr className="bg-[#f0ebe5]" style={{ position: 'sticky', top: '99px', zIndex: 19 }}>
+                <tr className="bg-[#f0ebe5]" style={{ position: 'sticky', top: '32px', zIndex: 19 }}>
                   <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]">DEP</th>
                   <th className="text-left p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] min-w-[140px] border-r border-[#e5ddd4] bg-[#f0ebe5]">Departement</th>
                   {!noBudget && <th className="text-right p-2 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] bg-[#f0ebe5]">Budget</th>}
@@ -365,14 +366,14 @@ export default function InventoryDashboard() {
                 </tr>
               </thead>
               <tbody>
-                <tr className="bg-[#faf7f4]">
-                  <td colSpan={2} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td>
-                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(totals.budget))}</td>}
-                  <td className={"p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(totals.actual))}</td>
-                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>}
-                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>}
-                  <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]" style={{ color: '#1B3A5C' }}>{totals.qoo > 0 ? fmt(Math.round(totals.qoo)) : '-'}</td>
-                  {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(sum))}</td>; })}
+                <tr className="bg-[#faf7f4]" style={{ position: 'sticky', top: '64px', zIndex: 18 }}>
+                  <td colSpan={2} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] bg-[#faf7f4]">TOTAAL</td>
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] bg-[#faf7f4]">{fmt(Math.round(totals.budget))}</td>}
+                  <td className={"p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] bg-[#faf7f4]" + (noBudget ? " border-r border-[#e5ddd4]" : "")}>{fmt(Math.round(totals.actual))}</td>
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] bg-[#faf7f4]" style={{ color: pctColor(totals.pct) }}>{fmt(Math.round(totals.diff))}</td>}
+                  {!noBudget && <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] bg-[#faf7f4]" style={{ color: pctColor(totals.pct) }}>{totals.budget ? fmtP(totals.pct) : '-'}</td>}
+                  <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] bg-[#faf7f4]" style={{ color: '#1B3A5C' }}>{totals.qoo > 0 ? fmt(Math.round(totals.qoo)) : '-'}</td>
+                  {historyDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return <td key={dt} className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3] bg-[#faf7f4]">{fmt(Math.round(sum))}</td>; })}
                 </tr>
                 {departments.map(function(d, i) {
                   var dc = pctColor(d.pct);
