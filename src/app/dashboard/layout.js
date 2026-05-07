@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
+import ChangelogModal from '@/components/ChangelogModal';
 
 const APP_VERSION = 'V26.02';
 
@@ -150,6 +151,7 @@ export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
@@ -352,8 +354,22 @@ export default function DashboardLayout({ children }) {
         <span style={{ fontSize: '10px', color: '#475569', margin: '0 8px' }}>·</span>
         <span style={{ fontSize: '10px', color: '#475569', fontFamily: 'monospace' }}>© 2026 Booming Solutions</span>
         <span style={{ fontSize: '10px', color: '#475569', margin: '0 8px' }}>·</span>
-        <span style={{ fontSize: '10px', color: '#475569', fontFamily: 'monospace' }}>{APP_VERSION}</span>
+        <button
+          onClick={() => setChangelogOpen(true)}
+          style={{
+            fontSize: '10px', color: '#475569', fontFamily: 'monospace',
+            background: 'none', border: 'none', cursor: 'pointer',
+            padding: 0, textDecoration: 'underline', textDecorationStyle: 'dotted',
+            textUnderlineOffset: '3px',
+          }}
+          title="Klik voor recente updates"
+          onMouseEnter={(e) => { e.target.style.color = '#94a3b8'; }}
+          onMouseLeave={(e) => { e.target.style.color = '#475569'; }}
+        >
+          {APP_VERSION}
+        </button>
       </div>
+      <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
     </div>
   );
 }
