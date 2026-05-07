@@ -105,9 +105,10 @@ export default function HealthDashboardShared({ bumFilter }) {
   var items = useMemo(function() {
     var cFactor = store === 'B' ? 1.82 : 1;
     var filtered = data.filter(function(r) {
-      var sn = String(r.store_number);
-      if (store === '1') return /^\d+$/.test(sn);
-      if (store === 'B') return !/^\d+$/.test(sn);
+      // FIX: filter op regio kolom (CUR/BON) sinds buying-pipeline v17.
+      // store_number is nu leeg bij nieuwe buying-data.
+      if (store === '1') return r.regio === 'CUR';
+      if (store === 'B') return r.regio === 'BON';
       return true;
     });
 
