@@ -1,14 +1,19 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared_v3.js
+   BESTAND: HealthDashboardShared_v4.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
    (vervangt huidige HealthDashboardShared.js)
-   VERSIE: v3.28.14
+   VERSIE: v3.28.18
+
+   Wijzigingen t.o.v. v3:
+   - NOS-filter toegevoegd
+     · Pill "Alle items / Alleen NOS" onder de afdeling-filter
+     · Filtert items, KPI's, stacked bars, dept-summary en tabel
+     · Excel-export bevat nu een NOS kolom
+   - Blauwe NOS-badge naast omschrijving in detail-tabel voor
+     items met nos = 'N' (Code D2 in Compass)
 
    Wijzigingen t.o.v. v2:
    - Excel-export overgeschakeld op gedeelde ExcelExportButton component
-     (zelfde opmaak als alle andere pagina's: blauwe header, frozen pane,
-      footer met datum + boomingsolutions.ai link)
-   - Eigen XLSX/SheetJS import verwijderd
    ============================================================ */
 'use client';
 
@@ -73,6 +78,7 @@ export default function HealthDashboardShared({ bumFilter }) {
   // Filter op stock-niveau (understock/healthy/overstock) of rotatie (healthy/slow/dead)
   var _stockFilter = useState('all'), stockFilter = _stockFilter[0], setStockFilter = _stockFilter[1];
   var _rotFilter = useState('all'), rotFilter = _rotFilter[0], setRotFilter = _rotFilter[1];
+  var _nosOnly = useState(false), nosOnly = _nosOnly[0], setNosOnly = _nosOnly[1];
   var _sort = useState('inv_value'), sortCol = _sort[0], setSortCol = _sort[1];
   var _sortDir = useState('desc'), sortDir = _sortDir[0], setSortDir = _sortDir[1];
   var _search = useState(''), search = _search[0], setSearch = _search[1];
@@ -125,9 +131,12 @@ export default function HealthDashboardShared({ bumFilter }) {
           qoh: 0, inv_value: 0,
           max_lt: parseFloat(r.max_lead_time) || 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
+          is_nos: false,
         };
       }
       var m = map[key];
+      // NOS: true als één van de buying_data rijen voor dit item nos='N' heeft
+      if (String(r.nos || '').trim().toUpperCase() === 'N') m.is_nos = true;
       // Lead time: nemen we het maximum (worst case) over stores binnen regio
       var rlt = parseFloat(r.max_lead_time) || 0;
       if (rlt > m.max_lt) m.max_lt = rlt;
@@ -223,6 +232,7 @@ export default function HealthDashboardShared({ bumFilter }) {
       if (detailDept && m.dept_code !== detailDept) return false;
       if (stockFilter !== 'all' && m.stock_cat !== stockFilter) return false;
       if (rotFilter !== 'all' && m.rot_cat !== rotFilter) return false;
+      if (nosOnly && !m.is_nos) return false;
       if (search) {
         var s = search.toLowerCase();
         if (!(m.item || '').toLowerCase().includes(s) &&
@@ -231,7 +241,7 @@ export default function HealthDashboardShared({ bumFilter }) {
       }
       return true;
     });
-  }, [items, selBum, selDept, detailDept, stockFilter, rotFilter, search]);
+  }, [items, selBum, selDept, detailDept, stockFilter, rotFilter, nosOnly, search]);
 
   /* Stacked bars: tellingen op basis van filters EXCL. categorie-filters */
   var barItems = useMemo(function() {
@@ -239,15 +249,17 @@ export default function HealthDashboardShared({ bumFilter }) {
       if (selBum !== 'all' && m.bum !== selBum) return false;
       if (selDept !== 'all' && m.dept_code !== selDept) return false;
       if (detailDept && m.dept_code !== detailDept) return false;
+      if (nosOnly && !m.is_nos) return false;
       return true;
     });
-  }, [items, selBum, selDept, detailDept]);
+  }, [items, selBum, selDept, detailDept, nosOnly]);
 
   /* Department summary */
   var deptHealth = useMemo(function() {
     var map = {};
     var src = items.filter(function(m) {
       if (selBum !== 'all' && m.bum !== selBum) return false;
+      if (nosOnly && !m.is_nos) return false;
       return true;
     });
     src.forEach(function(m) {
@@ -280,7 +292,7 @@ export default function HealthDashboardShared({ bumFilter }) {
       d.problem_value = d.slow_value + d.dead_value + d.understock_value + d.overstock_value;
     });
     return Object.values(map).sort(function(a, b) { return b.problem_value - a.problem_value; });
-  }, [items, selBum]);
+  }, [items, selBum, nosOnly]);
 
   /* Totals (per categorie) — gebruikt door bars én KPI tegels */
   var totals = useMemo(function() {
@@ -384,6 +396,7 @@ export default function HealthDashboardShared({ bumFilter }) {
             'Afdeling': m.dept_name,
             'Item': m.item,
             'Omschrijving': m.desc,
+            'NOS': m.is_nos ? 'NOS' : '',
             'Vendor': m.vendor,
             'BUM': m.bum,
             'QOH': Math.round(m.qoh),
@@ -459,6 +472,13 @@ export default function HealthDashboardShared({ bumFilter }) {
             <option value="all">Alle Departementen</option>
             {depts.map(function(d) { return <option key={d[0]} value={d[0]}>{d[1]}</option>; })}
           </select>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">NOS</span>
+          <div className="flex gap-1">
+            <Pill label="Alle items" active={!nosOnly} onClick={function() { setNosOnly(false); }} />
+            <Pill label="Alleen NOS" active={nosOnly} onClick={function() { setNosOnly(true); }} />
+          </div>
         </div>
       </div>
 
@@ -669,7 +689,12 @@ export default function HealthDashboardShared({ bumFilter }) {
                     <tr key={m.item + i} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}>
                       <td className="p-1.5 text-[11px] text-[#6b5240] border-b border-[#f0ebe5] font-mono">{m.dept_code}</td>
                       <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] font-mono text-[#1B3A5C]">{m.item}</td>
-                      <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] truncate max-w-[200px]" title={m.desc}>{m.desc}</td>
+                      <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] max-w-[240px]" title={m.desc}>
+                        <div className="flex items-center gap-1.5">
+                          {m.is_nos && <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-bold whitespace-nowrap" style={{ backgroundColor: '#dbeafe', color: '#1B3A5C' }} title="Never Out of Stock">NOS</span>}
+                          <span className="truncate">{m.desc}</span>
+                        </div>
+                      </td>
                       <td className="p-1.5 border-b border-[#f0ebe5] text-center"><StockBadge category={m.stock_cat} /></td>
                       <td className="p-1.5 border-b border-[#f0ebe5] text-center"><RotationBadge category={m.rot_cat} /></td>
                       <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmt(Math.round(m.qoh))}</td>
