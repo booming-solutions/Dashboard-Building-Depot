@@ -1,15 +1,20 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v12.js
+   BESTAND: page_negative_inventory_v13.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.16
+   VERSIE: v3.28.17
+
+   Wijzigingen t.o.v. v12:
+   - Kolom "Overige" hernoemd naar "Ovg locaties"
+   - Kolom verplaatst naar direct na QOH (was na QOO)
+   - Excel-export volgorde en kolomnaam ook aangepast
 
    Wijzigingen t.o.v. v11:
    - BUGFIX: kolomnaam buying_data.region → buying_data.regio
-     (waardoor "Overige" altijd "—" toonde)
+     (waardoor "Ovg locaties" altijd "—" toonde)
 
    Wijzigingen t.o.v. v10:
-   - Nieuwe kolom "Overige stores" in detail tabel
+   - Nieuwe kolom "Ovg locaties" in detail tabel
      · Berekening: buying_data.qoh (regio-totaal) − eigen_qty_on_hand
      · Streepje (—) bij 0, rood bij negatief, blauw bij positief
      · Sortable kolom
@@ -670,8 +675,8 @@ export default function NegativeInventoryPage() {
                     'Omschrijving': it.item_description,
                     'Store': it.store_number,
                     'QOH': it.qty_on_hand,
+                    'Ovg locaties (regio)': overige,
                     'QOO': buyingQoo[it.item_number]?.qoo || 0,
-                    'Overige stores (regio)': overige,
                     'Waarde (XCG)': Math.round(it.inv_value || 0),
                     'Eerste neg.': it.first_seen_date || '',
                     'Status': it.status || '',
@@ -864,8 +869,8 @@ export default function NegativeInventoryPage() {
                     <SortableTh col="item" current={sortCol} dir={sortDir} onClick={handleSort} w="120px">Item</SortableTh>
                     <SortableTh col="desc" current={sortCol} dir={sortDir} onClick={handleSort}>Omschrijving</SortableTh>
                     <SortableTh col="qty_on_hand" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="60px">QOH</SortableTh>
+                    <SortableTh col="overige" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="80px">Ovg locaties</SortableTh>
                     <SortableTh col="qoo" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="60px">QOO</SortableTh>
-                    <SortableTh col="overige" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="80px">Overige</SortableTh>
                     <SortableTh col="inv_value" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="110px">Waarde</SortableTh>
                     <SortableTh col="firstSeen" current={sortCol} dir={sortDir} onClick={handleSort} w="110px">Eerste neg</SortableTh>
                     <SortableTh col="status" current={sortCol} dir={sortDir} onClick={handleSort} w="110px">Status</SortableTh>
@@ -891,7 +896,6 @@ export default function NegativeInventoryPage() {
                         <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono">{it.item_number}</td>
                         <td className="p-2 text-[12px] border-b border-[#f0ebe5] truncate max-w-[280px]" title={it.item_description}>{it.item_description}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(it.qty_on_hand)}</td>
-                        <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#1B3A5C' }}>{((buyingQoo[it.item_number]?.qoo || 0) > 0) ? fmt(buyingQoo[it.item_number].qoo) : '—'}</td>
                         {(function() {
                           var rk = it.item_number + '|' + regionCode(it.store_number);
                           var rq = regioQoh[rk];
@@ -912,6 +916,7 @@ export default function NegativeInventoryPage() {
                             </td>
                           );
                         })()}
+                        <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#1B3A5C' }}>{((buyingQoo[it.item_number]?.qoo || 0) > 0) ? fmt(buyingQoo[it.item_number].qoo) : '—'}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(Math.round(it.inv_value))}</td>
                         <td className="p-2 text-[11px] border-b border-[#f0ebe5]">
                           {fs ? (
