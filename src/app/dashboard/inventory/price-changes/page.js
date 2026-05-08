@@ -1,10 +1,10 @@
 /* ============================================================
    BESTAND: page_price_changes.js
-   KOPIEREN NAAR: src/app/dashboard/inventory/price-changes/page.js
+   KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
    (maak nieuwe folder 'price-changes' aan onder inventory)
    VERSIE: v1.0
    
-   Toont prijs ontwikkeling tussen twee datums met filters voor
+   Toont prijsontwikkeling tussen twee datums met filters voor
    regio, departement, drempel-percentage. Werkt op price_snapshots
    tabel. Sticky header in tabel.
    ============================================================ */
@@ -279,18 +279,19 @@ export default function PriceChangesDashboard() {
             return [{
               name: 'Prijswijzigingen',
               rows: sortedFiltered.map(function(x) {
-                return {
+                var row = {
                   'Dept': x.dept_code,
                   'Departement': x.dept_name,
                   'Item Number': x.item_number,
                   'Omschrijving': x.item_description,
                   'NOS': x.nos || '',
                   'QOH': x.qoh,
-                  'Prijs ' + fmtDate(dateFrom): Math.round(x.from_price * 100) / 100,
-                  'Prijs ' + fmtDate(dateTo): Math.round(x.to_price * 100) / 100,
-                  'Verschil': Math.round(x.diff * 100) / 100,
-                  '% Wijziging': Math.round(x.pct * 10) / 10,
                 };
+                row['Prijs ' + fmtDate(dateFrom)] = Math.round(x.from_price * 100) / 100;
+                row['Prijs ' + fmtDate(dateTo)] = Math.round(x.to_price * 100) / 100;
+                row['Verschil'] = Math.round(x.diff * 100) / 100;
+                row['% Wijziging'] = Math.round(x.pct * 10) / 10;
+                return row;
               }),
             }];
           }}
