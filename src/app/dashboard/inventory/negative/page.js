@@ -1,12 +1,15 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v10.js
+   BESTAND: page_negative_inventory_v11.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.14
-   
-   Wijzigingen t.o.v. v9:
-   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
-   - Bevat overzicht per dept én detail (huidige filters worden meegenomen)
+   VERSIE: v3.28.15
+
+   Wijzigingen t.o.v. v10:
+   - Nieuwe kolom "Overige stores" in detail tabel
+     · Berekening: buying_data.qoh (regio-totaal) − eigen_qty_on_hand
+     · Streepje (—) bij 0, rood bij negatief, blauw bij positief
+     · Sortable kolom
+     · Ook in Excel-export opgenomen
    ============================================================ */
 'use client';
 
@@ -51,6 +54,12 @@ function regionOf(storeNumber) {
   if (s === 'A' || s === 'B') return 'Bonaire';
   return 'Curacao';
 }
+function regionCode(storeNumber) {
+  // Geeft 'CUR' of 'BON' terug — gebruikt voor lookup in regioQoh map
+  var s = String(storeNumber || '').trim().toUpperCase();
+  if (s === 'A' || s === 'B') return 'BON';
+  return 'CUR';
+}
 
 function Pill({ label, active, onClick }) {
   return (
@@ -78,6 +87,7 @@ export default function NegativeInventoryPage() {
   var _snap = _s([]), snapshots = _snap[0], setSnapshots = _snap[1];
   var _fs = _s({}), firstSeen = _fs[0], setFirstSeen = _fs[1];
   var _qoo = _s({}), buyingQoo = _qoo[0], setBuyingQoo = _qoo[1];   // { item_number: { qoo: number, unitPrice: number } }
+  var _rqoh = _s({}), regioQoh = _rqoh[0], setRegioQoh = _rqoh[1];   // { 'item_number|regio': qoh_total }
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _me = _s({ email: '', name: '' }), me = _me[0], setMe = _me[1];
 
@@ -180,19 +190,22 @@ export default function NegativeInventoryPage() {
   // Laad QOO en eenheidsprijs per item uit buying_data
   // QOO = som van qty_on_order over alle BUM/regio's per item_number
   // unitPrice = inv_value_at_cost / qoh, gemiddeld over rijen waarbij qoh > 0 (anders niet betrouwbaar)
+  // regioQoh = som van qoh per (item_number, region) — gebruikt voor "Overige stores" kolom
   async function loadBuyingQoo() {
     var all = [], from = 0, step = 1000;
     while (true) {
       var r = await supabase.from('buying_data')
-        .select('item_number, qoh, qty_on_order, inv_value_at_cost')
+        .select('item_number, qoh, qty_on_order, inv_value_at_cost, region')
         .range(from, from + step - 1);
       if (!r.data || !r.data.length) break;
       all = all.concat(r.data);
       if (r.data.length < step) break;
       from += step;
     }
-    // Aggregeer per item_number
+    // Aggregeer per item_number (voor QOO en unitPrice)
     var agg = {};
+    // Aggregeer per (item_number, region) (voor regio QOH)
+    var regAgg = {};
     all.forEach(function(row) {
       var k = row.item_number;
       if (!agg[k]) agg[k] = { qoo: 0, priceSum: 0, priceCount: 0 };
@@ -203,6 +216,13 @@ export default function NegativeInventoryPage() {
         agg[k].priceSum += iv / qoh;
         agg[k].priceCount += 1;
       }
+      // Region key: 'CUR' of 'BON' (uit region kolom)
+      var reg = String(row.region || '').trim().toUpperCase();
+      if (reg === 'CUR' || reg === 'BON') {
+        var rk = k + '|' + reg;
+        if (!regAgg[rk]) regAgg[rk] = 0;
+        regAgg[rk] += qoh;
+      }
     });
     // Bereken gemiddelde unit price per item
     var map = {};
@@ -211,6 +231,7 @@ export default function NegativeInventoryPage() {
       map[k] = { qoo: agg[k].qoo, unitPrice: unitPrice };
     });
     setBuyingQoo(map);
+    setRegioQoh(regAgg);
   }
 
   /* ── Notes map ── */
@@ -473,6 +494,13 @@ export default function NegativeInventoryPage() {
         case 'desc': va = a.item_description || ''; vb = b.item_description || ''; break;
         case 'qty_on_hand': va = a.qty_on_hand || 0; vb = b.qty_on_hand || 0; break;
         case 'qoo': va = buyingQoo[a.item_number]?.qoo || 0; vb = buyingQoo[b.item_number]?.qoo || 0; break;
+        case 'overige': {
+          var rkA = a.item_number + '|' + regionCode(a.store_number);
+          var rkB = b.item_number + '|' + regionCode(b.store_number);
+          va = (regioQoh[rkA] || 0) - (parseFloat(a.qty_on_hand) || 0);
+          vb = (regioQoh[rkB] || 0) - (parseFloat(b.qty_on_hand) || 0);
+          break;
+        }
         case 'inv_value': va = a.inv_value || 0; vb = b.inv_value || 0; break;
         case 'firstSeen': {
           va = firstSeen[a.item_number]?.first_seen_date || '9999-12-31';
@@ -490,7 +518,7 @@ export default function NegativeInventoryPage() {
       return String(va).localeCompare(String(vb)) * dir;
     });
     return arr;
-  }, [filteredItems, search, hideResolved, sortCol, sortDir, notesByKey, firstSeen, buyingQoo]);
+  }, [filteredItems, search, hideResolved, sortCol, sortDir, notesByKey, firstSeen, buyingQoo, regioQoh]);
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -627,6 +655,9 @@ export default function NegativeInventoryPage() {
               {
                 name: 'Detail',
                 rows: detailItems.map(function(it) {
+                  var rk = it.item_number + '|' + regionCode(it.store_number);
+                  var rq = regioQoh[rk];
+                  var overige = (rq === undefined) ? '' : (rq - (parseFloat(it.qty_on_hand) || 0));
                   return {
                     'Dept': it.dept_code,
                     'Departement': it.dept_name,
@@ -636,6 +667,7 @@ export default function NegativeInventoryPage() {
                     'Store': it.store_number,
                     'QOH': it.qty_on_hand,
                     'QOO': buyingQoo[it.item_number]?.qoo || 0,
+                    'Overige stores (regio)': overige,
                     'Waarde (XCG)': Math.round(it.inv_value || 0),
                     'Eerste neg.': it.first_seen_date || '',
                     'Status': it.status || '',
@@ -816,10 +848,10 @@ export default function NegativeInventoryPage() {
           {/* Detail table */}
           <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[12px]" style={{ minWidth: '1450px' }}>
+              <table className="w-full border-collapse text-[12px]" style={{ minWidth: '1530px' }}>
                 <thead>
                   <tr className="bg-[#1B3A5C]">
-                    <th colSpan={12} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Items met negatieve voorraad</th>
+                    <th colSpan={13} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Items met negatieve voorraad</th>
                   </tr>
                   <tr className="bg-[#f0ebe5]">
                     <SortableTh col="store" current={sortCol} dir={sortDir} onClick={handleSort} w="60px">Store</SortableTh>
@@ -829,6 +861,7 @@ export default function NegativeInventoryPage() {
                     <SortableTh col="desc" current={sortCol} dir={sortDir} onClick={handleSort}>Omschrijving</SortableTh>
                     <SortableTh col="qty_on_hand" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="60px">QOH</SortableTh>
                     <SortableTh col="qoo" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="60px">QOO</SortableTh>
+                    <SortableTh col="overige" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="80px">Overige</SortableTh>
                     <SortableTh col="inv_value" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="110px">Waarde</SortableTh>
                     <SortableTh col="firstSeen" current={sortCol} dir={sortDir} onClick={handleSort} w="110px">Eerste neg</SortableTh>
                     <SortableTh col="status" current={sortCol} dir={sortDir} onClick={handleSort} w="110px">Status</SortableTh>
@@ -838,7 +871,7 @@ export default function NegativeInventoryPage() {
                 </thead>
                 <tbody>
                   {detailItems.length === 0 && (
-                    <tr><td colSpan={12} className="p-6 text-center text-[#6b5240]">Geen items die aan de filters voldoen.</td></tr>
+                    <tr><td colSpan={13} className="p-6 text-center text-[#6b5240]">Geen items die aan de filters voldoen.</td></tr>
                   )}
                   {detailItems.map(function(it, i) {
                     var itemNotes = notesByKey[it.store_number + '|' + it.item_number] || [];
@@ -855,6 +888,26 @@ export default function NegativeInventoryPage() {
                         <td className="p-2 text-[12px] border-b border-[#f0ebe5] truncate max-w-[280px]" title={it.item_description}>{it.item_description}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(it.qty_on_hand)}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#1B3A5C' }}>{((buyingQoo[it.item_number]?.qoo || 0) > 0) ? fmt(buyingQoo[it.item_number].qoo) : '—'}</td>
+                        {(function() {
+                          var rk = it.item_number + '|' + regionCode(it.store_number);
+                          var rq = regioQoh[rk];
+                          // Als geen buying_data rij bestaat voor dit item in deze regio: streepje
+                          if (rq === undefined) {
+                            return <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5] text-[#a08a74]" title="Geen buying_data voor dit item in deze regio">—</td>;
+                          }
+                          var overige = rq - (parseFloat(it.qty_on_hand) || 0);
+                          // qty_on_hand is negatief, dus rq − (−34) = rq + 34
+                          var color, display;
+                          if (overige === 0) { color = '#a08a74'; display = '—'; }
+                          else if (overige < 0) { color = '#dc2626'; display = fmt(overige); }
+                          else { color = '#1B3A5C'; display = fmt(overige); }
+                          return (
+                            <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: color }}
+                                title={'Regio QOH: ' + fmt(rq) + ' − eigen QOH: ' + fmt(it.qty_on_hand) + ' = ' + fmt(overige)}>
+                              {display}
+                            </td>
+                          );
+                        })()}
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(Math.round(it.inv_value))}</td>
                         <td className="p-2 text-[11px] border-b border-[#f0ebe5]">
                           {fs ? (
