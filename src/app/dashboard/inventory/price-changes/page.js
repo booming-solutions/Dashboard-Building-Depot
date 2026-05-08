@@ -1,15 +1,18 @@
 /* ============================================================
-   BESTAND: page_price_changes_v6.js
+   BESTAND: page_price_changes_v7.js
    KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
-   VERSIE: v6.0
+   VERSIE: v7.0
+
+   Wijzigingen t.o.v. v6:
+   - Regio-pills gaan automatisch op "disabled" als er <2 snapshots zijn
+     · Pill toont licht-grijs en is niet klikbaar
+     · Tooltip legt uit waarom (minimaal 2 snapshots nodig)
+     · Bonaire heeft nu maar 1 snapshot → automatisch disabled
+     · Zodra er een 2e BON snapshot binnenkomt wordt de pill weer actief
+   - Per-regio datums getrackt in nieuwe state datesByRegio
 
    Wijzigingen t.o.v. v5:
-   - Minimum drempel 0,5% (was 0%)
-     · Wijzigingen <0,5% gelden als afrondings-ruis (paar tienden cent)
-     · Slider min = 0,5 (was 0)
-     · Initial drempel = 0,5 (was 0)
-     · Footer-tekst aangepast
-   - Filter "x.pct !== 0" vervangen door "abs(pct) >= 0.5"
+   - Minimum drempel 0,5% (afrondings-ruis filter)
 
    Wijzigingen t.o.v. v4:
    - BUGFIX: items met 0% wijziging werden meegeteld als "gewijzigd"
@@ -17,8 +20,6 @@
 
    Wijzigingen t.o.v. v3:
    - Nieuwe KPI tile "% van totaal"
-   - Sub-tekst onder "Items met wijziging": "van X totaal"
-   - KPI grid van 5 naar 6 kolommen
 
    Wijzigingen t.o.v. v2:
    - BUGFIX: dropdown toonde maar 1 datum (Supabase 1000-row limit)
@@ -43,7 +44,16 @@ var fmtDate = function(d) {
   return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + ' ' + p[0];
 };
 
-function Pill({ label, active, onClick }) {
+function Pill({ label, active, onClick, disabled, title }) {
+  if (disabled) {
+    return (
+      <button
+        disabled
+        title={title || 'Niet beschikbaar'}
+        className="px-3 py-1.5 rounded-full text-xs font-semibold border whitespace-nowrap bg-[#faf7f4] text-[#c4b5a3] border-[#ede5db] cursor-not-allowed opacity-60"
+      >{label}</button>
+    );
+  }
   return (
     <button
       className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' +
@@ -74,6 +84,7 @@ export default function PriceChangesDashboard() {
 
   var _l = _s(true), loading = _l[0], setLoading = _l[1];
   var _dates = _s([]), availableDates = _dates[0], setAvailableDates = _dates[1];
+  var _datesByRegio = _s({}), datesByRegio = _datesByRegio[0], setDatesByRegio = _datesByRegio[1];
   var _df = _s(''), dateFrom = _df[0], setDateFrom = _df[1];
   var _dt = _s(''), dateTo = _dt[0], setDateTo = _dt[1];
   var _regio = _s('CUR'), regio = _regio[0], setRegio = _regio[1];
@@ -91,28 +102,41 @@ export default function PriceChangesDashboard() {
   // BUG FIX v3: Supabase heeft default limit van 1000 rijen. Met 100k+ rijen
   // in price_snapshots kreeg je dus alleen de oudste datum terug.
   // Oplossing: paginatie tot we alle datums hebben gezien.
+  // v7: ook per-regio datums tracken voor disabled state op regio-pills
   useEffect(function() {
     async function load() {
       var allDates = {};
-      var from = 0, step = 1000, lastSeenDate = null, sameCount = 0;
+      var perRegio = {};
+      var from = 0, step = 1000;
       while (true) {
         var r = await supabase
           .from('price_snapshots')
-          .select('snapshot_date')
+          .select('snapshot_date, regio')
           .order('snapshot_date', { ascending: true })
           .range(from, from + step - 1);
         if (!r.data || !r.data.length) break;
-        r.data.forEach(function(x) { allDates[x.snapshot_date] = true; });
+        r.data.forEach(function(x) {
+          allDates[x.snapshot_date] = true;
+          if (!perRegio[x.regio]) perRegio[x.regio] = {};
+          perRegio[x.regio][x.snapshot_date] = true;
+        });
         if (r.data.length < step) break;
-        // Veiligheidskap: na 200k rows (200 pages) stoppen om hangen te voorkomen
         from += step;
         if (from > 200000) {
           console.warn('Price snapshots: stopped paginating after 200k rows');
           break;
         }
       }
+      // Per regio: array met datums sorteren
+      var perRegioArr = {};
+      Object.keys(perRegio).forEach(function(reg) {
+        perRegioArr[reg] = Object.keys(perRegio[reg]).sort();
+      });
+      setDatesByRegio(perRegioArr);
+
       var sortedDates = Object.keys(allDates).sort();
       console.log('Price snapshots: ' + sortedDates.length + ' unique dates loaded');
+      console.log('Per regio: ' + Object.keys(perRegioArr).map(function(r) { return r + '=' + perRegioArr[r].length; }).join(', '));
       setAvailableDates(sortedDates);
       if (sortedDates.length >= 2) {
         setDateFrom(sortedDates[0]);
@@ -290,8 +314,12 @@ export default function PriceChangesDashboard() {
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Regio</span>
           <div className="flex gap-1">
-            <Pill label="Curaçao" active={regio === 'CUR'} onClick={function() { setRegio('CUR'); }} />
-            <Pill label="Bonaire" active={regio === 'BON'} onClick={function() { setRegio('BON'); }} />
+            <Pill label="Curaçao" active={regio === 'CUR'} onClick={function() { setRegio('CUR'); }}
+                  disabled={(datesByRegio.CUR || []).length < 2}
+                  title={(datesByRegio.CUR || []).length < 2 ? 'Onvoldoende data om wijzigingen te berekenen (minimaal 2 snapshots nodig)' : ''} />
+            <Pill label="Bonaire" active={regio === 'BON'} onClick={function() { setRegio('BON'); }}
+                  disabled={(datesByRegio.BON || []).length < 2}
+                  title={(datesByRegio.BON || []).length < 2 ? 'Nog onvoldoende data — minimaal 2 snapshots nodig om wijzigingen te tonen' : ''} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
