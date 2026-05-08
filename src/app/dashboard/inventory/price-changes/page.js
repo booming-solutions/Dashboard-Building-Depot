@@ -1,12 +1,18 @@
 /* ============================================================
-   BESTAND: page_price_changes.js
+   BESTAND: page_price_changes_v3.js
    KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
-   (maak nieuwe folder 'price-changes' aan onder inventory)
-   VERSIE: v1.0
-   
-   Toont prijsontwikkeling tussen twee datums met filters voor
-   regio, departement, drempel-percentage. Werkt op price_snapshots
-   tabel. Sticky header in tabel.
+   VERSIE: v3.0
+
+   Wijzigingen t.o.v. v2:
+   - BUGFIX: dropdown toonde maar 1 datum
+     · Oorzaak: Supabase default limit 1000 rijen, met 100k+ snapshots
+       kreeg je alleen de oudste datum terug
+     · Fix: paginatie toegevoegd aan dates query
+
+   Wijzigingen t.o.v. v1:
+   - Toont prijsontwikkeling tussen twee datums met filters voor
+     regio, departement, drempel-percentage. Werkt op price_snapshots
+     tabel. Sticky header in tabel.
    ============================================================ */
 'use client';
 
@@ -54,28 +60,38 @@ export default function PriceChangesDashboard() {
   var _depts = _s([]), depts = _depts[0], setDepts = _depts[1];
 
   // Initial load: get available dates
+  // BUG FIX v3: Supabase heeft default limit van 1000 rijen. Met 100k+ rijen
+  // in price_snapshots kreeg je dus alleen de oudste datum terug.
+  // Oplossing: paginatie tot we alle datums hebben gezien.
   useEffect(function() {
     async function load() {
-      var r = await supabase
-        .from('price_snapshots')
-        .select('snapshot_date, regio')
-        .order('snapshot_date', { ascending: true });
-      if (r.data) {
-        // Unique dates per regio
-        var datesByRegio = {};
-        r.data.forEach(function(x) {
-          if (!datesByRegio[x.regio]) datesByRegio[x.regio] = {};
-          datesByRegio[x.regio][x.snapshot_date] = true;
-        });
-        // All unique dates
-        var allDates = {};
+      var allDates = {};
+      var from = 0, step = 1000, lastSeenDate = null, sameCount = 0;
+      while (true) {
+        var r = await supabase
+          .from('price_snapshots')
+          .select('snapshot_date')
+          .order('snapshot_date', { ascending: true })
+          .range(from, from + step - 1);
+        if (!r.data || !r.data.length) break;
         r.data.forEach(function(x) { allDates[x.snapshot_date] = true; });
-        var sortedDates = Object.keys(allDates).sort();
-        setAvailableDates(sortedDates);
-        if (sortedDates.length >= 2) {
-          setDateFrom(sortedDates[0]);
-          setDateTo(sortedDates[sortedDates.length - 1]);
+        if (r.data.length < step) break;
+        // Veiligheidskap: na 200k rows (200 pages) stoppen om hangen te voorkomen
+        from += step;
+        if (from > 200000) {
+          console.warn('Price snapshots: stopped paginating after 200k rows');
+          break;
         }
+      }
+      var sortedDates = Object.keys(allDates).sort();
+      console.log('Price snapshots: ' + sortedDates.length + ' unique dates loaded');
+      setAvailableDates(sortedDates);
+      if (sortedDates.length >= 2) {
+        setDateFrom(sortedDates[0]);
+        setDateTo(sortedDates[sortedDates.length - 1]);
+      } else if (sortedDates.length === 1) {
+        setDateFrom(sortedDates[0]);
+        setDateTo(sortedDates[0]);
       }
       setLoading(false);
     }
