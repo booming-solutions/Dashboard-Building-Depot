@@ -1,16 +1,19 @@
 /* ============================================================
-   BESTAND: page_price_changes_v5.js
+   BESTAND: page_price_changes_v6.js
    KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
-   VERSIE: v5.0
+   VERSIE: v6.0
+
+   Wijzigingen t.o.v. v5:
+   - Minimum drempel 0,5% (was 0%)
+     · Wijzigingen <0,5% gelden als afrondings-ruis (paar tienden cent)
+     · Slider min = 0,5 (was 0)
+     · Initial drempel = 0,5 (was 0)
+     · Footer-tekst aangepast
+   - Filter "x.pct !== 0" vervangen door "abs(pct) >= 0.5"
 
    Wijzigingen t.o.v. v4:
    - BUGFIX: items met 0% wijziging werden meegeteld als "gewijzigd"
-     · Nu altijd uitgesloten uit lijst en KPI's
-     · "Items met wijziging" telling klopt nu wel met zichtbare lijst
-   - "Ongewijzigd" stat verwijderd (altijd 0 nu)
    - Sortable tabel-kolommen — klik op header om te sorteren
-     · Default: % wijziging (absoluut), grootste eerst
-     · Pijltjes ▲/▼ tonen actieve kolom + richting
 
    Wijzigingen t.o.v. v3:
    - Nieuwe KPI tile "% van totaal"
@@ -75,7 +78,7 @@ export default function PriceChangesDashboard() {
   var _dt = _s(''), dateTo = _dt[0], setDateTo = _dt[1];
   var _regio = _s('CUR'), regio = _regio[0], setRegio = _regio[1];
   var _dept = _s('all'), selDept = _dept[0], setSelDept = _dept[1];
-  var _drempel = _s(0), drempel = _drempel[0], setDrempel = _drempel[1];
+  var _drempel = _s(0.5), drempel = _drempel[0], setDrempel = _drempel[1];
   var _direction = _s('all'), direction = _direction[0], setDirection = _direction[1]; // all, up, down
   var _data = _s({ from: [], to: [] }), data = _data[0], setData = _data[1];
   var _depts = _s([]), depts = _depts[0], setDepts = _depts[1];
@@ -208,8 +211,8 @@ export default function PriceChangesDashboard() {
 
   var filtered = useMemo(function() {
     var f = changes;
-    // Sluit items met 0% wijziging altijd uit — die zijn niet "gewijzigd"
-    f = f.filter(function(x) { return x.pct !== 0; });
+    // Sluit items uit met minder dan 0.5% wijziging (afrondings-ruis)
+    f = f.filter(function(x) { return Math.abs(x.pct) >= 0.5; });
     if (selDept !== 'all') f = f.filter(function(x) { return x.dept_code === selDept; });
     if (drempel > 0) f = f.filter(function(x) { return Math.abs(x.pct) >= drempel; });
     if (direction === 'up') f = f.filter(function(x) { return x.pct > 0; });
@@ -322,12 +325,12 @@ export default function PriceChangesDashboard() {
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Drempel</span>
           <input
-            type="range" min="0" max="50" step="0.5" value={drempel}
+            type="range" min="0.5" max="50" step="0.5" value={Math.max(drempel, 0.5)}
             onChange={function(e) { setDrempel(parseFloat(e.target.value)); }}
             style={{ width: '200px' }}
           />
-          <span className="text-[12px] font-mono text-[#1a0a04] min-w-[60px]">≥ {drempel.toFixed(1)}%</span>
-          <span className="text-[11px] text-[#6b5240]">(verbergt kleinere wijzigingen)</span>
+          <span className="text-[12px] font-mono text-[#1a0a04] min-w-[60px]">≥ {Math.max(drempel, 0.5).toFixed(1)}%</span>
+          <span className="text-[11px] text-[#6b5240]">(verbergt kleinere wijzigingen — minimum 0,5%)</span>
         </div>
       </div>
 
@@ -429,6 +432,7 @@ export default function PriceChangesDashboard() {
           De prijs per stuk wordt berekend als <code className="font-mono text-[#1a0a04]">inventory_value ÷ qoh</code>.
           Items zonder voorraad in een bepaalde periode komen niet voor in dat datapunt.
           De vergelijking toont alleen items die in BEIDE gekozen datums een geldige prijs hebben.
+          Wijzigingen kleiner dan <b>0,5%</b> worden gezien als afrondings-ruis en niet meegeteld.
         </p>
       </div>
     </div>
