@@ -1,17 +1,15 @@
 /* ============================================================
-   BESTAND: route_email_v17.js
+   BESTAND: route_email_v18.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v18:
+   - Nieuwe file type 'price_changes' toegevoegd:
+     * Detectie via 'Date Of Last Sale' kolom (uniek voor deze file)
+     * processPriceChanges schrijft naar price_snapshots tabel
+     * Gebruikt vandaag als snapshot_date
+     * Delete-then-insert per (regio × snapshot_date)
    WIJZIGING v17:
-   - processBuying schrijft nu een 'regio' kolom (CUR/BON) i.p.v.
-     CUR→1 / BON→B mapping naar store_number. Reden: store_number
-     conventie verschilt tussen tabellen (inventory_data heeft
-     1,2,4,5,9 voor CUR en A,B voor BON; buying_data is geaggregeerd).
-     Met aparte regio-kolom is filteren op CUR/BON consistent.
-     store_number wordt leeg gelaten bij buying-imports.
-   - Delete is nu per (BUM × regio).
-   WIJZIGING v16:
-   - processBuying: store_number mapping CUR→1, BON→B; delete per (BUM × store)
+   - processBuying schrijft 'regio' kolom (CUR/BON) i.p.v. mapping naar store_number
    WIJZIGING v10:
    - processInventory filtert nu lege rijen en 'GRAND SUMMARIES' weg
    - Niet-numerieke dept codes (FA/FC/FE/FF/XX) samengevoegd tot 'OTHER'
@@ -72,6 +70,15 @@ function detectFileType(columns) {
       cols.some(function(c) { return c.includes('sales units'); }) &&
       cols.some(function(c) { return c.includes('department group'); })) {
     return 'buying';
+  }
+
+  // Price changes: has "Item Number" + "Quantity on Hand" + "Store Group" + "Date Of Last Sale"
+  // Moet voor negative_inventory worden geprobeerd want anders matcht dat eerst
+  if (cols.some(function(c) { return c.includes('item number'); }) &&
+      cols.some(function(c) { return c.includes('quantity on hand'); }) &&
+      cols.some(function(c) { return c.includes('store group'); }) &&
+      cols.some(function(c) { return c.includes('date of last sale') || c.includes('last sale'); })) {
+    return 'price_changes';
   }
 
   // Negative inventory: has "Item Number" + "Quantity on Hand" + "Inventory Value"
@@ -861,6 +868,130 @@ async function processNosSnapshot() {
   }
 }
 
+/* ── Process PRICE CHANGES data ──
+   Schrijft naar price_snapshots tabel, met snapshot_date = vandaag.
+   Verwijdert eerst bestaande rijen voor (regio × snapshot_date) en insert
+   daarna de nieuwe rijen. Items waar qoh <= 0 of inv_value <= 0 worden geskipt
+   (kunnen geen prijs voor berekenen). Duplicate items binnen één regio worden
+   geaggregeerd (qoh + inv_value gesomd) zodat de unique constraint niet faalt.
+*/
+async function processPriceChanges(json) {
+  // Verzamel alle keys uit alle rijen (SheetJS skipt lege cellen in rij 1)
+  var keysSet = {};
+  for (var ki = 0; ki < json.length; ki++) {
+    var rk = Object.keys(json[ki]);
+    for (var kj = 0; kj < rk.length; kj++) keysSet[rk[kj]] = true;
+  }
+  var keys = Object.keys(keysSet);
+
+  // Snapshot datum = vandaag
+  var today = new Date().toISOString().slice(0, 10);
+  console.log('Price snapshot for ' + today);
+
+  // Eerst aggregeren per (item × regio): qoh en inv_value sommen voor duplicates
+  var aggMap = {};
+  var skippedNoQoh = 0;
+  var skippedNoItem = 0;
+  var skippedNoRegio = 0;
+
+  json.forEach(function(row) {
+    var itemNum = String(row[findCol(keys, ['item number'])] || '').trim();
+    if (!itemNum) {
+      skippedNoItem++;
+      return;
+    }
+
+    var rawStore = String(row[findCol(keys, ['store group'])] || '').trim().toUpperCase();
+    var regio = (rawStore === 'CUR' || rawStore === 'BON') ? rawStore : null;
+    if (!regio) {
+      skippedNoRegio++;
+      return;
+    }
+
+    var qoh = parseFloat(row[findCol(keys, ['quantity on hand'])] || 0);
+    var invValue = parseFloat(row[findCol(keys, ['inventory value', 'inv value'])] || 0);
+
+    var key = itemNum + '|' + regio;
+    if (!aggMap[key]) {
+      // Pad dept_code with leading zero if numeric
+      var deptCode = String(row[findCol(keys, ['department code'])] || '').trim();
+      if (/^\d+$/.test(deptCode) && deptCode.length === 1) deptCode = '0' + deptCode;
+
+      var nos = String(row[findCol(keys, ['code d2', 'nos'])] || '').trim();
+      if (nos.toLowerCase() === 'nan') nos = '';
+
+      aggMap[key] = {
+        item_number: itemNum,
+        item_description: String(row[findCol(keys, ['item description'])] || '').slice(0, 200),
+        dept_code: deptCode,
+        dept_name: String(row[findCol(keys, ['department name'])] || '').slice(0, 100),
+        bum: '',
+        nos: nos,
+        regio: regio,
+        snapshot_date: today,
+        qoh: 0,
+        inv_value: 0,
+      };
+    }
+    aggMap[key].qoh += qoh;
+    aggMap[key].inv_value += invValue;
+  });
+
+  // Bereken unit_price = inv_value / qoh, skip als qoh of inv_value <= 0
+  var rows = [];
+  Object.values(aggMap).forEach(function(rec) {
+    if (rec.qoh <= 0 || rec.inv_value <= 0) {
+      skippedNoQoh++;
+      return;
+    }
+    var price = rec.inv_value / rec.qoh;
+    if (price <= 0) {
+      skippedNoQoh++;
+      return;
+    }
+    rec.unit_price = Math.round(price * 10000) / 10000;
+    rows.push(rec);
+  });
+
+  console.log('Price changes: ' + rows.length + ' valid items, skipped: ' +
+              skippedNoQoh + ' (qoh/value <= 0), ' +
+              skippedNoItem + ' (no item number), ' +
+              skippedNoRegio + ' (no regio)');
+
+  // Bepaal welke regio's er in de file zitten
+  var regiosInFile = {};
+  rows.forEach(function(r) { regiosInFile[r.regio] = true; });
+
+  // Verwijder bestaande snapshots voor vandaag × elke regio in de file
+  for (var regio in regiosInFile) {
+    var delResult = await supabase.from('price_snapshots')
+      .delete({ count: 'exact' })
+      .eq('regio', regio)
+      .eq('snapshot_date', today);
+    if (delResult.error) {
+      console.error('Price snapshot delete error for ' + regio + ': ' + delResult.error.message);
+    } else {
+      console.log('Price snapshot: deleted ' + (delResult.count || 0) + ' existing rows for ' + regio + ' / ' + today);
+    }
+  }
+
+  // Insert in batches van 500
+  var totalInserted = 0;
+  for (var i = 0; i < rows.length; i += 500) {
+    var batch = rows.slice(i, i + 500);
+    var res = await supabase.from('price_snapshots').insert(batch);
+    if (res.error) {
+      console.error('Price snapshot batch error at ' + i + ': ' + res.error.message);
+      continue;
+    }
+    totalInserted += batch.length;
+  }
+
+  console.log('Price snapshots: imported ' + totalInserted + ' rows for ' + today);
+
+  return { table: 'price_snapshots', rows_imported: totalInserted, regios: Object.keys(regiosInFile), snapshot_date: today };
+}
+
 /* ══════════════════════════════════════════════
    MAIN HANDLER
    ══════════════════════════════════════════════ */
@@ -928,6 +1059,8 @@ export async function POST(request) {
       result = await processNegativeInventory(json);
     } else if (fileType === 'sales') {
       result = await processSales(json, batchId);
+    } else if (fileType === 'price_changes') {
+      result = await processPriceChanges(json);
     } else {
       console.error('Unknown file type. Columns: ' + columns.join(', '));
       return Response.json({ 
