@@ -1,6 +1,6 @@
 /* ============================================================
    BESTAND: route_email_v18.js
-   KOPIEER NAAR: src/app/api/email-upload/route.js
+   KOPIEREN NAAR: src/app/api/email-upload/route.js
    (vervang de huidige route.js)
    WIJZIGING v18:
    - Nieuwe file type 'price_changes' toegevoegd:

@@ -1,6 +1,6 @@
 /* ============================================================
    BESTAND: page_price_changes.js
-   KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
+   KOPIEREN NAAR: src/app/dashboard/inventory/price-changes/page.js
    (maak nieuwe folder 'price-changes' aan onder inventory)
    VERSIE: v1.0
    
