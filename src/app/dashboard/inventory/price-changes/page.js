@@ -4,7 +4,7 @@
    (maak nieuwe folder 'price-changes' aan onder inventory)
    VERSIE: v1.0
    
-   Toont prijsontwikkeling tussen twee datums met filters voor
+   Toont prijs ontwikkeling tussen twee datums met filters voor
    regio, departement, drempel-percentage. Werkt op price_snapshots
    tabel. Sticky header in tabel.
    ============================================================ */
