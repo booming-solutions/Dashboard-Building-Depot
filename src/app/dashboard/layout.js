@@ -1,7 +1,13 @@
 /* ============================================================
-   BESTAND: layout.js
+   BESTAND: dashboard_layout_v3.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
+
+   WIJZIGINGEN T.O.V. V26.02:
+   - Nieuwe nav-item "Price Changes" onder Voorraad
+   - REPORT_MAP entry toegevoegd voor /dashboard/inventory/price-changes
+     → report key 'inventory_price_changes'
+   - Versie aangepast naar V27.01
 
    WIJZIGINGEN T.O.V. v3.27.02:
    - Menu items "Overzicht", "Rapportages" en "Bestanden" verborgen
@@ -17,7 +23,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import ChangelogModal from '@/components/ChangelogModal';
 
-const APP_VERSION = 'V26.02';
+const APP_VERSION = 'V27.01';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -226,6 +232,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
+    '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/hr/salary': 'hr_payroll',
   };
 
@@ -247,6 +254,7 @@ export default function DashboardLayout({ children }) {
       { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
+    { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
       { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
