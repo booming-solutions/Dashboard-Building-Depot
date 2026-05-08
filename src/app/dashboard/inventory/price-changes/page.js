@@ -1,26 +1,24 @@
 /* ============================================================
-   BESTAND: page_price_changes_v4.js
+   BESTAND: page_price_changes_v5.js
    KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
-   VERSIE: v4.0
+   VERSIE: v5.0
+
+   Wijzigingen t.o.v. v4:
+   - BUGFIX: items met 0% wijziging werden meegeteld als "gewijzigd"
+     · Nu altijd uitgesloten uit lijst en KPI's
+     · "Items met wijziging" telling klopt nu wel met zichtbare lijst
+   - "Ongewijzigd" stat verwijderd (altijd 0 nu)
+   - Sortable tabel-kolommen — klik op header om te sorteren
+     · Default: % wijziging (absoluut), grootste eerst
+     · Pijltjes ▲/▼ tonen actieve kolom + richting
 
    Wijzigingen t.o.v. v3:
    - Nieuwe KPI tile "% van totaal"
-     · Noemer: items op to-datum met geldige prijs (binnen huidige
-       dept-filter)
-     · Sub-tekst onder "Items met wijziging": "van X totaal"
+   - Sub-tekst onder "Items met wijziging": "van X totaal"
    - KPI grid van 5 naar 6 kolommen
-   - Mobile: KPI grid van 1 naar 2 kolommen breed
 
    Wijzigingen t.o.v. v2:
-   - BUGFIX: dropdown toonde maar 1 datum
-     · Oorzaak: Supabase default limit 1000 rijen, met 100k+ snapshots
-       kreeg je alleen de oudste datum terug
-     · Fix: paginatie toegevoegd aan dates query
-
-   Wijzigingen t.o.v. v1:
-   - Toont prijsontwikkeling tussen twee datums met filters voor
-     regio, departement, drempel-percentage. Werkt op price_snapshots
-     tabel. Sticky header in tabel.
+   - BUGFIX: dropdown toonde maar 1 datum (Supabase 1000-row limit)
    ============================================================ */
 'use client';
 
@@ -52,6 +50,21 @@ function Pill({ label, active, onClick }) {
   );
 }
 
+function SortTh({ col, current, dir, onClick, align, children }) {
+  var isActive = current === col;
+  var arrow = isActive ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
+  var alignClass = align === 'right' ? 'text-right' : (align === 'center' ? 'text-center' : 'text-left');
+  return (
+    <th
+      onClick={function() { onClick(col); }}
+      className={alignClass + ' p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C] cursor-pointer select-none hover:bg-[#264a72]'}
+      style={{ userSelect: 'none' }}
+    >
+      {children}{arrow}
+    </th>
+  );
+}
+
 export default function PriceChangesDashboard() {
   var supabase = createClient();
   var _s = useState;
@@ -66,6 +79,10 @@ export default function PriceChangesDashboard() {
   var _direction = _s('all'), direction = _direction[0], setDirection = _direction[1]; // all, up, down
   var _data = _s({ from: [], to: [] }), data = _data[0], setData = _data[1];
   var _depts = _s([]), depts = _depts[0], setDepts = _depts[1];
+
+  // Sort state — default: grootste absolute wijziging eerst
+  var _sc = _s('pct_abs'), sortCol = _sc[0], setSortCol = _sc[1];
+  var _sd = _s('desc'), sortDir = _sd[0], setSortDir = _sd[1];
 
   // Initial load: get available dates
   // BUG FIX v3: Supabase heeft default limit van 1000 rijen. Met 100k+ rijen
@@ -191,6 +208,8 @@ export default function PriceChangesDashboard() {
 
   var filtered = useMemo(function() {
     var f = changes;
+    // Sluit items met 0% wijziging altijd uit — die zijn niet "gewijzigd"
+    f = f.filter(function(x) { return x.pct !== 0; });
     if (selDept !== 'all') f = f.filter(function(x) { return x.dept_code === selDept; });
     if (drempel > 0) f = f.filter(function(x) { return Math.abs(x.pct) >= drempel; });
     if (direction === 'up') f = f.filter(function(x) { return x.pct > 0; });
@@ -202,8 +221,6 @@ export default function PriceChangesDashboard() {
     var total = filtered.length;
     var up = filtered.filter(function(x) { return x.pct > 0; }).length;
     var down = filtered.filter(function(x) { return x.pct < 0; }).length;
-    var unchanged = filtered.filter(function(x) { return x.pct === 0; }).length;
-    var avgPct = total > 0 ? filtered.reduce(function(a, x) { return a + x.pct; }, 0) / total : 0;
     var avgUp = up > 0 ? filtered.filter(function(x) { return x.pct > 0; }).reduce(function(a, x) { return a + x.pct; }, 0) / up : 0;
     var avgDown = down > 0 ? filtered.filter(function(x) { return x.pct < 0; }).reduce(function(a, x) { return a + x.pct; }, 0) / down : 0;
 
@@ -215,13 +232,43 @@ export default function PriceChangesDashboard() {
     }).length;
     var pctOfTotal = totalToDate > 0 ? (total / totalToDate) * 100 : 0;
 
-    return { total: total, up: up, down: down, unchanged: unchanged, avgPct: avgPct, avgUp: avgUp, avgDown: avgDown, totalToDate: totalToDate, pctOfTotal: pctOfTotal };
+    return { total: total, up: up, down: down, avgUp: avgUp, avgDown: avgDown, totalToDate: totalToDate, pctOfTotal: pctOfTotal };
   }, [filtered, data, selDept]);
 
-  // Sort by absolute pct descending (biggest changes first)
+  // Sort op klikbare kolom-headers
   var sortedFiltered = useMemo(function() {
-    return [...filtered].sort(function(a, b) { return Math.abs(b.pct) - Math.abs(a.pct); });
-  }, [filtered]);
+    var arr = filtered.slice();
+    var dir = sortDir === 'asc' ? 1 : -1;
+    arr.sort(function(a, b) {
+      var va, vb;
+      switch (sortCol) {
+        case 'dept': va = a.dept_code || ''; vb = b.dept_code || ''; break;
+        case 'item': va = a.item_number || ''; vb = b.item_number || ''; break;
+        case 'desc': va = a.item_description || ''; vb = b.item_description || ''; break;
+        case 'nos':  va = a.nos || ''; vb = b.nos || ''; break;
+        case 'qoh':  va = parseFloat(a.qoh) || 0; vb = parseFloat(b.qoh) || 0; break;
+        case 'from_price': va = a.from_price || 0; vb = b.from_price || 0; break;
+        case 'to_price':   va = a.to_price || 0; vb = b.to_price || 0; break;
+        case 'diff':       va = a.diff || 0; vb = b.diff || 0; break;
+        case 'pct':        va = a.pct || 0; vb = b.pct || 0; break;
+        case 'pct_abs':
+        default:           va = Math.abs(a.pct || 0); vb = Math.abs(b.pct || 0); break;
+      }
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+      return String(va).localeCompare(String(vb)) * dir;
+    });
+    return arr;
+  }, [filtered, sortCol, sortDir]);
+
+  function handleSort(col) {
+    if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else {
+      setSortCol(col);
+      // Numerieke kolommen default desc, tekst-kolommen default asc
+      var numericCols = ['qoh', 'from_price', 'to_price', 'diff', 'pct', 'pct_abs'];
+      setSortDir(numericCols.indexOf(col) !== -1 ? 'desc' : 'asc');
+    }
+  }
 
   if (loading) return <LoadingLogo text="Prijsdata laden..." />;
 
@@ -339,15 +386,15 @@ export default function PriceChangesDashboard() {
           <table className="w-full border-collapse text-[12px]" style={{ minWidth: '1100px' }}>
             <thead>
               <tr className="bg-[#1B3A5C]" style={{ position: 'sticky', top: 0, zIndex: 20 }}>
-                <th className="text-left p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">Dept</th>
-                <th className="text-left p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">Item</th>
-                <th className="text-left p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">Omschrijving</th>
-                <th className="text-center p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">NOS</th>
-                <th className="text-right p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">QOH</th>
-                <th className="text-right p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">{'Prijs ' + fmtDate(dateFrom)}</th>
-                <th className="text-right p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">{'Prijs ' + fmtDate(dateTo)}</th>
-                <th className="text-right p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">Verschil</th>
-                <th className="text-right p-2 text-white text-[10px] font-bold uppercase bg-[#1B3A5C]">% Wijziging</th>
+                <SortTh col="dept" current={sortCol} dir={sortDir} onClick={handleSort} align="left">Dept</SortTh>
+                <SortTh col="item" current={sortCol} dir={sortDir} onClick={handleSort} align="left">Item</SortTh>
+                <SortTh col="desc" current={sortCol} dir={sortDir} onClick={handleSort} align="left">Omschrijving</SortTh>
+                <SortTh col="nos"  current={sortCol} dir={sortDir} onClick={handleSort} align="center">NOS</SortTh>
+                <SortTh col="qoh"  current={sortCol} dir={sortDir} onClick={handleSort} align="right">QOH</SortTh>
+                <SortTh col="from_price" current={sortCol} dir={sortDir} onClick={handleSort} align="right">{'Prijs ' + fmtDate(dateFrom)}</SortTh>
+                <SortTh col="to_price"   current={sortCol} dir={sortDir} onClick={handleSort} align="right">{'Prijs ' + fmtDate(dateTo)}</SortTh>
+                <SortTh col="diff" current={sortCol} dir={sortDir} onClick={handleSort} align="right">Verschil</SortTh>
+                <SortTh col="pct"  current={sortCol} dir={sortDir} onClick={handleSort} align="right">% Wijziging</SortTh>
               </tr>
             </thead>
             <tbody>
