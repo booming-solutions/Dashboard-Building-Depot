@@ -1,8 +1,12 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v11.js
+   BESTAND: page_negative_inventory_v12.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.15
+   VERSIE: v3.28.16
+
+   Wijzigingen t.o.v. v11:
+   - BUGFIX: kolomnaam buying_data.region → buying_data.regio
+     (waardoor "Overige" altijd "—" toonde)
 
    Wijzigingen t.o.v. v10:
    - Nieuwe kolom "Overige stores" in detail tabel
@@ -195,7 +199,7 @@ export default function NegativeInventoryPage() {
     var all = [], from = 0, step = 1000;
     while (true) {
       var r = await supabase.from('buying_data')
-        .select('item_number, qoh, qty_on_order, inv_value_at_cost, region')
+        .select('item_number, qoh, qty_on_order, inv_value_at_cost, regio')
         .range(from, from + step - 1);
       if (!r.data || !r.data.length) break;
       all = all.concat(r.data);
@@ -216,8 +220,8 @@ export default function NegativeInventoryPage() {
         agg[k].priceSum += iv / qoh;
         agg[k].priceCount += 1;
       }
-      // Region key: 'CUR' of 'BON' (uit region kolom)
-      var reg = String(row.region || '').trim().toUpperCase();
+      // Region key: 'CUR' of 'BON' (uit regio kolom)
+      var reg = String(row.regio || '').trim().toUpperCase();
       if (reg === 'CUR' || reg === 'BON') {
         var rk = k + '|' + reg;
         if (!regAgg[rk]) regAgg[rk] = 0;
