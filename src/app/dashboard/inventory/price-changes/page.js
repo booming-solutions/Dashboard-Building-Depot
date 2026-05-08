@@ -1,7 +1,15 @@
 /* ============================================================
-   BESTAND: page_price_changes_v3.js
+   BESTAND: page_price_changes_v4.js
    KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
-   VERSIE: v3.0
+   VERSIE: v4.0
+
+   Wijzigingen t.o.v. v3:
+   - Nieuwe KPI tile "% van totaal"
+     · Noemer: items op to-datum met geldige prijs (binnen huidige
+       dept-filter)
+     · Sub-tekst onder "Items met wijziging": "van X totaal"
+   - KPI grid van 5 naar 6 kolommen
+   - Mobile: KPI grid van 1 naar 2 kolommen breed
 
    Wijzigingen t.o.v. v2:
    - BUGFIX: dropdown toonde maar 1 datum
@@ -198,8 +206,17 @@ export default function PriceChangesDashboard() {
     var avgPct = total > 0 ? filtered.reduce(function(a, x) { return a + x.pct; }, 0) / total : 0;
     var avgUp = up > 0 ? filtered.filter(function(x) { return x.pct > 0; }).reduce(function(a, x) { return a + x.pct; }, 0) / up : 0;
     var avgDown = down > 0 ? filtered.filter(function(x) { return x.pct < 0; }).reduce(function(a, x) { return a + x.pct; }, 0) / down : 0;
-    return { total: total, up: up, down: down, unchanged: unchanged, avgPct: avgPct, avgUp: avgUp, avgDown: avgDown };
-  }, [filtered]);
+
+    // Noemer: items op to-datum met geldige prijs (binnen huidige dept-filter)
+    var totalToDate = data.to.filter(function(x) {
+      if (selDept !== 'all' && x.dept_code !== selDept) return false;
+      var p = parseFloat(x.unit_price) || 0;
+      return p > 0;
+    }).length;
+    var pctOfTotal = totalToDate > 0 ? (total / totalToDate) * 100 : 0;
+
+    return { total: total, up: up, down: down, unchanged: unchanged, avgPct: avgPct, avgUp: avgUp, avgDown: avgDown, totalToDate: totalToDate, pctOfTotal: pctOfTotal };
+  }, [filtered, data, selDept]);
 
   // Sort by absolute pct descending (biggest changes first)
   var sortedFiltered = useMemo(function() {
@@ -268,9 +285,10 @@ export default function PriceChangesDashboard() {
       </div>
 
       {/* KPI tiles */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-5">
         {[
-          { label: 'Items met wijziging', value: fmt(stats.total), color: '#1a0a04' },
+          { label: 'Items met wijziging', value: fmt(stats.total), sub: 'van ' + fmt(stats.totalToDate) + ' totaal', color: '#1a0a04' },
+          { label: '% van totaal', value: stats.totalToDate > 0 ? stats.pctOfTotal.toFixed(1) + '%' : '-', sub: selDept === 'all' ? 'binnen alle afdelingen' : 'binnen dept ' + selDept, color: '#E84E1B' },
           { label: 'Gestegen', value: fmt(stats.up), color: '#dc2626' },
           { label: 'Gedaald', value: fmt(stats.down), color: '#16a34a' },
           { label: 'Gem. stijging', value: stats.up > 0 ? fmtPct(stats.avgUp) : '-', color: '#dc2626' },
@@ -281,6 +299,7 @@ export default function PriceChangesDashboard() {
               <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#E84E1B]"></div>
               <p className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[1px]">{k.label}</p>
               <p className="text-[28px] font-semibold font-mono mt-1" style={{ color: k.color }}>{k.value}</p>
+              {k.sub && <p className="text-[10px] text-[#a08a74] mt-0.5">{k.sub}</p>}
             </div>
           );
         })}
