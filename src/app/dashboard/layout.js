@@ -3,6 +3,12 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN T.O.V. V27.01:
+   - Nieuwe nav-item "Urentarget" onder HR (concept)
+   - REPORT_MAP entry toegevoegd voor /dashboard/hr/urentarget
+     → report key 'hr_urentarget'
+   - Versie aangepast naar V27.02
+
    WIJZIGINGEN T.O.V. V26.02:
    - Nieuwe nav-item "Price Changes" onder Voorraad
    - REPORT_MAP entry toegevoegd voor /dashboard/inventory/price-changes
@@ -23,7 +29,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import ChangelogModal from '@/components/ChangelogModal';
 
-const APP_VERSION = 'V27.01';
+const APP_VERSION = 'V27.02';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -234,6 +240,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
     '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/hr/salary': 'hr_payroll',
+    '/dashboard/hr/urentarget': 'hr_urentarget',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -266,6 +273,7 @@ export default function DashboardLayout({ children }) {
   ];
   const hrItemsAll = [
     { href: '/dashboard/hr/salary', label: 'Salariskosten' },
+    { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
