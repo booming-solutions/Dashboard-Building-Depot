@@ -38,10 +38,17 @@ import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
 
 // Service role for deletes (RLS bypass)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Lazy initialization: create client only when needed (not at module load)
+let _supabase = null;
+function getSupabase() {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+  }
+  return _supabase;
+}
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
