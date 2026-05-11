@@ -1,18 +1,15 @@
 /* ============================================================
-   BESTAND: page_hr_salary.js
-   KOPIEER NAAR: src/app/dashboard/hr/salary/page.js
-   (vervangt bestaande page.js)
+   BESTAND: page_hr_urentarget.js
+   KOPIEER NAAR: src/app/dashboard/hr/urentarget/page.js
    VERSIE: v27.03
 
-   WIJZIGING: iframe wijst nu naar /api/private/salary-dashboard
-   ipv /salary-dashboard.html. Het HTML-bestand staat niet meer
-   in public/ maar in private/ en wordt server-side beveiligd.
+   WIJZIGING: iframe wijst naar /api/private/uren-dashboard
    ============================================================ */
 'use client';
 
 import { useState, useEffect } from 'react';
 
-export default function SalaryDashboard() {
+export default function UrentargetDashboard() {
   const [iframeHeight, setIframeHeight] = useState('100vh');
 
   useEffect(() => {
@@ -27,14 +24,14 @@ export default function SalaryDashboard() {
   return (
     <div style={{ margin: '-24px', overflow: 'hidden' }}>
       <iframe
-        src="/api/private/salary-dashboard"
+        src="/api/private/uren-dashboard"
         style={{
           width: '100%',
           height: iframeHeight,
           border: 'none',
           display: 'block',
         }}
-        title="Salariskosten Dashboard"
+        title="Urentarget Dashboard"
       />
     </div>
   );
