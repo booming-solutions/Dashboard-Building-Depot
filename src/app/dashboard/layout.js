@@ -3,6 +3,10 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN T.O.V. V27.02:
+   - Inkoopvoorstel route verwijderd uit REPORT_MAP (security)
+   - Versie aangepast naar V27.03
+
    WIJZIGINGEN T.O.V. V27.01:
    - Nieuwe nav-item "Urentarget" onder HR (concept)
    - REPORT_MAP entry toegevoegd voor /dashboard/hr/urentarget
@@ -29,7 +33,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import ChangelogModal from '@/components/ChangelogModal';
 
-const APP_VERSION = 'V27.02';
+const APP_VERSION = 'V27.03';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -234,7 +238,6 @@ export default function DashboardLayout({ children }) {
     '/dashboard/sales/index': 'sales_index',
     '/dashboard/sales/traffic': 'sales_traffic',
     '/dashboard/inventory/budget': 'inventory_budget',
-    '/dashboard/inventory/buying': 'inventory_buying',
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
