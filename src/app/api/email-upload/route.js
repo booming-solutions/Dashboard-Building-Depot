@@ -1,7 +1,13 @@
 /* ============================================================
-   BESTAND: route_email_v18.js
+   BESTAND: route_email_v19.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v19:
+   - Build fix: Supabase client wordt nu lazy gemaakt via getSupabase()
+     ipv top-level. Voorkomt 'supabaseKey is required' error tijdens
+     Vercel build die optreedt na het sensitive markeren van env vars.
+   - dynamic = 'force-dynamic' en runtime = 'nodejs' toegevoegd
+   - Functionaliteit identiek aan v18.
    WIJZIGING v18:
    - Nieuwe file type 'price_changes' toegevoegd:
      * Detectie via 'Date Of Last Sale' kolom (uniek voor deze file)
@@ -164,7 +170,7 @@ async function processSales(json, batchId) {
   console.log('Dates in file: ' + uniqueDates.join(', '));
 
   if (uniqueDates.length > 0) {
-    var delResult = await supabase.from('sales_data').delete({ count: 'exact' }).in('sale_date', uniqueDates);
+    var delResult = await getSupabase().from('sales_data').delete({ count: 'exact' }).in('sale_date', uniqueDates);
     if (delResult.error) {
       console.error('Delete error: ' + delResult.error.message);
     } else {
@@ -176,7 +182,7 @@ async function processSales(json, batchId) {
   var totalInserted = 0;
   for (var i = 0; i < rows.length; i += 500) {
     var batch = rows.slice(i, i + 500);
-    var res = await supabase.from('sales_data').insert(batch);
+    var res = await getSupabase().from('sales_data').insert(batch);
     if (res.error) {
       console.error('Batch error at ' + i + ': ' + res.error.message);
       continue;
@@ -311,7 +317,7 @@ async function processInventory(json) {
   console.log('Inventory rows to insert: ' + rows.length);
 
   // Full replace: delete all existing rows (UUID-safe filter)
-  var delResult = await supabase.from('inventory_data').delete({ count: 'exact' }).not('id', 'is', null);
+  var delResult = await getSupabase().from('inventory_data').delete({ count: 'exact' }).not('id', 'is', null);
   if (delResult.error) {
     console.error('Delete error: ' + delResult.error.message);
   } else {
@@ -322,7 +328,7 @@ async function processInventory(json) {
   var totalInserted = 0;
   for (var i = 0; i < rows.length; i += 500) {
     var batch = rows.slice(i, i + 500);
-    var res = await supabase.from('inventory_data').insert(batch);
+    var res = await getSupabase().from('inventory_data').insert(batch);
     if (res.error) {
       console.error('Inventory batch error at ' + i + ': ' + res.error.message);
       continue;
@@ -367,16 +373,16 @@ async function processNegativeInventory(json) {
   console.log('Negative inventory rows: ' + rows.length);
 
   // Full replace
-  var delResult = await supabase.from('negative_inventory').delete({ count: 'exact' }).neq('id', 0);
+  var delResult = await getSupabase().from('negative_inventory').delete({ count: 'exact' }).neq('id', 0);
   if (delResult.error) {
-    var delResult2 = await supabase.from('negative_inventory').delete({ count: 'exact' }).gte('id', 0);
+    var delResult2 = await getSupabase().from('negative_inventory').delete({ count: 'exact' }).gte('id', 0);
     console.log('Deleted existing negative inventory rows');
   }
 
   var totalInserted = 0;
   for (var i = 0; i < rows.length; i += 500) {
     var batch = rows.slice(i, i + 500);
-    var res = await supabase.from('negative_inventory').insert(batch);
+    var res = await getSupabase().from('negative_inventory').insert(batch);
     if (res.error) {
       console.error('Neg inventory batch error at ' + i + ': ' + res.error.message);
       continue;
@@ -488,7 +494,7 @@ async function processNegativeInventory(json) {
       console.log('Deleted ' + (delSnap.count || 0) + ' existing snapshot rows for ' + today);
     }
 
-    var snapIns = await supabase.from('negative_inventory_snapshots').insert(snapRows);
+    var snapIns = await getSupabase().from('negative_inventory_snapshots').insert(snapRows);
     if (snapIns.error) {
       console.error('Snapshot insert error: ' + snapIns.error.message);
     } else {
@@ -550,7 +556,7 @@ async function processTickets(json) {
       if (row.date !== dt) continue;
 
       // Check if a row already exists (might have visitor data)
-      var existing = await supabase.from('traffic_data')
+      var existing = await getSupabase().from('traffic_data')
         .select('*')
         .eq('store_number', row.store_number)
         .eq('date', row.date)
@@ -558,14 +564,14 @@ async function processTickets(json) {
 
       if (existing.data) {
         // Update existing row: keep visitors, update tickets + sales
-        var upd = await supabase.from('traffic_data')
+        var upd = await getSupabase().from('traffic_data')
           .update({ tickets: row.tickets, total_sales: row.total_sales })
           .eq('store_number', row.store_number)
           .eq('date', row.date);
         if (upd.error) console.error('Update error: ' + upd.error.message);
       } else {
         // Insert new row
-        var ins = await supabase.from('traffic_data')
+        var ins = await getSupabase().from('traffic_data')
           .insert({
             store_number: row.store_number,
             date: row.date,
@@ -697,7 +703,7 @@ async function processBuying(json) {
 
   for (var ci = 0; ci < combos.length; ci++) {
     var c = combos[ci];
-    var delResult = await supabase.from('buying_data')
+    var delResult = await getSupabase().from('buying_data')
       .delete({ count: 'exact' })
       .eq('bum', c.bum)
       .eq('regio', c.regio);
@@ -712,7 +718,7 @@ async function processBuying(json) {
   var totalInserted = 0;
   for (var i = 0; i < rows.length; i += 500) {
     var batch = rows.slice(i, i + 500);
-    var res = await supabase.from('buying_data').insert(batch);
+    var res = await getSupabase().from('buying_data').insert(batch);
     if (res.error) {
       console.error('Buying batch error at ' + i + ': ' + res.error.message);
       continue;
@@ -869,7 +875,7 @@ async function processNosSnapshot() {
   }
 
   // Insert
-  var ins = await supabase.from('nos_coverage_snapshots').insert(snapRows);
+  var ins = await getSupabase().from('nos_coverage_snapshots').insert(snapRows);
   if (ins.error) {
     console.error('NOS snapshot insert error: ' + ins.error.message);
   } else {
@@ -973,7 +979,7 @@ async function processPriceChanges(json) {
 
   // Verwijder bestaande snapshots voor vandaag × elke regio in de file
   for (var regio in regiosInFile) {
-    var delResult = await supabase.from('price_snapshots')
+    var delResult = await getSupabase().from('price_snapshots')
       .delete({ count: 'exact' })
       .eq('regio', regio)
       .eq('snapshot_date', today);
@@ -988,7 +994,7 @@ async function processPriceChanges(json) {
   var totalInserted = 0;
   for (var i = 0; i < rows.length; i += 500) {
     var batch = rows.slice(i, i + 500);
-    var res = await supabase.from('price_snapshots').insert(batch);
+    var res = await getSupabase().from('price_snapshots').insert(batch);
     if (res.error) {
       console.error('Price snapshot batch error at ' + i + ': ' + res.error.message);
       continue;
@@ -1080,7 +1086,7 @@ export async function POST(request) {
 
     // Log the upload
     try {
-      await supabase.from('upload_log').insert({
+      await getSupabase().from('upload_log').insert({
         filename: '[email] ' + filename,
         rows_imported: result.rows_imported,
         status: result.rows_imported > 0 ? 'success' : 'failed',
