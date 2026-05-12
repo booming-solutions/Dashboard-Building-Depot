@@ -1,23 +1,7 @@
 /* ============================================================
-   BESTAND: dashboard_layout_v3.js
+   BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
-
-   WIJZIGINGEN T.O.V. V27.02:
-   - Inkoopvoorstel route verwijderd uit REPORT_MAP (security)
-   - Versie aangepast naar V27.03
-
-   WIJZIGINGEN T.O.V. V27.01:
-   - Nieuwe nav-item "Urentarget" onder HR (concept)
-   - REPORT_MAP entry toegevoegd voor /dashboard/hr/urentarget
-     → report key 'hr_urentarget'
-   - Versie aangepast naar V27.02
-
-   WIJZIGINGEN T.O.V. V26.02:
-   - Nieuwe nav-item "Price Changes" onder Voorraad
-   - REPORT_MAP entry toegevoegd voor /dashboard/inventory/price-changes
-     → report key 'inventory_price_changes'
-   - Versie aangepast naar V27.01
 
    WIJZIGINGEN T.O.V. v3.27.02:
    - Menu items "Overzicht", "Rapportages" en "Bestanden" verborgen
@@ -31,9 +15,9 @@ import { createClient } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
-import ChangelogModal from '@/components/ChangelogModal';
+import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.03';
+const APP_VERSION = 'V26.03';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -167,7 +151,6 @@ export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [changelogOpen, setChangelogOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
@@ -238,12 +221,11 @@ export default function DashboardLayout({ children }) {
     '/dashboard/sales/index': 'sales_index',
     '/dashboard/sales/traffic': 'sales_traffic',
     '/dashboard/inventory/budget': 'inventory_budget',
+    '/dashboard/inventory/buying': 'inventory_buying',
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
-    '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/hr/salary': 'hr_payroll',
-    '/dashboard/hr/urentarget': 'hr_urentarget',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -264,7 +246,6 @@ export default function DashboardLayout({ children }) {
       { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
-    { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
       { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
@@ -276,7 +257,6 @@ export default function DashboardLayout({ children }) {
   ];
   const hrItemsAll = [
     { href: '/dashboard/hr/salary', label: 'Salariskosten' },
-    { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
@@ -284,6 +264,7 @@ export default function DashboardLayout({ children }) {
   const hrItems = hrItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
+    { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
     { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
@@ -292,6 +273,7 @@ export default function DashboardLayout({ children }) {
     <div className="min-h-screen bg-gray-50 flex">
       <LoginModal show={showLogin} onClose={() => setShowLogin(false)} supabase={supabase} onSuccess={getUser} />
       <PageTracker />
+      <DataStatusPopup />
 
       <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col transition-all duration-300 fixed h-full z-40`} style={{ background: 'linear-gradient(180deg, #e8eff7 0%, #dce6f1 100%)' }}>
         <div className="p-4 flex items-center gap-3 border-b border-[#c5d4e6]">
@@ -373,22 +355,8 @@ export default function DashboardLayout({ children }) {
         <span style={{ fontSize: '10px', color: '#475569', margin: '0 8px' }}>·</span>
         <span style={{ fontSize: '10px', color: '#475569', fontFamily: 'monospace' }}>© 2026 Booming Solutions</span>
         <span style={{ fontSize: '10px', color: '#475569', margin: '0 8px' }}>·</span>
-        <button
-          onClick={() => setChangelogOpen(true)}
-          style={{
-            fontSize: '10px', color: '#475569', fontFamily: 'monospace',
-            background: 'none', border: 'none', cursor: 'pointer',
-            padding: 0, textDecoration: 'underline', textDecorationStyle: 'dotted',
-            textUnderlineOffset: '3px',
-          }}
-          title="Klik voor recente updates"
-          onMouseEnter={(e) => { e.target.style.color = '#94a3b8'; }}
-          onMouseLeave={(e) => { e.target.style.color = '#475569'; }}
-        >
-          {APP_VERSION}
-        </button>
+        <span style={{ fontSize: '10px', color: '#475569', fontFamily: 'monospace' }}>{APP_VERSION}</span>
       </div>
-      <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
     </div>
   );
 }
