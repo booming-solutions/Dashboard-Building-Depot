@@ -3,6 +3,12 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN T.O.V. V26.03:
+   - Urentarget toegevoegd aan HR-menu (badge: concept)
+   - REPORT_MAP entry voor /dashboard/hr/urentarget → hr_urentarget
+   - Zichtbaarheid via allowed_reports (admin ziet automatisch)
+   - Versie aangepast naar V27.05
+
    WIJZIGINGEN T.O.V. v3.27.02:
    - Menu items "Overzicht", "Rapportages" en "Bestanden" verborgen
    - Sales submenu uitgebreid: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -17,7 +23,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V26.03';
+const APP_VERSION = 'V27.05';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -226,6 +232,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
     '/dashboard/hr/salary': 'hr_payroll',
+    '/dashboard/hr/urentarget': 'hr_urentarget',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -257,6 +264,7 @@ export default function DashboardLayout({ children }) {
   ];
   const hrItemsAll = [
     { href: '/dashboard/hr/salary', label: 'Salariskosten' },
+    { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
