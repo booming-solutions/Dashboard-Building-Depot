@@ -187,15 +187,19 @@ function renderKpis(){
   const cmp = totalsForMonth(CMP_MONTH);
   const totDelta = cmp.total_hours>0 ? ((cur.total_hours - cmp.total_hours)/cmp.total_hours*100) : null;
   const flexDelta = cmp.hours_flex>0 ? ((cur.hours_flex - cmp.hours_flex)/cmp.hours_flex*100) : null;
+  const onbDelta = cmp.hours_onb>0 ? ((cur.hours_onb - cmp.hours_onb)/cmp.hours_onb*100) : null;
   const sickPct = cur.total_hours>0 ? (cur.sick/cur.total_hours*100) : 0;
   const sickPctCmp = cmp.total_hours>0 ? (cmp.sick/cmp.total_hours*100) : 0;
   const sickDelta = sickPct - sickPctCmp;
   
+  const totFlexPct = cur.total_hours>0 ? (cur.hours_flex/cur.total_hours*100) : 0;
+  const totOnbPct  = cur.total_hours>0 ? (cur.hours_onb/cur.total_hours*100) : 0;
+  
   document.getElementById('kpis').innerHTML =
     `<div class="k"><div class="kl">Totale uren — ${formatMonth(CUR_MONTH)}</div><div class="kv">${fn(Math.round(cur.total_hours))}</div><div class="ks ${totDelta!==null?(totDelta<0?'dn':'up'):''}">${totDelta!==null?(totDelta>0?'+':'')+totDelta.toFixed(1)+'% vs '+formatMonth(CMP_MONTH):''}</div></div>` +
-    `<div class="k"><div class="kl">Flexibele uren <span class="tag tag-flex">flex</span></div><div class="kv">${fn(Math.round(cur.hours_flex))}</div><div class="ks ${flexDelta!==null?(flexDelta<0?'dn':'up'):''}">${flexDelta!==null?(flexDelta>0?'+':'')+flexDelta.toFixed(1)+'%':''} • dit is de hefboom</div></div>` +
-    `<div class="k"><div class="kl">Vaste uren</div><div class="kv">${fn(Math.round(cur.hours_vast))}</div><div class="ks">${(cur.hours_vast/cur.total_hours*100).toFixed(1)}% van totaal</div></div>` +
-    `<div class="k"><div class="kl">Ziekteverzuim%</div><div class="kv">${sickPct.toFixed(2)}%</div><div class="ks ${sickDelta>0?'up':'dn'}">${sickDelta>0?'+':''}${sickDelta.toFixed(2)} pp</div></div>`;
+    `<div class="k"><div class="kl">Flexibele uren <span class="tag tag-flex">flex</span></div><div class="kv">${fn(Math.round(cur.hours_flex))}</div><div class="ks ${flexDelta!==null?(flexDelta<0?'dn':'up'):''}">${totFlexPct.toFixed(1)}% van totaal${flexDelta!==null?' • '+(flexDelta>0?'+':'')+flexDelta.toFixed(1)+'% vs cmp':''}</div></div>` +
+    `<div class="k"><div class="kl">Onbekend (Smart Finance e.a.)</div><div class="kv">${fn(Math.round(cur.hours_onb))}</div><div class="ks ${onbDelta!==null?(onbDelta<0?'dn':'up'):''}">${totOnbPct.toFixed(1)}% van totaal • niet in C16</div></div>` +
+    `<div class="k"><div class="kl">Ziekteverzuim</div><div class="kv">${sickPct.toFixed(2)}%</div><div class="ks ${sickDelta>0?'up':'dn'}">${fn(Math.round(cur.sick))}h ziek${sickDelta!==null?' • '+(sickDelta>0?'+':'')+sickDelta.toFixed(2)+' pp':''}</div></div>`;
 }
 
 // === BU chips & trend chart ===
@@ -252,6 +256,18 @@ function renderTrend(){
   
   document.getElementById('trendSub').textContent = SELECTED_BUS.size===0 ? 'Selecteer een BU of "Totaal" om data te tonen' : (SELECTED_BUS.size + ' lijn(en) geselecteerd');
   
+  // Y-as auto-scaled: min = 80% van laagste waarde, max = 105% van hoogste
+  let yMin = null, yMax = null;
+  if(datasets.length){
+    const allVals = datasets.flatMap(ds => ds.data).filter(v => v > 0);
+    if(allVals.length){
+      const min = Math.min(...allVals);
+      const max = Math.max(...allVals);
+      yMin = Math.floor(min * 0.8 / 100) * 100;
+      yMax = Math.ceil(max * 1.05 / 100) * 100;
+    }
+  }
+  
   if(chTrend) chTrend.destroy();
   const ctx = document.getElementById('chTrend').getContext('2d');
   chTrend = new Chart(ctx, {
@@ -260,11 +276,18 @@ function renderTrend(){
     options: {
       responsive:true, maintainAspectRatio:false,
       interaction:{mode:'index',intersect:false},
+      layout: { padding: { left: 8 } },
       plugins:{
-        legend:{position:'bottom',labels:{font:{family:'DM Sans',size:11}, boxWidth:12}}
+        legend:{position:'bottom',labels:{font:{family:'DM Sans',size:11}, boxWidth:12}},
+        tooltip:{callbacks:{label: ctx => ctx.dataset.label + ': ' + fn(ctx.parsed.y) + 'h'}}
       },
       scales:{
-        y:{beginAtZero:true, ticks:{font:{family:'JetBrains Mono'}, callback: v => fk(v)}},
+        y:{
+          beginAtZero: yMin === null,
+          min: yMin === null ? undefined : yMin,
+          max: yMax === null ? undefined : yMax,
+          ticks:{font:{family:'JetBrains Mono', size:10.5}, padding:6, callback: v => fk(v)}
+        },
         x:{ticks:{font:{family:'DM Sans',size:10.5}}}
       }
     }
