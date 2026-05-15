@@ -3,16 +3,17 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN T.O.V. V27.05:
+   - Urenplanning toegevoegd aan HR-menu (zichtbaar voor BUMs + admin)
+   - Urenplanning Overzicht toegevoegd aan HR-menu (admin only)
+   - isBum check toegevoegd voor role='bum' users
+   - Versie aangepast naar V27.06
+
    WIJZIGINGEN T.O.V. V26.03:
    - Urentarget toegevoegd aan HR-menu (badge: concept)
    - REPORT_MAP entry voor /dashboard/hr/urentarget → hr_urentarget
    - Zichtbaarheid via allowed_reports (admin ziet automatisch)
    - Versie aangepast naar V27.05
-
-   WIJZIGINGEN T.O.V. v3.27.02:
-   - Menu items "Overzicht", "Rapportages" en "Bestanden" verborgen
-   - Sales submenu uitgebreid: Actuals, Forecast (concept), Index, Bezoekers en Conversie
-   - Versie aangepast naar V26.02
    ============================================================ */
 'use client';
 
@@ -23,7 +24,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.05';
+const APP_VERSION = 'V27.06';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -218,6 +219,7 @@ export default function DashboardLayout({ children }) {
   function handleRefresh() { setRefreshing(true); window.location.reload(); }
 
   const isAdmin = profile?.role === 'admin';
+  const isBum = profile?.role === 'bum';
   const allowedReports = profile?.allowed_reports || [];
   const hasReport = (id) => isAdmin || allowedReports.includes(id);
 
@@ -233,6 +235,8 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
+    '/dashboard/hr/urenplanning': 'hr_urenplanning',
+    '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -265,11 +269,16 @@ export default function DashboardLayout({ children }) {
   const hrItemsAll = [
     { href: '/dashboard/hr/salary', label: 'Salariskosten' },
     { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
+    { href: '/dashboard/hr/urenplanning', label: 'Urenplanning', badge: '(concept)', visible: isAdmin || isBum },
+    { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
-  const hrItems = hrItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
+  const hrItems = hrItemsAll.filter(item => {
+    if (typeof item.visible !== 'undefined') return item.visible;
+    return hasReport(REPORT_MAP[item.href]);
+  });
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
