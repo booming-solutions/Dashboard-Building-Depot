@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase';
 
 const BU_TARGETS = {
   'BU Appliance/Houseware': 1848,
@@ -61,6 +61,7 @@ const MONTH_NAMES = ['Januari','Februari','Maart','April','Mei','Juni','Juli','A
 
 export default function UrenplanningPage() {
   const router = useRouter();
+  const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -173,7 +174,13 @@ export default function UrenplanningPage() {
   }
 
   if (loading) {
-    return <div style={{padding:40, textAlign:'center', color:'#6b6960'}}>Laden...</div>;
+    return (
+      <div style={{minHeight:'60vh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, fontFamily:"'DM Sans',sans-serif"}}>
+        <div style={{width:64, height:64, borderRadius:14, background:'#D63B1A', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:700, fontSize:24, letterSpacing:'-.5px', boxShadow:'0 4px 12px rgba(214,59,26,.25)', animation:'pulse 1.5s ease-in-out infinite'}}>BD</div>
+        <div style={{fontSize:13, color:'#6b6960', fontWeight:500}}>Urenplanning laden...</div>
+        <style>{`@keyframes pulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.95)}}`}</style>
+      </div>
+    );
   }
 
   const subs = SUB_AFDELINGEN[selectedBU] || [];
