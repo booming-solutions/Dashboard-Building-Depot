@@ -11,7 +11,7 @@
    ============================================================ */
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
@@ -456,7 +456,7 @@ function StoreSection({ r }) {
   );
 }
 
-export default function DailyReportPage() {
+function DailyReportContent() {
   const searchParams = useSearchParams();
   const dateParam = searchParams.get('date');
   const [reports, setReports] = useState([]);
@@ -510,5 +510,14 @@ export default function DailyReportPage() {
       </div>
       {reports.map(r => <StoreSection key={r.storeNumber} r={r} />)}
     </div>
+  );
+}
+
+// Wrapper met Suspense boundary - vereist door Next.js 14 voor pagina's die useSearchParams gebruiken
+export default function DailyReportPage() {
+  return (
+    <Suspense fallback={<LoadingLogo text="Rapport laden..." />}>
+      <DailyReportContent />
+    </Suspense>
   );
 }
