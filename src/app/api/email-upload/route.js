@@ -1,7 +1,15 @@
 /* ============================================================
-   BESTAND: route_email_v19.js
+   BESTAND: route_email_v20.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v20:
+   - BUGFIX: 6 plekken in de code gebruikten nog 'supabase' (zonder
+     getSupabase()) terwijl v19 die globale variabele had verwijderd.
+     Gevolg: processInventory crashte met "ReferenceError: supabase
+     is not defined" sinds 11 mei → geen nieuwe inventory data meer.
+     Ook processNegativeInventory (first_seen reads + upsert + snapshot
+     delete) en processNosSnapshot waren stiekem stuk.
+   - Alle bare 'supabase' calls vervangen door getSupabase().
    WIJZIGING v19:
    - Build fix: Supabase client wordt nu lazy gemaakt via getSupabase()
      ipv top-level. Voorkomt 'supabaseKey is required' error tijdens
@@ -202,7 +210,7 @@ async function processInventory(json) {
   // Load static budgets from department_budgets table (replaces Compass Budget column)
   // Build lookup map: 'storenum|deptcode' → budget_amount
   var budgetMap = {};
-  var bRes = await supabase
+  var bRes = await getSupabase()
     .from('department_budgets')
     .select('store_number, dept_code, budget_amount')
     .eq('year', currentYear);
@@ -401,7 +409,7 @@ async function processNegativeInventory(json) {
     var chunkSize = 500;
     for (var c = 0; c < uniqueItems.length; c += chunkSize) {
       var chunk = uniqueItems.slice(c, c + chunkSize);
-      var fs = await supabase
+      var fs = await getSupabase()
         .from('negative_inventory_first_seen')
         .select('item_number, first_seen_date, last_seen_date')
         .in('item_number', chunk);
@@ -432,7 +440,7 @@ async function processNegativeInventory(json) {
     var fsUpserted = 0;
     for (var u = 0; u < upsertRows.length; u += 500) {
       var batch = upsertRows.slice(u, u + 500);
-      var up = await supabase
+      var up = await getSupabase()
         .from('negative_inventory_first_seen')
         .upsert(batch, { onConflict: 'item_number' });
       if (up.error) {
@@ -484,7 +492,7 @@ async function processNegativeInventory(json) {
   console.log('Snapshot rows: ' + snapRows.length + ' (date=' + today + ')');
 
   if (snapRows.length > 0) {
-    var delSnap = await supabase
+    var delSnap = await getSupabase()
       .from('negative_inventory_snapshots')
       .delete({ count: 'exact' })
       .eq('snapshot_date', today);
@@ -751,7 +759,7 @@ async function processNosSnapshot() {
   var from = 0;
   var step = 1000;
   while (true) {
-    var r = await supabase
+    var r = await getSupabase()
       .from('buying_data')
       .select('item_number, store_number, bum, qoh, qty_on_order, nos, sales_m01, sales_m02, sales_m03, sales_m04, sales_m05, sales_m06, sales_m07, sales_m08, sales_m09, sales_m10, sales_m11, sales_m12')
       .eq('nos', 'N')
@@ -864,7 +872,7 @@ async function processNosSnapshot() {
   }
 
   // Delete today's existing snapshot first (idempotent on re-run)
-  var del = await supabase
+  var del = await getSupabase()
     .from('nos_coverage_snapshots')
     .delete({ count: 'exact' })
     .eq('snapshot_date', today);
