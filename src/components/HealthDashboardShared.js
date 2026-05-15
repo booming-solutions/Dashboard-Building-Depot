@@ -1,8 +1,16 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared_v4.js
+   BESTAND: HealthDashboardShared_v5.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
-   (vervangt huidige HealthDashboardShared.js)
-   VERSIE: v3.28.18
+   VERSIE: v3.28.19
+
+   Wijzigingen t.o.v. v4:
+   - BUGFIX: lead time werd uit kolom 'max_lead_time' gehaald, maar
+     die kolom is in Compass verkeerd gelabeld (was bedoeld als
+     doel-voorraad). De werkelijke transit-tijd van leverancier naar
+     magazijn staat in 'min_lead_time' (Eagle Vendor Code 3).
+     Gevolg: classificatie was te kritisch, te veel items als
+     understock. Nu realistisch.
+   - Interne variabele max_lt hernoemd naar lt_months (was misleidend)
 
    Wijzigingen t.o.v. v3:
    - NOS-filter toegevoegd
@@ -129,7 +137,10 @@ export default function HealthDashboardShared({ bumFilter }) {
           bum: r.bum || '', vendor: r.vendor_name || '',
           cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
           qoh: 0, inv_value: 0,
-          max_lt: parseFloat(r.max_lead_time) || 0,
+          // Lead time = transit-tijd van leverancier naar magazijn.
+          // Compass labelt dit als 'Min Lead Time' (Eagle Vendor Code 3).
+          // 'Max Lead Time' is in Compass verkeerd gelabeld (was doel-voorraad) en wordt NIET gebruikt.
+          lt_months: parseFloat(r.min_lead_time) || 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
           is_nos: false,
         };
@@ -137,9 +148,9 @@ export default function HealthDashboardShared({ bumFilter }) {
       var m = map[key];
       // NOS: true als één van de buying_data rijen voor dit item nos='N' heeft
       if (String(r.nos || '').trim().toUpperCase() === 'N') m.is_nos = true;
-      // Lead time: nemen we het maximum (worst case) over stores binnen regio
-      var rlt = parseFloat(r.max_lead_time) || 0;
-      if (rlt > m.max_lt) m.max_lt = rlt;
+      // Lead time: nemen we het maximum over stores binnen regio (worst case van min_lead_time)
+      var rlt = parseFloat(r.min_lead_time) || 0;
+      if (rlt > m.lt_months) m.lt_months = rlt;
       m.qoh += parseFloat(r.qoh) || 0;
       m.inv_value += (parseFloat(r.inv_value_at_cost) || 0) * cFactor;
       for (var i = 0; i < 12; i++) {
@@ -151,7 +162,7 @@ export default function HealthDashboardShared({ bumFilter }) {
 
     list.forEach(function(m) {
       // Lead time fallback: 3 maanden (consistent met Stock Risk)
-      m.lead_time = m.max_lt > 0 ? m.max_lt : 3;
+      m.lead_time = m.lt_months > 0 ? m.lt_months : 3;
 
       // Chronological sales (oldest first → newest last)
       m.salesChrono = m.sales.slice().reverse();

@@ -1,9 +1,23 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v4.js
+   BESTAND: StockRiskShared_v5.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.14
-   
+   VERSIE: v3.28.19
+
+   Wijzigingen t.o.v. v4:
+   - BUGFIX: lead time werd uit kolom 'max_lead_time' gehaald, maar
+     die kolom is in Compass verkeerd gelabeld (was bedoeld als
+     doel-voorraad). De werkelijke transit-tijd van leverancier naar
+     magazijn staat in 'min_lead_time' (Eagle Vendor Code 3).
+     Gevolg: classificatie was te kritisch, te veel items als
+     understock/urgent. Nu realistisch.
+   - max_lt veld verwijderd uit aggregatie, vervangen door lead_time
+   - Lead time wordt over stores binnen regio worst case (max van
+     min_lead_time) genomen
+   - UI kolom 'Max Lead Time' hernoemd naar 'Lead Time'
+   - Excel-export: 'Min lead time' + 'Max lead time' kolommen
+     vervangen door één 'Lead time (mnd)' kolom
+
    Wijzigingen t.o.v. v3:
    - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
    - Bevat Risico per Afdeling + hoofdtabel met items (huidige filters worden meegenomen)
@@ -385,13 +399,19 @@ export default function StockRiskShared({ bumFilter }) {
           dept_code: r.dept_code, dept_name: r.dept_name,
           bum: r.bum || '', vendor: r.vendor_name || 'ONBEKEND',
           nos: r.nos === 'N',
+          // Lead time = transit-tijd van leverancier naar magazijn.
+          // Compass labelt dit als 'Min Lead Time' (Eagle Vendor Code 3).
+          // 'Max Lead Time' in Compass is verkeerd gelabeld (was bedoeld als
+          // doel-voorraad) en wordt hier niet gebruikt.
           min_lt: parseFloat(r.min_lead_time) || 0,
-          max_lt: parseFloat(r.max_lead_time) || 3,
           qoh: 0, qa: 0, qoo: 0, inv_value: 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
         };
       }
       var m = map[key];
+      // Lead time: nemen we het maximum (worst case) over stores binnen regio
+      var rlt = parseFloat(r.min_lead_time) || 0;
+      if (rlt > m.min_lt) m.min_lt = rlt;
       m.qoh += parseFloat(r.qoh) || 0;
       m.qa += parseFloat(r.qty_available) || 0;
       m.qoo += parseFloat(r.qty_on_order) || 0;
@@ -411,6 +431,9 @@ export default function StockRiskShared({ bumFilter }) {
       m.avg_monthly = nonZero.length ? nonZero.reduce(function(a, b) { return a + b; }, 0) / nonZero.length : 0;
       m.active_months = nonZero.length;
 
+      // Lead time fallback: 3 maanden als min_lt onbekend is
+      m.lead_time = m.min_lt > 0 ? m.min_lt : 3;
+
       m.available = m.qoh + m.qoo;
       m.months_cover = m.avg_monthly > 0 ? m.available / m.avg_monthly : (m.available > 0 ? 99 : 0);
 
@@ -418,9 +441,9 @@ export default function StockRiskShared({ bumFilter }) {
         m.risk = 'ok';
       } else if (m.months_cover < 1) {
         m.risk = 'critical';
-      } else if (m.months_cover < m.max_lt) {
+      } else if (m.months_cover < m.lead_time) {
         m.risk = 'urgent';
-      } else if (m.months_cover < m.max_lt * 1.5) {
+      } else if (m.months_cover < m.lead_time * 1.5) {
         m.risk = 'watch';
       } else {
         m.risk = 'ok';
@@ -430,7 +453,7 @@ export default function StockRiskShared({ bumFilter }) {
       m.value_at_risk = (m.risk === 'critical' || m.risk === 'urgent') ? m.inv_value : 0;
 
       if (m.risk === 'critical' || m.risk === 'urgent') {
-        var target = m.avg_monthly * (m.max_lt + 1);
+        var target = m.avg_monthly * (m.lead_time + 1);
         m.suggested_qty = Math.max(0, Math.round(target - m.available));
         m.suggested_value = m.suggested_qty * m.cost;
       } else {
@@ -690,8 +713,7 @@ export default function StockRiskShared({ bumFilter }) {
                     'QOO': Math.round(m.qoo),
                     'Beschikbaar': Math.round(m.available),
                     'Voorraad in mnd': m.months_cover >= 99 ? 'oneindig' : Math.round(m.months_cover * 10) / 10,
-                    'Min lead time': m.min_lt,
-                    'Max lead time': m.max_lt,
+                    'Lead time (mnd)': m.lead_time,
                     'Gem/mnd verkoop': Math.round(m.avg_monthly),
                     'Actieve maanden': m.active_months,
                     'Voorraadwaarde (XCG)': Math.round(m.inv_value),
@@ -737,7 +759,7 @@ export default function StockRiskShared({ bumFilter }) {
                   ['Gem/mnd', 'avg_monthly', 'text-right'],
                   ['Actief', 'active_months', 'text-right'],
                   ['Trend', '', 'text-center border-r border-[#e5ddd4]'],
-                  ['Max Lead Time', 'max_lt', 'text-right'],
+                  ['Lead Time', 'lead_time', 'text-right'],
                   ['Bestel qty', 'suggested_qty', 'text-right'],
                   ['Waarde', 'suggested_value', 'text-right'],
                 ].map(function(h) {
@@ -771,7 +793,7 @@ export default function StockRiskShared({ bumFilter }) {
               )}
               {displayed.slice(0, tableRows).map(function(m, i) {
                 var bg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
-                var coverColor = m.months_cover < 1 ? '#dc2626' : m.months_cover < m.max_lt ? '#f97316' : m.months_cover < m.max_lt * 1.5 ? '#d97706' : '#16a34a';
+                var coverColor = m.months_cover < 1 ? '#dc2626' : m.months_cover < m.lead_time ? '#f97316' : m.months_cover < m.lead_time * 1.5 ? '#d97706' : '#16a34a';
                 return (
                   <tr key={m.item} className={bg + ' hover:bg-[#faf5f0]'}>
                     <td className="p-1.5 text-[10px] font-mono text-[#6b5240] border-b border-[#f0ebe5]">{m.dept_code}</td>
@@ -784,11 +806,11 @@ export default function StockRiskShared({ bumFilter }) {
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmt(Math.round(m.qoh))}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo > 0 ? '#1B3A5C' : '#a08a74' }}>{m.qoo > 0 ? fmt(Math.round(m.qoo)) : '-'}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold" style={{ color: coverColor }}>{m.months_cover >= 99 ? '∞' : m.months_cover.toFixed(1) + 'm'}</td>
-                    <td className="p-1.5 border-b border-[#f0ebe5] border-r border-[#e5ddd4]"><CoverBar months={m.months_cover} maxLT={m.max_lt} /></td>
+                    <td className="p-1.5 border-b border-[#f0ebe5] border-r border-[#e5ddd4]"><CoverBar months={m.months_cover} maxLT={m.lead_time} /></td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold">{fmt(Math.round(m.avg_monthly))}</td>
                     <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5] text-[#6b5240]">{m.active_months + '/12'}</td>
                     <td className="p-1.5 border-b border-[#f0ebe5] border-r border-[#e5ddd4]"><Spark sales={m.salesChrono} /></td>
-                    <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5]">{m.max_lt > 0 ? m.max_lt + 'm' : '-'}</td>
+                    <td className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5]">{m.lead_time > 0 ? m.lead_time + 'm' : '-'}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-bold" style={{ color: m.suggested_qty > 0 ? '#E84E1B' : '#16a34a' }}>{m.suggested_qty > 0 ? fmt(m.suggested_qty) : '-'}</td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-bold" style={{ color: m.suggested_value > 0 ? '#E84E1B' : '#1a0a04' }}>{m.suggested_value > 0 ? fmtC(m.suggested_value) : '-'}</td>
                   </tr>
