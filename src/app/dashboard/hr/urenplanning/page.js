@@ -1,7 +1,15 @@
 /* ============================================================
-   BESTAND: page-urenplanning.js (v2)
+   BESTAND: page-urenplanning.js (v3)
    KOPIEER NAAR: src/app/dashboard/hr/urenplanning/page.js
-   (overschrijft de bestaande page.js — eerdere versie was simpel BU-totaal)
+   (overschrijft de bestaande page.js)
+
+   WIJZIGINGEN v3:
+   - Sticky tabel-header: dagen blijven zichtbaar bij scrollen
+   - Klik op "Medewerker" kolom = sorteer A→Z voornaam → Z→A → default toggle
+   - Nieuwe kolom "Contract uren": 40h × deeltijdpercentage uit C16
+     (alleen voor Vast contract; Flex en onbekend tonen "-")
+   - Live overschrijdings-melding: rood label "+Xu boven contract — overwerk?"
+     onder week-totaal zodra ingevulde uren > contracturen
 
    WIJZIGINGEN v2:
    - Dag-niveau invoer per medewerker (Ma t/m Zo)
@@ -12,9 +20,6 @@
    - Contract-tag (Vast/Flex) achter elke naam
    - Logo: Booming Solutions /logo.png ipv BD-vlak
    - Week navigatie: vorige/volgende week
-   - Subafdeling-kolommen verwijderd
-   - Maand-tab verwijderd
-   - Opslag in nieuwe tabel: urenplanning_dagelijks + urenplanning_overwerk
    ============================================================ */
 'use client';
 
@@ -24,7 +29,7 @@ import { createClient } from '@/lib/supabase';
 
 // Medewerkers per BU — gebouwd uit Dyflexis data (jan-26 t/m apr-26)
 // Bovenaan: meest actieve medewerkers laatste 3 maanden
-const BU_EMPLOYEES = {"BU Appliance/Houseware":[{"name":"Michanu Isenia","contract":"Vast","sub":"A/H Operations"},{"name":"Michelangelo Lourens","contract":"Vast","sub":"A/H Management"},{"name":"Ruthlyn Comenencia Martina","contract":"Vast","sub":"A/H Operations"},{"name":"Shelah Janga","contract":"Vast","sub":"A/H Operations"},{"name":"Nilo  Grotestam","contract":"Flexibel","sub":"A/H Operations"},{"name":"Sheila Lacrum Wawoe","contract":"Vast","sub":"A/H Operations"},{"name":"Francisco Doran","contract":"Vast","sub":"A/H Operations"},{"name":"Christopher Bakmeijer","contract":"Vast","sub":"A/H Operations"},{"name":"Rudelly Mauricia","contract":"Vast","sub":"A/H Management"},{"name":"Daniel Louman","contract":"Vast","sub":"A/H Management"},{"name":"Kevin Djotaroeno","contract":"Onbekend","sub":"A/H Management"}],"BU Building Materials":[{"name":"Niasotis Dandare Ellis","contract":"Vast","sub":"Building Materials Management"}],"BU Hardware":[{"name":"Tercy Stewart","contract":"Vast","sub":"Hardware Management"},{"name":"Shannon Martha","contract":"Vast","sub":"Hardware Operations"},{"name":"Marciela Andrea","contract":"Vast","sub":"Hardware Operations"},{"name":"Gilbert Santiroma","contract":"Vast","sub":"Hardware Operations"},{"name":"Marshelon Janzen","contract":"Vast","sub":"Hardware Operations"},{"name":"John Candelaria","contract":"Vast","sub":"Hardware Management"},{"name":"Shuwender Rosini","contract":"Vast","sub":"Hardware Operations"},{"name":"Keith Taylor","contract":"Vast","sub":"Hardware Management"},{"name":"Eliana  Dangond Pabon","contract":"Vast","sub":"Hardware Management"},{"name":"Jowendrick Sillie","contract":"Vast","sub":"Hardware Operations"},{"name":"Archel Presentacion","contract":"Vast","sub":"Hardware Operations"},{"name":"Minguel Goedgedrag","contract":"Vast","sub":"Hardware Operations"},{"name":"Javier Martis","contract":"Vast","sub":"Hardware Operations"},{"name":"Noah Frankenberger","contract":"Vast","sub":"Hardware Operations"},{"name":"Marlon Meyer","contract":"Vast","sub":"Hardware Operations"},{"name":"Rishantely Jantje","contract":"Flexibel","sub":"Hardware Operations"},{"name":"Christopher Bregita","contract":"Vast","sub":"Hardware Operations"},{"name":"Jhonny Garves","contract":"Flexibel","sub":"Hardware Operations"},{"name":"Noudimar Dorothea","contract":"Flexibel","sub":"Hardware Operations"},{"name":"Tyshawn  Angela","contract":"Flexibel","sub":"Hardware Operations"},{"name":"Raymi-Engelo Regina","contract":"Flexibel","sub":"Hardware Operations"},{"name":"Vai-Ona Martines","contract":"Flexibel","sub":"Hardware Operations"},{"name":"Guishawn Wanga","contract":"Vast","sub":"Hardware Operations"},{"name":"Dejuan Brown","contract":"Onbekend","sub":"Hardware Operations"},{"name":"Rigchantely Da Costa Gomez","contract":"Flexibel","sub":"Hardware Operations"}],"BU Living":[{"name":"Gijs Verkuijl","contract":"Onbekend","sub":"Living Management"},{"name":"Franklin Domatilia","contract":"Vast","sub":"Living Operations"},{"name":"Ingerson Carmela","contract":"Vast","sub":"Living Management"},{"name":"Sus-Marianne Anastasia","contract":"Vast","sub":"Living Operations"},{"name":"Vianel Brazoban","contract":"Vast","sub":"Living Management"},{"name":"Laymine Zimmerman","contract":"Vast","sub":"Living Operations"},{"name":"Sidmarelly Henriquez","contract":"Vast","sub":"Living Operations"},{"name":"Tharinah Sophia","contract":"Vast","sub":"Living Operations"},{"name":"Thysheliene Martiszoon","contract":"Vast","sub":"Living Operations"},{"name":"Connelly  Lourens","contract":"Vast","sub":"Living Operations"},{"name":"Dianne Meyer - Walle","contract":"Vast","sub":"Living Management"},{"name":"Nareelis Jakoba","contract":"Vast","sub":"Living Management"},{"name":"Roberto Badaracco","contract":"Vast","sub":"Living Management"},{"name":"Armigilda Kopra","contract":"Vast","sub":"Living Operations"},{"name":"Hannah Perlaza","contract":"Onbekend","sub":"Living Operations"},{"name":"Mariejela Rosinda Victor","contract":"Flexibel","sub":"Living Operations"},{"name":"Dianni Colon","contract":"Flexibel","sub":"Living Operations"},{"name":"Jair Mattheeuw","contract":"Flexibel","sub":"Living Operations"},{"name":"Qiyazir Lake","contract":"Flexibel","sub":"Living Operations"},{"name":"Carina Tidu","contract":"Vast","sub":"Living Operations"},{"name":"Noemi-Eluzai Cijntje","contract":"Flexibel","sub":"Living Operations"},{"name":"Zufreni Martis","contract":"Onbekend","sub":"Living Operations"}],"BU Sanitair/Keuken":[{"name":"Michael Matroos","contract":"Vast","sub":"S/K Operations"},{"name":"Navin Ramdjas","contract":"Vast","sub":"S/K Operations"},{"name":"Enoc Merkies","contract":"Vast","sub":"S/K Management"},{"name":"Mireya Meyer Rojas","contract":"Vast","sub":"S/K Operations"},{"name":"Steven Rogers","contract":"Vast","sub":"S/K Operations"},{"name":"Vianaly Victor","contract":"Vast","sub":"S/K Operations"},{"name":"Jamira Webster","contract":"Vast","sub":"S/K Management"},{"name":"Ivo Proveniers","contract":"Vast","sub":"S/K Management"},{"name":"Henk Van Veen","contract":"Vast","sub":"S/K Management"}]};
+const BU_EMPLOYEES = {"BU Appliance/Houseware":[{"name":"Michanu Isenia","contract":"Vast","sub":"A/H Operations","contract_hours":40.0},{"name":"Michelangelo Lourens","contract":"Vast","sub":"A/H Management","contract_hours":40.0},{"name":"Ruthlyn Comenencia Martina","contract":"Vast","sub":"A/H Operations","contract_hours":40.0},{"name":"Shelah Janga","contract":"Vast","sub":"A/H Operations","contract_hours":40.0},{"name":"Nilo  Grotestam","contract":"Flexibel","sub":"A/H Operations","contract_hours":null},{"name":"Sheila Lacrum Wawoe","contract":"Vast","sub":"A/H Operations","contract_hours":40.0},{"name":"Francisco Doran","contract":"Vast","sub":"A/H Operations","contract_hours":40.0},{"name":"Christopher Bakmeijer","contract":"Vast","sub":"A/H Operations","contract_hours":40.0},{"name":"Rudelly Mauricia","contract":"Vast","sub":"A/H Management","contract_hours":40.0},{"name":"Daniel Louman","contract":"Vast","sub":"A/H Management","contract_hours":40.0},{"name":"Kevin Djotaroeno","contract":"Onbekend","sub":"A/H Management","contract_hours":null}],"BU Building Materials":[{"name":"Niasotis Dandare Ellis","contract":"Vast","sub":"Building Materials Management","contract_hours":40.0}],"BU Hardware":[{"name":"Tercy Stewart","contract":"Vast","sub":"Hardware Management","contract_hours":40.0},{"name":"Shannon Martha","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Marciela Andrea","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Gilbert Santiroma","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Marshelon Janzen","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"John Candelaria","contract":"Vast","sub":"Hardware Management","contract_hours":40.0},{"name":"Shuwender Rosini","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Keith Taylor","contract":"Vast","sub":"Hardware Management","contract_hours":40.0},{"name":"Eliana  Dangond Pabon","contract":"Vast","sub":"Hardware Management","contract_hours":40.0},{"name":"Jowendrick Sillie","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Archel Presentacion","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Minguel Goedgedrag","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Javier Martis","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Noah Frankenberger","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Marlon Meyer","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Rishantely Jantje","contract":"Flexibel","sub":"Hardware Operations","contract_hours":null},{"name":"Christopher Bregita","contract":"Vast","sub":"Hardware Operations","contract_hours":24.0},{"name":"Jhonny Garves","contract":"Flexibel","sub":"Hardware Operations","contract_hours":null},{"name":"Noudimar Dorothea","contract":"Flexibel","sub":"Hardware Operations","contract_hours":null},{"name":"Tyshawn  Angela","contract":"Flexibel","sub":"Hardware Operations","contract_hours":null},{"name":"Raymi-Engelo Regina","contract":"Flexibel","sub":"Hardware Operations","contract_hours":null},{"name":"Vai-Ona Martines","contract":"Flexibel","sub":"Hardware Operations","contract_hours":null},{"name":"Guishawn Wanga","contract":"Vast","sub":"Hardware Operations","contract_hours":40.0},{"name":"Dejuan Brown","contract":"Onbekend","sub":"Hardware Operations","contract_hours":null},{"name":"Rigchantely Da Costa Gomez","contract":"Flexibel","sub":"Hardware Operations","contract_hours":null}],"BU Living":[{"name":"Gijs Verkuijl","contract":"Onbekend","sub":"Living Management","contract_hours":null},{"name":"Franklin Domatilia","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Ingerson Carmela","contract":"Vast","sub":"Living Management","contract_hours":40.0},{"name":"Sus-Marianne Anastasia","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Vianel Brazoban","contract":"Vast","sub":"Living Management","contract_hours":40.0},{"name":"Laymine Zimmerman","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Sidmarelly Henriquez","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Tharinah Sophia","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Thysheliene Martiszoon","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Connelly  Lourens","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Dianne Meyer - Walle","contract":"Vast","sub":"Living Management","contract_hours":40.0},{"name":"Nareelis Jakoba","contract":"Vast","sub":"Living Management","contract_hours":40.0},{"name":"Roberto Badaracco","contract":"Vast","sub":"Living Management","contract_hours":32.0},{"name":"Armigilda Kopra","contract":"Vast","sub":"Living Operations","contract_hours":28.0},{"name":"Hannah Perlaza","contract":"Onbekend","sub":"Living Operations","contract_hours":null},{"name":"Mariejela Rosinda Victor","contract":"Flexibel","sub":"Living Operations","contract_hours":null},{"name":"Dianni Colon","contract":"Flexibel","sub":"Living Operations","contract_hours":null},{"name":"Jair Mattheeuw","contract":"Flexibel","sub":"Living Operations","contract_hours":null},{"name":"Qiyazir Lake","contract":"Flexibel","sub":"Living Operations","contract_hours":null},{"name":"Carina Tidu","contract":"Vast","sub":"Living Operations","contract_hours":40.0},{"name":"Noemi-Eluzai Cijntje","contract":"Flexibel","sub":"Living Operations","contract_hours":null},{"name":"Zufreni Martis","contract":"Onbekend","sub":"Living Operations","contract_hours":null}],"BU Sanitair/Keuken":[{"name":"Michael Matroos","contract":"Vast","sub":"S/K Operations","contract_hours":40.0},{"name":"Navin Ramdjas","contract":"Vast","sub":"S/K Operations","contract_hours":40.0},{"name":"Enoc Merkies","contract":"Vast","sub":"S/K Management","contract_hours":40.0},{"name":"Mireya Meyer Rojas","contract":"Vast","sub":"S/K Operations","contract_hours":40.0},{"name":"Steven Rogers","contract":"Vast","sub":"S/K Operations","contract_hours":40.0},{"name":"Vianaly Victor","contract":"Vast","sub":"S/K Operations","contract_hours":40.0},{"name":"Jamira Webster","contract":"Vast","sub":"S/K Management","contract_hours":40.0},{"name":"Ivo Proveniers","contract":"Vast","sub":"S/K Management","contract_hours":40.0},{"name":"Henk Van Veen","contract":"Vast","sub":"S/K Management","contract_hours":40.0}]};
 
 const NL_DAYS = ['Ma','Di','Wo','Do','Vr','Za','Zo'];
 
@@ -88,6 +93,7 @@ export default function UrenplanningPage() {
   const [newEmpContract, setNewEmpContract] = useState('Vast');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
+  const [sortMode, setSortMode] = useState('default'); // 'default' | 'asc' | 'desc'
 
   useEffect(() => {
     (async () => {
@@ -114,7 +120,7 @@ export default function UrenplanningPage() {
   }, [selectedBU, currentWeek]);
 
   async function loadData() {
-    // Base employee list uit Dyflexis
+    // Base employee list uit Dyflexis (inclusief contract_hours)
     const baseList = BU_EMPLOYEES[selectedBU] || [];
 
     // Pak alle reeds opgeslagen rijen voor deze week → kan extra namen bevatten (toegevoegd door BUM)
@@ -129,15 +135,16 @@ export default function UrenplanningPage() {
 
     // Bouw de medewerkerslijst: base + extras die in DB staan maar niet in base
     const empMap = {};
-    baseList.forEach(e => { empMap[e.name] = { ...e, added: false }; });
+    baseList.forEach((e, idx) => { empMap[e.name] = { ...e, added: false, defaultOrder: idx }; });
+    let extraIdx = 9999;
     (dayRows || []).forEach(r => {
       if (!empMap[r.employee_name]) {
-        empMap[r.employee_name] = { name: r.employee_name, contract: r.contract_type || 'Onbekend', sub: '', added: true };
+        empMap[r.employee_name] = { name: r.employee_name, contract: r.contract_type || 'Onbekend', sub: '', contract_hours: null, added: true, defaultOrder: extraIdx++ };
       }
     });
     (otRows || []).forEach(r => {
       if (!empMap[r.employee_name]) {
-        empMap[r.employee_name] = { name: r.employee_name, contract: r.contract_type || 'Onbekend', sub: '', added: true };
+        empMap[r.employee_name] = { name: r.employee_name, contract: r.contract_type || 'Onbekend', sub: '', contract_hours: null, added: true, defaultOrder: extraIdx++ };
       }
     });
 
@@ -180,7 +187,8 @@ export default function UrenplanningPage() {
       setTimeout(() => setSaveMsg(''), 3000);
       return;
     }
-    setEmployees(prev => [...prev, { name: trimmed, contract: newEmpContract, sub: '', added: true }]);
+    const maxOrder = employees.reduce((m, e) => Math.max(m, e.defaultOrder || 0), 9999);
+    setEmployees(prev => [...prev, { name: trimmed, contract: newEmpContract, sub: '', contract_hours: null, added: true, defaultOrder: maxOrder + 1 }]);
     setNewEmpName('');
     setNewEmpContract('Vast');
   }
@@ -277,6 +285,21 @@ export default function UrenplanningPage() {
     dayDates.push(d);
   }
 
+  // Sorteer medewerkers volgens sortMode
+  const firstName = (n) => (n || '').split(' ')[0].toLowerCase();
+  const sortedEmployees = [...employees];
+  if (sortMode === 'asc') {
+    sortedEmployees.sort((a, b) => firstName(a.name).localeCompare(firstName(b.name)));
+  } else if (sortMode === 'desc') {
+    sortedEmployees.sort((a, b) => firstName(b.name).localeCompare(firstName(a.name)));
+  } else {
+    sortedEmployees.sort((a, b) => (a.defaultOrder || 0) - (b.defaultOrder || 0));
+  }
+
+  function cycleSortMode() {
+    setSortMode(prev => prev === 'default' ? 'asc' : prev === 'asc' ? 'desc' : 'default');
+  }
+
   // Sums per dag + overall
   const dayTotals = [0,0,0,0,0,0,0];
   let weekGrandTotal = 0;
@@ -296,6 +319,9 @@ export default function UrenplanningPage() {
     const nw = getNextWeek();
     return nw.year === currentWeek.year && nw.week === currentWeek.week;
   })();
+
+  const sortIcon = sortMode === 'asc' ? ' ↑' : sortMode === 'desc' ? ' ↓' : ' ↕';
+  const headerStyle = {position:'sticky', top:0, zIndex:5, background:'#fff', padding:'10px 10px 8px', borderBottom:'2px solid rgba(0,0,0,0.14)', fontSize:10.5, textTransform:'uppercase', letterSpacing:'.4px', color:'#9c978c'};
 
   return (
     <div style={{maxWidth:1400, margin:'0 auto', padding:'20px', fontFamily:"'DM Sans',sans-serif", color:'#1a1a18'}}>
@@ -321,8 +347,8 @@ export default function UrenplanningPage() {
         </div>
       )}
 
-      {/* Week navigatie */}
-      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, padding:'12px 18px', background:'#fff', borderRadius:10, boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
+      {/* Week navigatie — STICKY */}
+      <div style={{position:'sticky', top:0, zIndex:10, display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, padding:'12px 18px', background:'#fff', borderRadius:10, boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
         <button onClick={() => setCurrentWeek(shiftWeek(currentWeek.year, currentWeek.week, -1))} style={{padding:'8px 14px', border:'1.5px solid rgba(0,0,0,0.14)', background:'#fff', borderRadius:7, fontFamily:'inherit', fontSize:12.5, fontWeight:500, cursor:'pointer'}}>← Vorige week</button>
         <div style={{textAlign:'center'}}>
           <div style={{fontSize:15, fontWeight:600}}>{selectedBU}</div>
@@ -333,36 +359,45 @@ export default function UrenplanningPage() {
 
       {/* Tabel */}
       <div style={{background:'#fff', borderRadius:14, padding:20, boxShadow:'0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)', overflowX:'auto'}}>
-        <table style={{width:'100%', borderCollapse:'collapse', fontSize:12.5}}>
+        <table style={{width:'100%', borderCollapse:'separate', borderSpacing:0, fontSize:12.5}}>
           <thead>
             <tr>
-              <th style={{textAlign:'left', padding:'8px 10px', borderBottom:'2px solid rgba(0,0,0,0.14)', fontSize:10.5, textTransform:'uppercase', letterSpacing:'.4px', color:'#9c978c'}}>Medewerker</th>
-              <th style={{padding:'8px 10px', borderBottom:'2px solid rgba(0,0,0,0.14)', fontSize:10.5, textTransform:'uppercase', letterSpacing:'.4px', color:'#9c978c', width:70}}>Contract</th>
+              <th style={{...headerStyle, textAlign:'left', cursor:'pointer', userSelect:'none'}} onClick={cycleSortMode} title="Klik om te sorteren op voornaam">
+                Medewerker{sortIcon}
+              </th>
+              <th style={{...headerStyle, textAlign:'center', width:70}}>Contract</th>
+              <th style={{...headerStyle, textAlign:'right', width:75}}>Contract uren</th>
               {NL_DAYS.map((d, i) => (
-                <th key={i} style={{textAlign:'center', padding:'8px 6px', borderBottom:'2px solid rgba(0,0,0,0.14)', fontSize:10.5, textTransform:'uppercase', letterSpacing:'.4px', color:'#9c978c', width:60}}>
+                <th key={i} style={{...headerStyle, textAlign:'center', padding:'10px 6px', width:60}}>
                   {d}<br/><span style={{fontSize:9, color:'#9c978c', fontWeight:400}}>{dayDates[i].getUTCDate()}-{dayDates[i].getUTCMonth()+1}</span>
                 </th>
               ))}
-              <th style={{textAlign:'right', padding:'8px 10px', borderBottom:'2px solid rgba(0,0,0,0.14)', fontSize:10.5, textTransform:'uppercase', letterSpacing:'.4px', color:'#9c978c', width:65}}>Wk tot.</th>
-              <th style={{textAlign:'center', padding:'8px 6px', borderBottom:'2px solid rgba(0,0,0,0.14)', fontSize:10.5, textTransform:'uppercase', letterSpacing:'.4px', color:'#a33225', width:80}}>Overwerk</th>
+              <th style={{...headerStyle, textAlign:'right', width:65}}>Wk tot.</th>
+              <th style={{...headerStyle, textAlign:'center', padding:'10px 6px', color:'#a33225', width:80}}>Overwerk</th>
             </tr>
           </thead>
           <tbody>
-            {employees.map(emp => {
+            {sortedEmployees.map(emp => {
               const h = hours[emp.name] || {};
               let rowTotal = 0;
               for (let d = 1; d <= 7; d++) rowTotal += parseFloat(h[d]) || 0;
               const contractColor = emp.contract === 'Flexibel' ? {bg:'#ffe5d6', col:'#a33225'} : emp.contract === 'Vast' ? {bg:'#e0e7d4', col:'#3a5a2c'} : {bg:'#e8e8e8', col:'#666'};
+              const showContractHours = emp.contract === 'Vast' && emp.contract_hours !== null && emp.contract_hours !== undefined;
+              const overContract = showContractHours && rowTotal > emp.contract_hours;
+              const overBy = overContract ? (rowTotal - emp.contract_hours).toFixed(1) : 0;
               return (
                 <tr key={emp.name}>
                   <td style={{padding:'8px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', fontSize:12.5}}>
                     {emp.name}
                     {emp.added && <span style={{marginLeft:6, fontSize:10, color:'#D63B1A', fontWeight:600}}>nieuw</span>}
                   </td>
-                  <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)'}}>
+                  <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'center'}}>
                     <span style={{display:'inline-block', fontSize:9.5, padding:'1.5px 6px', borderRadius:3, fontWeight:600, letterSpacing:'.2px', background:contractColor.bg, color:contractColor.col}}>
                       {emp.contract === 'Flexibel' ? 'flex' : emp.contract === 'Vast' ? 'vast' : '?'}
                     </span>
+                  </td>
+                  <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11.5, color:'#6b6960'}}>
+                    {showContractHours ? emp.contract_hours : '-'}
                   </td>
                   {NL_DAYS.map((_, i) => {
                     const day = i + 1;
@@ -380,8 +415,11 @@ export default function UrenplanningPage() {
                       </td>
                     );
                   })}
-                  <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:12, fontWeight:600}}>
+                  <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:12, fontWeight:600, color: overContract ? '#a33225' : 'inherit'}}>
                     {rowTotal > 0 ? rowTotal.toFixed(1) : '-'}
+                    {overContract && (
+                      <div style={{fontSize:9.5, fontWeight:500, color:'#a33225', marginTop:2, lineHeight:1.2}}>+{overBy}u boven contract — overwerk?</div>
+                    )}
                   </td>
                   <td style={{padding:'4px 4px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'center'}}>
                     <input
@@ -399,7 +437,7 @@ export default function UrenplanningPage() {
           </tbody>
           <tfoot>
             <tr style={{background:'#1a1a18', color:'#fff'}}>
-              <td colSpan={2} style={{padding:'10px', fontWeight:700, fontSize:12}}>TOTAAL</td>
+              <td colSpan={3} style={{padding:'10px', fontWeight:700, fontSize:12}}>TOTAAL</td>
               {dayTotals.map((t, i) => (
                 <td key={i} style={{padding:'10px', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontWeight:700}}>{t > 0 ? t.toFixed(1) : '-'}</td>
               ))}
