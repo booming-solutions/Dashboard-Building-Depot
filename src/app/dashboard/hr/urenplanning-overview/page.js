@@ -102,8 +102,8 @@ export default function UrenplanningOverviewPage() {
 
   if (loading) {
     return (
-      <div style={{minHeight:'60vh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, fontFamily:"'DM Sans',sans-serif"}}>
-        <div style={{width:64, height:64, borderRadius:14, background:'#D63B1A', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:700, fontSize:24, letterSpacing:'-.5px', boxShadow:'0 4px 12px rgba(214,59,26,.25)', animation:'pulse 1.5s ease-in-out infinite'}}>BD</div>
+      <div style={{minHeight:'60vh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, fontFamily:"'DM Sans',sans-serif"}}>
+        <img src="/logo.png" alt="Booming Solutions" style={{width:64, height:64, borderRadius:14, animation:'pulse 1.5s ease-in-out infinite'}} />
         <div style={{fontSize:13, color:'#6b6960', fontWeight:500}}>Overzicht laden...</div>
         <style>{`@keyframes pulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.95)}}`}</style>
       </div>
