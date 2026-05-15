@@ -11,11 +11,13 @@
    ============================================================ */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts';
+import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
+
+Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
 
 const MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
 
@@ -251,16 +253,83 @@ function StoreSection({ r }) {
   const fcstVsBudget = pctChg(r.lyPacingForecast, r.monthBudgetSales);
   const fyFcstVsBudget = pctChg(r.fyLyPacingForecast, r.fyBudgetSales);
 
-  // Chart data
-  const chartData = MN.map((m, i) => {
-    const isPastOrCurrent = i + 1 <= r.curMonth;
-    return {
-      maand: m,
-      'TY Omzet': isPastOrCurrent ? Math.round(r.monthlyCY[i]) : null,
-      'LY Omzet': Math.round(r.monthlyLY[i]),
-      Budget: Math.round(r.monthlyBudget[i]),
+  // Chart.js canvas ref + useEffect om chart te bouwen/destroyen
+  const chartRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!chartRef.current) return;
+    // Cleanup vorige chart
+    if (chartInstance.current) {
+      chartInstance.current.destroy();
+      chartInstance.current = null;
+    }
+    // TY waarden: alleen tonen voor maanden tot en met de huidige
+    const tyValues = r.monthlyCY.map((v, i) => (i + 1 <= r.curMonth ? Math.round(v) : null));
+    const lyValues = r.monthlyLY.map(v => Math.round(v));
+    const bdValues = r.monthlyBudget.map(v => Math.round(v));
+
+    chartInstance.current = new Chart(chartRef.current, {
+      type: 'bar',
+      data: {
+        labels: MN,
+        datasets: [
+          {
+            label: r.curYear + ' TY',
+            data: tyValues,
+            backgroundColor: 'rgba(232,78,27,0.25)',
+            borderColor: '#E84E1B',
+            borderWidth: 1,
+            borderRadius: 4,
+            order: 2,
+          },
+          {
+            label: (r.curYear - 1) + ' LY',
+            data: lyValues,
+            type: 'line',
+            borderColor: '#888',
+            borderDash: [5, 5],
+            pointBackgroundColor: '#888',
+            pointRadius: 4,
+            tension: 0.3,
+            fill: false,
+            order: 1,
+          },
+          {
+            label: r.curYear + ' Budget',
+            data: bdValues,
+            type: 'line',
+            borderColor: '#d97706',
+            borderDash: [3, 3],
+            pointBackgroundColor: '#d97706',
+            pointRadius: 4,
+            tension: 0.3,
+            fill: false,
+            order: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } },
+          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.raw)}` } },
+        },
+        scales: {
+          y: { ticks: { callback: v => fmtM(v) }, grid: { color: '#f0ebe5' } },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+
+    return () => {
+      if (chartInstance.current) {
+        chartInstance.current.destroy();
+        chartInstance.current = null;
+      }
     };
-  });
+  }, [r]);
 
   return (
     <div className="mb-8">
@@ -318,18 +387,7 @@ function StoreSection({ r }) {
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm p-4 mb-4">
         <p className="text-[13px] font-bold mb-3">Maandelijkse Omzet — TY vs LY vs Budget</p>
         <div style={{ height: 280 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
-              <CartesianGrid stroke="#f0e8de" />
-              <XAxis dataKey="maand" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtM} />
-              <Tooltip formatter={v => fmt(v)} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="TY Omzet" fill="#E84E1B" />
-              <Bar dataKey="LY Omzet" fill="#bfa78a" />
-              <Line type="monotone" dataKey="Budget" stroke="#1B3A5C" strokeWidth={2} dot={{ r: 3 }} />
-            </ComposedChart>
-          </ResponsiveContainer>
+          <canvas ref={chartRef} />
         </div>
       </div>
 
