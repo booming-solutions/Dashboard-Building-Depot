@@ -17,6 +17,9 @@
    - UI kolom 'Max Lead Time' hernoemd naar 'Lead Time'
    - Excel-export: 'Min lead time' + 'Max lead time' kolommen
      vervangen door één 'Lead time (mnd)' kolom
+   - BUGFIX: Excel-export filename gebruikte 'selBum' variabele die
+     niet bestaat in deze component. Vervangen door bumFilter (prop).
+     Veroorzaakte ReferenceError op Totaaloverzicht.
 
    Wijzigingen t.o.v. v3:
    - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
@@ -677,7 +680,7 @@ export default function StockRiskShared({ bumFilter }) {
           })}
         </div>
         <ExcelExportButton
-          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_stock_risk_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Totaal'); })()}
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_stock_risk_' + (bumFilter || 'alle') + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Totaal'); })()}
           reportTitle={'Stock Risk Alert — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'Totaal')}
           sheets={function() {
             return [
