@@ -1,7 +1,14 @@
 /* ============================================================
-   BESTAND: page_admin_v6.js
+   BESTAND: page_admin_v7.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
+   
+   WIJZIGING t.o.v. v6:
+   - Drie nieuwe HR rapporten toegevoegd aan REPORTS lijst:
+     - Urentarget (hr_urentarget)
+     - Urenplanning (hr_urenplanning)
+     - Urenplanning Overzicht (hr_urenplanning_overview)
+   - Hiermee kun je per gebruiker / rol toegang tot deze rapporten beheren
    
    WIJZIGING t.o.v. v5:
    - Nieuw rapport 'Stock Risk Alert' toegevoegd aan REPORTS lijst
@@ -21,6 +28,9 @@ var REPORTS = [
   { id: 'inventory_stockrisk', label: 'Stock Risk Alert', group: 'Voorraad', icon: '🚨' },
   { id: 'inventory_health', label: 'Gezondheid Voorraden', group: 'Voorraad', icon: '🏥' },
   { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
+  { id: 'hr_urentarget', label: 'Urentarget', group: 'HR', icon: '⏱️' },
+  { id: 'hr_urenplanning', label: 'Urenplanning', group: 'HR', icon: '📅' },
+  { id: 'hr_urenplanning_overview', label: 'Urenplanning Overzicht', group: 'HR', icon: '📋' },
 ];
 
 export default function AdminUsersPage() {
