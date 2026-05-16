@@ -57,8 +57,8 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
   const totalDaysInYear = daysInMonth(curYear, 2) === 29 ? 366 : 365;
   const dayOfYear = Math.floor((reportDate - new Date(curYear, 0, 0)) / (1000 * 60 * 60 * 24));
 
-  // 1. Vandaag
-  let allTodayRows = [];
+  // 1. Vandaag (FB-rijen gefilterd)
+  let allTodayRowsRaw = [];
   let from = 0; const step = 1000;
   while (true) {
     const { data: b } = await supabase
@@ -68,16 +68,17 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
       .eq('sale_date', reportDateStr)
       .range(from, from + step - 1);
     if (!b || !b.length) break;
-    allTodayRows = allTodayRows.concat(b);
+    allTodayRowsRaw = allTodayRowsRaw.concat(b);
     if (b.length < step) break;
     from += step;
   }
+  const allTodayRows = allTodayRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
   const todaySales = allTodayRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const todayMargin = allTodayRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const todayMarginPct = todaySales ? (todayMargin / todaySales * 100) : 0;
 
-  // 2. Vandaag LY
-  let lyTodayRows = [];
+  // 2. Vandaag LY (FB-rijen gefilterd)
+  let lyTodayRowsRaw = [];
   from = 0;
   while (true) {
     const { data: b } = await supabase
@@ -87,20 +88,35 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
       .eq('sale_date', lyDateStr)
       .range(from, from + step - 1);
     if (!b || !b.length) break;
-    lyTodayRows = lyTodayRows.concat(b);
+    lyTodayRowsRaw = lyTodayRowsRaw.concat(b);
     if (b.length < step) break;
     from += step;
   }
+  const lyTodayRows = lyTodayRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
   const lyTodaySales = lyTodayRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const lyTodayMargin = lyTodayRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const lyTodayMarginPct = lyTodaySales ? (lyTodayMargin / lyTodaySales * 100) : 0;
 
-  // 3. MTD
-  const { data: cyMonthRows } = await supabase
-    .from('sales_monthly').select('net_sales, gross_margin')
-    .eq('store_number', storeNumber).eq('year', curYear).eq('month', curMonth);
-  const mtdSales = (cyMonthRows || []).reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
-  const mtdMargin = (cyMonthRows || []).reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
+  // 3. MTD — directe sales_data aggregatie, real-time inclusief vandaag
+  let mtdRowsRaw = [];
+  const monthStartStr = `${curYear}-${String(curMonth).padStart(2,'0')}-01`;
+  from = 0;
+  while (true) {
+    const { data: b } = await supabase
+      .from('sales_data')
+      .select('net_sales, gross_margin, dept_code')
+      .eq('store_number', storeNumber)
+      .gte('sale_date', monthStartStr)
+      .lte('sale_date', reportDateStr)
+      .range(from, from + step - 1);
+    if (!b || !b.length) break;
+    mtdRowsRaw = mtdRowsRaw.concat(b);
+    if (b.length < step) break;
+    from += step;
+  }
+  const mtdRows = mtdRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const mtdSales = mtdRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
+  const mtdMargin = mtdRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const mtdMarginPct = mtdSales ? (mtdMargin / mtdSales * 100) : 0;
 
   // 4. MTD LY (via sales_daily)
@@ -126,12 +142,26 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
     .eq('store_number', storeNumber).eq('year', lyYear).eq('month', curMonth);
   const lyFullMonthSales = (lyFullMonthRows || []).reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
 
-  // 6. YTD
-  const { data: ytdRows } = await supabase
-    .from('sales_monthly').select('net_sales, gross_margin, month')
-    .eq('store_number', storeNumber).eq('year', curYear).lte('month', curMonth);
-  const ytdSales = (ytdRows || []).reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
-  const ytdMargin = (ytdRows || []).reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
+  // 6. YTD — directe sales_data aggregatie, real-time inclusief vandaag
+  let ytdRowsRaw = [];
+  const yearStartStr = `${curYear}-01-01`;
+  from = 0;
+  while (true) {
+    const { data: b } = await supabase
+      .from('sales_data')
+      .select('net_sales, gross_margin, dept_code')
+      .eq('store_number', storeNumber)
+      .gte('sale_date', yearStartStr)
+      .lte('sale_date', reportDateStr)
+      .range(from, from + step - 1);
+    if (!b || !b.length) break;
+    ytdRowsRaw = ytdRowsRaw.concat(b);
+    if (b.length < step) break;
+    from += step;
+  }
+  const ytdRowsFiltered = ytdRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const ytdSales = ytdRowsFiltered.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
+  const ytdMargin = ytdRowsFiltered.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const ytdMarginPct = ytdSales ? (ytdMargin / ytdSales * 100) : 0;
 
   // 7. LY YTD t/m zelfde dag
@@ -149,16 +179,27 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
     .eq('store_number', storeNumber).eq('year', lyYear);
   const lyFullYearSales = (lyFullYearRows || []).reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
 
-  // 9. Budget
-  const { data: budgetRows } = await supabase
-    .from('budget_data').select('month, amount, budget_type')
-    .eq('store_number', storeNumber).like('month', `${curYear}-%`)
-    .in('budget_type', ['target_sales', 'target_margin']);
+  // 9. Budget — paginated query (1.728 rijen overschrijdt Supabase default limit van 1000)
+  let budgetRows = [];
+  {
+    let bFrom = 0; const bStep = 1000;
+    while (true) {
+      const { data: b } = await supabase
+        .from('budget_data').select('month, amount, budget_type')
+        .eq('store_number', storeNumber).like('month', `${curYear}-%`)
+        .in('budget_type', ['target_sales', 'target_margin'])
+        .range(bFrom, bFrom + bStep - 1);
+      if (!b || !b.length) break;
+      budgetRows = budgetRows.concat(b);
+      if (b.length < bStep) break;
+      bFrom += bStep;
+    }
+  }
   let monthBudgetSales = 0, monthBudgetMargin = 0;
   let fyBudgetSales = 0, fyBudgetMargin = 0;
   let mtdBudgetSales = 0;
   const monthlyBudget = Array(12).fill(0);
-  (budgetRows || []).forEach(b => {
+  budgetRows.forEach(b => {
     const [, bm] = b.month.split('-').map(Number);
     const amt = parseFloat(b.amount || 0);
     if (b.budget_type === 'target_sales') {
