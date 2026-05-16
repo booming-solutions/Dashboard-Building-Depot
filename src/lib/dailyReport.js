@@ -162,16 +162,29 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
   const lyFullYearSales = (lyFullYearRows || []).reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
 
   // === 9. Budget — target budget voor maand en FY ===
-  const { data: budgetRows } = await supabase
-    .from('budget_data')
-    .select('month, amount, budget_type')
-    .eq('store_number', storeNumber)
-    .like('month', `${curYear}-%`)
-    .in('budget_type', ['target_sales', 'target_margin']);
+  // BELANGRIJK: budget_data heeft 78 depts × 12 maanden × 2 types = ~1.872 rijen per store.
+  // Supabase default limit is 1000 — daarom pagineren we expliciet via .range()
+  let budgetRows = [];
+  {
+    let from = 0; const step = 1000;
+    while (true) {
+      const { data: b } = await supabase
+        .from('budget_data')
+        .select('month, amount, budget_type')
+        .eq('store_number', storeNumber)
+        .like('month', `${curYear}-%`)
+        .in('budget_type', ['target_sales', 'target_margin'])
+        .range(from, from + step - 1);
+      if (!b || !b.length) break;
+      budgetRows = budgetRows.concat(b);
+      if (b.length < step) break;
+      from += step;
+    }
+  }
   let monthBudgetSales = 0, monthBudgetMargin = 0;
   let fyBudgetSales = 0, fyBudgetMargin = 0;
   let mtdBudgetSales = 0, mtdBudgetMargin = 0;  // cumulatief budget tot huidige maand
-  (budgetRows || []).forEach(b => {
+  budgetRows.forEach(b => {
     const [by, bm] = b.month.split('-').map(Number);
     const amt = parseFloat(b.amount || 0);
     if (b.budget_type === 'target_sales') {
