@@ -24,7 +24,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.07';
+const APP_VERSION = 'V27.08';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -233,6 +233,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
+    '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
     '/dashboard/hr/urenplanning': 'hr_urenplanning',
@@ -257,6 +258,7 @@ export default function DashboardLayout({ children }) {
       { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
+    { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
       { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
