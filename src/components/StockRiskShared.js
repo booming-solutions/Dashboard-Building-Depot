@@ -17,6 +17,12 @@
      Aantal openstaande PO's)
    - Sort-functie robuuster gemaakt voor null-waardes (items zonder
      PO komen onderaan)
+   - Sticky tabel-header: kolomnamen blijven zichtbaar tijdens scrollen
+     · Container heeft max-height 70vh met overflow-auto
+     · thead heeft position sticky top:0
+     · TOTAAL rij blijft sticky onder de header (top: 60px)
+   - BUGFIX: colSpan van "Voorraad & Dekking" groep header bijgewerkt
+     van 4 naar 6 (was niet meegewijzigd met de 2 nieuwe kolommen)
 
    Wijzigingen t.o.v. v4:
    - BUGFIX: lead time werd uit kolom 'max_lead_time' gehaald, maar
@@ -792,12 +798,12 @@ export default function StockRiskShared({ bumFilter }) {
 
       {/* Main table */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
-        <div className="overflow-x-auto">
+        <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
           <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1400px' }}>
-            <thead>
+            <thead className="sticky top-0 z-30">
               <tr className="bg-[#1B3A5C]">
                 <th colSpan={4} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
-                <th colSpan={4} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
+                <th colSpan={6} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Verkoop</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2">Actie</th>
               </tr>
@@ -830,7 +836,7 @@ export default function StockRiskShared({ bumFilter }) {
                 var tQoh = 0, tQoo = 0, tQty = 0, tVal = 0;
                 displayed.forEach(function(m) { tQoh += m.qoh; tQoo += m.qoo; tQty += m.suggested_qty; tVal += m.suggested_value; });
                 return (
-                  <tr className="bg-[#faf7f4] sticky top-0 z-10">
+                  <tr className="bg-[#faf7f4] sticky z-20" style={{ top: '60px' }}>
                     <td colSpan={4} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">{'TOTAAL (' + displayed.length + ' items)'}</td>
                     <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoh))}</td>
                     <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoo))}</td>
