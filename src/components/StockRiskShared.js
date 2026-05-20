@@ -1,29 +1,30 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v5.js
+   BESTAND: StockRiskShared_v6.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.19
+   VERSIE: v3.28.20
+
+   Wijzigingen t.o.v. v5:
+   - Nieuwe feature: PO (purchase order) delivery info per item
+     · Twee nieuwe kolommen rechts van QOO:
+       "Volgende ETA" (datum, rood als in verleden)
+       "Aantal" (qty op die ETA)
+     · Tooltip op QOO cel: lijst van alle openstaande PO's met
+       PO-nummer, datum, aantal stuks
+     · Sortable: kun je sorteren op next_eta (vroegste eerst)
+     · Data uit nieuwe tabel po_deliveries
+   - Excel-export: 3 nieuwe kolommen (Volgende ETA, Volgende aantal,
+     Aantal openstaande PO's)
+   - Sort-functie robuuster gemaakt voor null-waardes (items zonder
+     PO komen onderaan)
 
    Wijzigingen t.o.v. v4:
    - BUGFIX: lead time werd uit kolom 'max_lead_time' gehaald, maar
      die kolom is in Compass verkeerd gelabeld (was bedoeld als
-     doel-voorraad). De werkelijke transit-tijd van leverancier naar
-     magazijn staat in 'min_lead_time' (Eagle Vendor Code 3).
-     Gevolg: classificatie was te kritisch, te veel items als
-     understock/urgent. Nu realistisch.
-   - max_lt veld verwijderd uit aggregatie, vervangen door lead_time
-   - Lead time wordt over stores binnen regio worst case (max van
-     min_lead_time) genomen
+     doel-voorraad). Werkelijke transit-tijd staat in 'min_lead_time'.
    - UI kolom 'Max Lead Time' hernoemd naar 'Lead Time'
-   - Excel-export: 'Min lead time' + 'Max lead time' kolommen
-     vervangen door één 'Lead time (mnd)' kolom
    - BUGFIX: Excel-export filename gebruikte 'selBum' variabele die
-     niet bestaat in deze component. Vervangen door bumFilter (prop).
-     Veroorzaakte ReferenceError op Totaaloverzicht.
-
-   Wijzigingen t.o.v. v3:
-   - Excel-export knop toegevoegd via gedeelde ExcelExportButton component
-   - Bevat Risico per Afdeling + hoofdtabel met items (huidige filters worden meegenomen)
+     niet bestond. Vervangen door bumFilter (prop).
    ============================================================ */
 'use client';
 
@@ -334,8 +335,11 @@ export default function StockRiskShared({ bumFilter }) {
   // NEW: NOS coverage snapshots
   var _nosSnap = _s([]), nosSnapshots = _nosSnap[0], setNosSnapshots = _nosSnap[1];
 
+  // PO deliveries: per item_number lijst van { po, date, qty }, gesorteerd op datum
+  var _po = _s({}), poByItem = _po[0], setPoByItem = _po[1];
+
   var supabase = createClient();
-  useEffect(function() { loadData(); loadNosSnapshots(); }, [bumFilter]);
+  useEffect(function() { loadData(); loadNosSnapshots(); loadPoDeliveries(); }, [bumFilter]);
 
   async function loadData() {
     setLoading(true);
@@ -370,6 +374,34 @@ export default function StockRiskShared({ bumFilter }) {
       from += step;
     }
     setNosSnapshots(all);
+  }
+
+  // Laad PO deliveries: alle verwachte leveringen per item
+  // Bouwt een lookup map per item_number → gesorteerde lijst van { po, date, qty }
+  async function loadPoDeliveries() {
+    var all = [], from = 0, step = 1000;
+    while (true) {
+      var r = await supabase.from('po_deliveries')
+        .select('po_number, item_number, date_expected, qty_expected')
+        .order('date_expected', { ascending: true })
+        .range(from, from + step - 1);
+      if (r.error) { console.error('PO deliveries load error:', r.error.message); break; }
+      if (!r.data || !r.data.length) break;
+      all = all.concat(r.data);
+      if (r.data.length < step) break;
+      from += step;
+    }
+    var map = {};
+    all.forEach(function(p) {
+      if (!map[p.item_number]) map[p.item_number] = [];
+      map[p.item_number].push({
+        po: p.po_number,
+        date: p.date_expected,
+        qty: parseFloat(p.qty_expected) || 0,
+      });
+    });
+    // Lijst per item is al gesorteerd op datum door de query
+    setPoByItem(map);
   }
 
   // Latest snapshot date
@@ -463,12 +495,23 @@ export default function StockRiskShared({ bumFilter }) {
         m.suggested_qty = 0;
         m.suggested_value = 0;
       }
+
+      // PO deliveries lookup voor dit item
+      var pos = poByItem[m.item] || [];
+      m.po_list = pos;
+      if (pos.length > 0) {
+        m.next_eta = pos[0].date;
+        m.next_qty = pos[0].qty;
+      } else {
+        m.next_eta = null;
+        m.next_qty = 0;
+      }
     });
 
     list = list.filter(function(m) { return m.avg_monthly > 0; });
 
     return list;
-  }, [data, store]);
+  }, [data, store, poByItem]);
 
   var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
   var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
@@ -500,7 +543,13 @@ export default function StockRiskShared({ bumFilter }) {
     }
 
     list = list.slice().sort(function(a, b) {
-      var av = a[sortCol] || 0, bv = b[sortCol] || 0;
+      var av = a[sortCol], bv = b[sortCol];
+      // Null/undefined naar onderaan bij beide sorteer-richtingen
+      var aNull = av === null || av === undefined;
+      var bNull = bv === null || bv === undefined;
+      if (aNull && bNull) return 0;
+      if (aNull) return 1;
+      if (bNull) return -1;
       if (typeof av === 'string') return sortDir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
       return sortDir === 'asc' ? av - bv : bv - av;
     });
@@ -714,6 +763,9 @@ export default function StockRiskShared({ bumFilter }) {
                     'Status': m.risk === 'critical' ? 'Kritiek' : m.risk === 'urgent' ? 'Urgent' : m.risk === 'watch' ? 'Aandacht' : 'OK',
                     'QOH': Math.round(m.qoh),
                     'QOO': Math.round(m.qoo),
+                    'Volgende ETA': m.next_eta || '',
+                    'Volgende aantal': m.next_qty || '',
+                    'Aantal openstaande PO\'s': (m.po_list || []).length,
                     'Beschikbaar': Math.round(m.available),
                     'Voorraad in mnd': m.months_cover >= 99 ? 'oneindig' : Math.round(m.months_cover * 10) / 10,
                     'Lead time (mnd)': m.lead_time,
@@ -757,6 +809,8 @@ export default function StockRiskShared({ bumFilter }) {
                   ['Status', 'risk', 'text-center border-r border-[#e5ddd4]'],
                   ['QOH', 'qoh', 'text-right'],
                   ['QOO', 'qoo', 'text-right'],
+                  ['Volgende ETA', 'next_eta', 'text-right'],
+                  ['Aantal', 'next_qty', 'text-right'],
                   ['Dekking', 'months_cover', 'text-right'],
                   ['vs LT', '', 'text-center border-r border-[#e5ddd4]'],
                   ['Gem/mnd', 'avg_monthly', 'text-right'],
@@ -781,6 +835,8 @@ export default function StockRiskShared({ bumFilter }) {
                     <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoh))}</td>
                     <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoo))}</td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
@@ -792,7 +848,7 @@ export default function StockRiskShared({ bumFilter }) {
                 );
               })()}
               {displayed.length === 0 && (
-                <tr><td colSpan={14} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
+                <tr><td colSpan={16} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
               )}
               {displayed.slice(0, tableRows).map(function(m, i) {
                 var bg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
@@ -807,7 +863,38 @@ export default function StockRiskShared({ bumFilter }) {
                     </td>
                     <td className="p-1.5 border-b border-[#f0ebe5] text-center border-r border-[#e5ddd4]"><RiskBadge level={m.risk} /></td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmt(Math.round(m.qoh))}</td>
-                    <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo > 0 ? '#1B3A5C' : '#a08a74' }}>{m.qoo > 0 ? fmt(Math.round(m.qoo)) : '-'}</td>
+                    <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo > 0 ? '#1B3A5C' : '#a08a74' }}
+                        title={m.po_list && m.po_list.length > 0
+                          ? 'Verwachte leveringen:\n' + m.po_list.map(function(p) {
+                              var d = new Date(p.date);
+                              return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
+                            }).join('\n')
+                          : 'Geen verwachte leveringen geregistreerd'}>{m.qoo > 0 ? fmt(Math.round(m.qoo)) : '-'}</td>
+                    {(function() {
+                      // Volgende ETA + aantal kolommen
+                      if (!m.next_eta) {
+                        return [
+                          <td key="eta" className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5] text-[#a08a74]">-</td>,
+                          <td key="qty" className="p-1.5 text-right font-mono text-[10px] border-b border-[#f0ebe5] text-[#a08a74]">-</td>,
+                        ];
+                      }
+                      var d = new Date(m.next_eta);
+                      var today = new Date(); today.setHours(0, 0, 0, 0);
+                      var isPast = d < today;
+                      var dateStr = d.getDate() + '/' + (d.getMonth() + 1);
+                      var fullDateStr = d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
+                      var tooltipExtra = m.po_list.length > 1 ? '  (' + m.po_list.length + ' leveringen verwacht — hover over QOO voor alle)' : '';
+                      return [
+                        <td key="eta" className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]"
+                            style={{ color: isPast ? '#dc2626' : '#1B3A5C', fontWeight: isPast ? 'bold' : 'normal' }}
+                            title={'Verwacht: ' + fullDateStr + (isPast ? '  — datum ligt in het verleden, ETA mogelijk verouderd' : '') + tooltipExtra}>
+                          {dateStr}
+                        </td>,
+                        <td key="qty" className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: '#1B3A5C' }}>
+                          {fmt(Math.round(m.next_qty))}
+                        </td>
+                      ];
+                    })()}
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold" style={{ color: coverColor }}>{m.months_cover >= 99 ? '∞' : m.months_cover.toFixed(1) + 'm'}</td>
                     <td className="p-1.5 border-b border-[#f0ebe5] border-r border-[#e5ddd4]"><CoverBar months={m.months_cover} maxLT={m.lead_time} /></td>
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold">{fmt(Math.round(m.avg_monthly))}</td>
