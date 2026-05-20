@@ -1,14 +1,19 @@
 /* ============================================================
-   BESTAND: page.js  (Data Status admin pagina)
+   BESTAND: page_data_status_v2.js  (Data Status admin pagina)
    KOPIEER NAAR: src/app/dashboard/admin/data-status/page.js
-   (deze map bestaat nog niet, moet aangemaakt worden)
+   (overschrijft bestaande page.js)
 
-   Toont gezondheid van alle datapipelines.
+   Wijzigingen t.o.v. v1:
+   - Nieuwe source toegevoegd: PO Deliveries
+   - SOURCES config ondersteunt nu dimension: null (geen drilldown)
+   - po_deliveries gebruikt uploaded_at::date als data-datum
+     (er is geen pure date kolom, alleen timestamp)
+
    Drempels:
    - Vandaag/gisteren     = 🟢 OK
    - Eergisteren          = 🟠 1 dag te laat
    - 3+ dagen geleden     = 🔴 2+ dagen te laat
-   Drilldown per bron via klik (subrijen per store / BUM).
+   Drilldown per bron via klik (subrijen per store / BUM / regio).
    ============================================================ */
 'use client';
 
@@ -21,6 +26,8 @@ const MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','D
 
 // Configuratie van alle bronnen die we monitoren
 // Elk bron heeft: tabel, datumkolom, upload-timestamp kolom, dimensies om op te splitsen, en verwachte tijd
+// dimension: null betekent geen drilldown (één file, geen splitsing per store/BUM/regio)
+// dateColIsTimestamp: true betekent dat de dateCol een timestamp is (niet een date) en we casten naar date
 const SOURCES = [
   {
     id: 'sales',
@@ -81,6 +88,16 @@ const SOURCES = [
     expectedTime: 'dagelijks 08:00',
     storeLabels: { 'CUR': 'Curaçao', 'BON': 'Bonaire' },
   },
+  {
+    id: 'po_deliveries',
+    label: 'PO Deliveries',
+    table: 'po_deliveries',
+    dateCol: 'uploaded_at',
+    uploadCol: 'uploaded_at',
+    dimension: null, // één file met alle PO's, geen splitsing
+    expectedTime: 'dagelijks 08:00',
+    dateColIsTimestamp: true,
+  },
 ];
 
 // Bepaal status op basis van data-datum vs vandaag
@@ -125,6 +142,13 @@ function worstStatus(statuses) {
   return 'green';
 }
 
+// Converteer timestamp naar YYYY-MM-DD string
+function tsToDateStr(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 export default function DataStatusPage() {
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(true);
@@ -159,15 +183,18 @@ export default function DataStatusPage() {
         .order(src.dateCol, { ascending: false })
         .limit(1);
 
-      const overallLastDate = overallRows?.[0]?.[src.dateCol] || null;
+      let overallLastDate = overallRows?.[0]?.[src.dateCol] || null;
       const overallLastUpload = overallRows?.[0]?.[src.uploadCol] || null;
 
-      // Haal per-dimensie laatste data datum op
-      // (haal alle rijen op met meest recente datum, dan groepeer in JS — simpeler dan complexe Supabase query)
+      // Als dateCol een timestamp is, casten naar date string
+      if (src.dateColIsTimestamp && overallLastDate) {
+        overallLastDate = tsToDateStr(overallLastDate);
+      }
+
+      // Haal per-dimensie laatste data datum op (alleen als dimension is geconfigureerd)
       let subRows = [];
-      if (overallLastDate) {
+      if (overallLastDate && src.dimension) {
         // Haal de laatste record per dimensie waarde
-        // Strategie: get distinct dimension values, voor elk de meest recente
         const { data: dimValues } = await supabase
           .from(src.table)
           .select(src.dimension)
@@ -185,12 +212,16 @@ export default function DataStatusPage() {
             .limit(1);
 
           if (dr && dr.length) {
+            let lastDate = dr[0][src.dateCol];
+            if (src.dateColIsTimestamp && lastDate) {
+              lastDate = tsToDateStr(lastDate);
+            }
             subRows.push({
               dimension: dimVal,
               dimensionLabel: src.storeLabels?.[dimVal] || dimVal,
-              lastDate: dr[0][src.dateCol],
+              lastDate: lastDate,
               lastUpload: dr[0][src.uploadCol],
-              status: getStatus(dr[0][src.dateCol]),
+              status: getStatus(lastDate),
             });
           }
         }
@@ -279,7 +310,7 @@ export default function DataStatusPage() {
               return (
                 <Fragment key={src.id}>
                   <tr
-                    className={`hover:bg-[#faf5f0] cursor-pointer ${isExpanded ? 'bg-[#faf7f4]' : ''}`}
+                    className={`hover:bg-[#faf5f0] ${hasSubRows ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-[#faf7f4]' : ''}`}
                     onClick={() => hasSubRows && setExpanded(prev => ({ ...prev, [src.id]: !prev[src.id] }))}
                   >
                     <td className="p-3 text-[13px] border-b border-[#e5ddd4] font-semibold">

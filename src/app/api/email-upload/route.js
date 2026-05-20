@@ -1,7 +1,14 @@
 /* ============================================================
-   BESTAND: route_email_v20.js
+   BESTAND: route_email_v21.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v21:
+   - Nieuw file type 'po_deliveries' toegevoegd
+     * Detectie via kolommen: PO Detail + Item Number + Date Expected
+     * processPoDeliveries: TRUNCATE + INSERT in chunks van 1000
+     * Vult tabel po_deliveries (gebruikt door Stock Risk Alert)
+   - po_deliveries detectie staat VOOR negative_inventory en
+     price_changes om early-match te voorkomen
    WIJZIGING v20:
    - BUGFIX: 6 plekken in de code gebruikten nog 'supabase' (zonder
      getSupabase()) terwijl v19 die globale variabele had verwijderd.
@@ -93,6 +100,14 @@ function detectFileType(columns) {
       cols.some(function(c) { return c.includes('sales units'); }) &&
       cols.some(function(c) { return c.includes('department group'); })) {
     return 'buying';
+  }
+
+  // PO Deliveries: has "PO Detail" + "Item Number" + "Date Expected" + "QOO Rounded Quantity"
+  // Moet voor negative_inventory en price_changes worden geprobeerd om early match te voorkomen
+  if (cols.some(function(c) { return c.includes('po detail') || c.includes('po number'); }) &&
+      cols.some(function(c) { return c.includes('item number'); }) &&
+      cols.some(function(c) { return c.includes('date expected') || c.includes('eta'); })) {
+    return 'po_deliveries';
   }
 
   // Price changes: has "Item Number" + "Quantity on Hand" + "Store Group" + "Date Of Last Sale"
@@ -1016,6 +1031,108 @@ async function processPriceChanges(json) {
 }
 
 /* ══════════════════════════════════════════════
+   PROCESS PO DELIVERIES
+   - Snapshot van alle openstaande PO's (Purchase Orders)
+   - Strategy: TRUNCATE + INSERT (PO's verschuiven dagelijks van datum, sommige
+     komen vroeger/later aan, nieuwe PO's worden aangemaakt, oude verdwijnen)
+   - Verwachte kolommen: PO Detail, Item Number, Item Description, Date Expected, QOO Rounded Quantity
+   ══════════════════════════════════════════════ */
+async function processPoDeliveries(json) {
+  // Verzamel alle keys uit alle rijen
+  var keysSet = {};
+  for (var ki = 0; ki < json.length; ki++) {
+    var rk = Object.keys(json[ki]);
+    for (var kj = 0; kj < rk.length; kj++) keysSet[rk[kj]] = true;
+  }
+  var keys = Object.keys(keysSet);
+
+  var poKey = findCol(keys, ['po detail', 'po number']);
+  var itemKey = findCol(keys, ['item number']);
+  var descKey = findCol(keys, ['item description', 'description']);
+  var dateKey = findCol(keys, ['date expected', 'eta', 'expected date']);
+  var qtyKey = findCol(keys, ['qoo rounded quantity', 'quantity', 'qoo', 'qty']);
+
+  if (!poKey || !itemKey || !dateKey || !qtyKey) {
+    console.error('PO deliveries: missing required columns. Found: ' + JSON.stringify({ poKey: poKey, itemKey: itemKey, dateKey: dateKey, qtyKey: qtyKey }));
+    return { table: 'po_deliveries', rows_imported: 0 };
+  }
+
+  // Bouw rows
+  var rows = [];
+  var skipped = 0;
+  for (var i = 0; i < json.length; i++) {
+    var row = json[i];
+    var po = String(row[poKey] || '').trim();
+    var item = String(row[itemKey] || '').trim();
+    var dateVal = row[dateKey];
+    var qty = parseFloat(row[qtyKey]) || 0;
+
+    if (!po || !item || !dateVal || qty <= 0) {
+      skipped++;
+      continue;
+    }
+
+    // Date parsing: SheetJS levert Date objecten (door cellDates: true)
+    var dateStr = '';
+    if (dateVal instanceof Date) {
+      // YYYY-MM-DD format, gebruik UTC om timezone-issues te voorkomen
+      dateStr = dateVal.getUTCFullYear() + '-' +
+                String(dateVal.getUTCMonth() + 1).padStart(2, '0') + '-' +
+                String(dateVal.getUTCDate()).padStart(2, '0');
+    } else {
+      // Fallback: parse string
+      var d = new Date(dateVal);
+      if (isNaN(d.getTime())) {
+        skipped++;
+        continue;
+      }
+      dateStr = d.getUTCFullYear() + '-' +
+                String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+                String(d.getUTCDate()).padStart(2, '0');
+    }
+
+    rows.push({
+      po_number: po,
+      item_number: item,
+      item_description: descKey ? String(row[descKey] || '').trim() : '',
+      date_expected: dateStr,
+      qty_expected: qty,
+    });
+  }
+
+  console.log('PO deliveries: ' + rows.length + ' valid rows, ' + skipped + ' skipped');
+
+  if (rows.length === 0) {
+    return { table: 'po_deliveries', rows_imported: 0 };
+  }
+
+  // TRUNCATE: oude data wegvegen want PO's zijn een complete momentopname
+  var delResult = await getSupabase().from('po_deliveries').delete({ count: 'exact' }).not('id', 'is', null);
+  if (delResult.error) {
+    console.error('PO deliveries delete error: ' + delResult.error.message);
+    throw new Error('PO deliveries delete failed: ' + delResult.error.message);
+  }
+  console.log('PO deliveries: deleted ' + (delResult.count || 0) + ' existing rows');
+
+  // Insert in chunks van 1000 (Supabase limit)
+  var totalInserted = 0;
+  var chunkSize = 1000;
+  for (var c = 0; c < rows.length; c += chunkSize) {
+    var chunk = rows.slice(c, c + chunkSize);
+    var res = await getSupabase().from('po_deliveries').insert(chunk);
+    if (res.error) {
+      console.error('PO deliveries insert error at chunk ' + c + ': ' + res.error.message);
+      throw new Error('PO deliveries insert failed: ' + res.error.message);
+    }
+    totalInserted += chunk.length;
+  }
+
+  console.log('PO deliveries: imported ' + totalInserted + ' rows');
+
+  return { table: 'po_deliveries', rows_imported: totalInserted };
+}
+
+/* ══════════════════════════════════════════════
    MAIN HANDLER
    ══════════════════════════════════════════════ */
 export async function POST(request) {
@@ -1084,6 +1201,8 @@ export async function POST(request) {
       result = await processSales(json, batchId);
     } else if (fileType === 'price_changes') {
       result = await processPriceChanges(json);
+    } else if (fileType === 'po_deliveries') {
+      result = await processPoDeliveries(json);
     } else {
       console.error('Unknown file type. Columns: ' + columns.join(', '));
       return Response.json({ 
