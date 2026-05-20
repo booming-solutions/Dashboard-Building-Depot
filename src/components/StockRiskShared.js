@@ -1,28 +1,26 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v6.js
+   BESTAND: StockRiskShared_v7.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.20
+   VERSIE: v3.28.21
+
+   Wijzigingen t.o.v. v6:
+   - Op tab "Alle": QOH en QOO worden gesplitst in CUR/BON
+     · 4 kolommen: QOH CUR | QOH BON | QOO CUR | QOO BON
+     · Aggregatie houdt per (item × regio) bij
+     · Op tab Curaçao of Bonaire: 1 kolom QOH en 1 kolom QOO (oude layout)
+   - Excel-export: altijd alle 6 kolommen
+     (QOH totaal, QOH CUR, QOH BON, QOO totaal, QOO CUR, QOO BON)
+   - TOTAAL-rij toont per-regio totalen op "Alle" tab
+   - Voorraad & Dekking groep header colspan dynamisch (6 of 8)
 
    Wijzigingen t.o.v. v5:
    - Nieuwe feature: PO (purchase order) delivery info per item
      · Twee nieuwe kolommen rechts van QOO:
        "Volgende ETA" (datum, rood als in verleden)
        "Aantal" (qty op die ETA)
-     · Tooltip op QOO cel: lijst van alle openstaande PO's met
-       PO-nummer, datum, aantal stuks
-     · Sortable: kun je sorteren op next_eta (vroegste eerst)
-     · Data uit nieuwe tabel po_deliveries
-   - Excel-export: 3 nieuwe kolommen (Volgende ETA, Volgende aantal,
-     Aantal openstaande PO's)
-   - Sort-functie robuuster gemaakt voor null-waardes (items zonder
-     PO komen onderaan)
-   - Sticky tabel-header: kolomnamen blijven zichtbaar tijdens scrollen
-     · Container heeft max-height 70vh met overflow-auto
-     · thead heeft position sticky top:0
-     · TOTAAL rij blijft sticky onder de header (top: 60px)
-   - BUGFIX: colSpan van "Voorraad & Dekking" groep header bijgewerkt
-     van 4 naar 6 (was niet meegewijzigd met de 2 nieuwe kolommen)
+     · Tooltip op QOO cel: lijst van alle openstaande PO's
+   - Sticky tabel-header bij scrollen
 
    Wijzigingen t.o.v. v4:
    - BUGFIX: lead time werd uit kolom 'max_lead_time' gehaald, maar
@@ -34,7 +32,7 @@
    ============================================================ */
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { createClient } from '@/lib/supabase';
 import LoadingLogo from '@/components/LoadingLogo';
 import ExcelExportButton from '@/components/ExcelExportButton';
@@ -446,6 +444,8 @@ export default function StockRiskShared({ bumFilter }) {
           // doel-voorraad) en wordt hier niet gebruikt.
           min_lt: parseFloat(r.min_lead_time) || 0,
           qoh: 0, qa: 0, qoo: 0, inv_value: 0,
+          // Per regio splits (gebruikt bij 'Alle' tab voor QOH/QOO uitsplitsing)
+          qoh_cur: 0, qoh_bon: 0, qoo_cur: 0, qoo_bon: 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
         };
       }
@@ -453,10 +453,15 @@ export default function StockRiskShared({ bumFilter }) {
       // Lead time: nemen we het maximum (worst case) over stores binnen regio
       var rlt = parseFloat(r.min_lead_time) || 0;
       if (rlt > m.min_lt) m.min_lt = rlt;
-      m.qoh += parseFloat(r.qoh) || 0;
+      var qohVal = parseFloat(r.qoh) || 0;
+      var qooVal = parseFloat(r.qty_on_order) || 0;
+      m.qoh += qohVal;
       m.qa += parseFloat(r.qty_available) || 0;
-      m.qoo += parseFloat(r.qty_on_order) || 0;
+      m.qoo += qooVal;
       m.inv_value += (parseFloat(r.inv_value_at_cost) || 0) * cFactor;
+      // Per regio bijhouden
+      if (r.regio === 'CUR') { m.qoh_cur += qohVal; m.qoo_cur += qooVal; }
+      else if (r.regio === 'BON') { m.qoh_bon += qohVal; m.qoo_bon += qooVal; }
       for (var i = 0; i < 12; i++) {
         m.sales[i] += parseFloat(r['sales_m' + String(i + 1).padStart(2, '0')]) || 0;
       }
@@ -767,8 +772,12 @@ export default function StockRiskShared({ bumFilter }) {
                     'Vendor': m.vendor,
                     'NOS': m.nos ? 'Ja' : 'Nee',
                     'Status': m.risk === 'critical' ? 'Kritiek' : m.risk === 'urgent' ? 'Urgent' : m.risk === 'watch' ? 'Aandacht' : 'OK',
-                    'QOH': Math.round(m.qoh),
-                    'QOO': Math.round(m.qoo),
+                    'QOH totaal': Math.round(m.qoh),
+                    'QOH CUR': Math.round(m.qoh_cur),
+                    'QOH BON': Math.round(m.qoh_bon),
+                    'QOO totaal': Math.round(m.qoo),
+                    'QOO CUR': Math.round(m.qoo_cur),
+                    'QOO BON': Math.round(m.qoo_bon),
                     'Volgende ETA': m.next_eta || '',
                     'Volgende aantal': m.next_qty || '',
                     'Aantal openstaande PO\'s': (m.po_list || []).length,
@@ -803,43 +812,71 @@ export default function StockRiskShared({ bumFilter }) {
             <thead className="sticky top-0 z-30">
               <tr className="bg-[#1B3A5C]">
                 <th colSpan={4} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
-                <th colSpan={6} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
+                <th colSpan={store === 'all' ? 8 : 6} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Verkoop</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2">Actie</th>
               </tr>
               <tr className="bg-[#f0ebe5]">
-                {[
-                  ['Dept', 'dept_code', 'text-left min-w-[50px]'],
-                  ['', 'item', 'text-left min-w-[80px]'],
-                  ['Omschrijving', 'desc', 'text-left min-w-[180px]'],
-                  ['Status', 'risk', 'text-center border-r border-[#e5ddd4]'],
-                  ['QOH', 'qoh', 'text-right'],
-                  ['QOO', 'qoo', 'text-right'],
-                  ['Volgende ETA', 'next_eta', 'text-right'],
-                  ['Aantal', 'next_qty', 'text-right'],
-                  ['Dekking', 'months_cover', 'text-right'],
-                  ['vs LT', '', 'text-center border-r border-[#e5ddd4]'],
-                  ['Gem/mnd', 'avg_monthly', 'text-right'],
-                  ['Actief', 'active_months', 'text-right'],
-                  ['Trend', '', 'text-center border-r border-[#e5ddd4]'],
-                  ['Lead Time', 'lead_time', 'text-right'],
-                  ['Bestel qty', 'suggested_qty', 'text-right'],
-                  ['Waarde', 'suggested_value', 'text-right'],
-                ].map(function(h) {
-                  var clickable = h[1] ? ' cursor-pointer hover:text-[#E84E1B]' : '';
-                  return <th key={h[0] + h[1]} className={'p-1.5 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap ' + h[2] + clickable} onClick={h[1] ? function() { toggleSort(h[1]); } : undefined}>{(h[0] || 'Item') + arrow(h[1])}</th>;
-                })}
+                {(function() {
+                  // Bij "Alle" tab: QOH en QOO splitsen in CUR/BON, anders één kolom
+                  var splitView = store === 'all';
+                  var cols = [
+                    ['Dept', 'dept_code', 'text-left min-w-[50px]'],
+                    ['', 'item', 'text-left min-w-[80px]'],
+                    ['Omschrijving', 'desc', 'text-left min-w-[180px]'],
+                    ['Status', 'risk', 'text-center border-r border-[#e5ddd4]'],
+                  ];
+                  if (splitView) {
+                    cols.push(['QOH CUR', 'qoh_cur', 'text-right']);
+                    cols.push(['QOH BON', 'qoh_bon', 'text-right']);
+                    cols.push(['QOO CUR', 'qoo_cur', 'text-right']);
+                    cols.push(['QOO BON', 'qoo_bon', 'text-right']);
+                  } else {
+                    cols.push(['QOH', 'qoh', 'text-right']);
+                    cols.push(['QOO', 'qoo', 'text-right']);
+                  }
+                  cols.push(['Volgende ETA', 'next_eta', 'text-right']);
+                  cols.push(['Aantal', 'next_qty', 'text-right']);
+                  cols.push(['Dekking', 'months_cover', 'text-right']);
+                  cols.push(['vs LT', '', 'text-center border-r border-[#e5ddd4]']);
+                  cols.push(['Gem/mnd', 'avg_monthly', 'text-right']);
+                  cols.push(['Actief', 'active_months', 'text-right']);
+                  cols.push(['Trend', '', 'text-center border-r border-[#e5ddd4]']);
+                  cols.push(['Lead Time', 'lead_time', 'text-right']);
+                  cols.push(['Bestel qty', 'suggested_qty', 'text-right']);
+                  cols.push(['Waarde', 'suggested_value', 'text-right']);
+                  return cols.map(function(h) {
+                    var clickable = h[1] ? ' cursor-pointer hover:text-[#E84E1B]' : '';
+                    return <th key={h[0] + h[1]} className={'p-1.5 text-[9px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4] whitespace-nowrap ' + h[2] + clickable} onClick={h[1] ? function() { toggleSort(h[1]); } : undefined}>{(h[0] || 'Item') + arrow(h[1])}</th>;
+                  });
+                })()}
               </tr>
             </thead>
             <tbody>
               {(function() {
                 var tQoh = 0, tQoo = 0, tQty = 0, tVal = 0;
-                displayed.forEach(function(m) { tQoh += m.qoh; tQoo += m.qoo; tQty += m.suggested_qty; tVal += m.suggested_value; });
+                var tQohCur = 0, tQohBon = 0, tQooCur = 0, tQooBon = 0;
+                displayed.forEach(function(m) {
+                  tQoh += m.qoh; tQoo += m.qoo; tQty += m.suggested_qty; tVal += m.suggested_value;
+                  tQohCur += m.qoh_cur; tQohBon += m.qoh_bon; tQooCur += m.qoo_cur; tQooBon += m.qoo_bon;
+                });
+                var splitView = store === 'all';
                 return (
                   <tr className="bg-[#faf7f4] sticky z-20" style={{ top: '60px' }}>
                     <td colSpan={4} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">{'TOTAAL (' + displayed.length + ' items)'}</td>
-                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoh))}</td>
-                    <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoo))}</td>
+                    {splitView ? (
+                      <Fragment>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQohCur))}</td>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQohBon))}</td>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQooCur))}</td>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQooBon))}</td>
+                      </Fragment>
+                    ) : (
+                      <Fragment>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoh))}</td>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQoo))}</td>
+                      </Fragment>
+                    )}
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
@@ -854,7 +891,7 @@ export default function StockRiskShared({ bumFilter }) {
                 );
               })()}
               {displayed.length === 0 && (
-                <tr><td colSpan={16} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
+                <tr><td colSpan={store === 'all' ? 18 : 16} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
               )}
               {displayed.slice(0, tableRows).map(function(m, i) {
                 var bg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
@@ -868,14 +905,37 @@ export default function StockRiskShared({ bumFilter }) {
                       {m.nos && <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-blue-50 text-blue-600 font-bold">NOS</span>}
                     </td>
                     <td className="p-1.5 border-b border-[#f0ebe5] text-center border-r border-[#e5ddd4]"><RiskBadge level={m.risk} /></td>
-                    <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmt(Math.round(m.qoh))}</td>
-                    <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo > 0 ? '#1B3A5C' : '#a08a74' }}
-                        title={m.po_list && m.po_list.length > 0
-                          ? 'Verwachte leveringen:\n' + m.po_list.map(function(p) {
-                              var d = new Date(p.date);
-                              return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
-                            }).join('\n')
-                          : 'Geen verwachte leveringen geregistreerd'}>{m.qoo > 0 ? fmt(Math.round(m.qoo)) : '-'}</td>
+                    {store === 'all' ? (
+                      <Fragment>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoh_cur === 0 ? '#a08a74' : '#1B3A5C' }}>{m.qoh_cur === 0 ? '-' : fmt(Math.round(m.qoh_cur))}</td>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoh_bon === 0 ? '#a08a74' : '#1B3A5C' }}>{m.qoh_bon === 0 ? '-' : fmt(Math.round(m.qoh_bon))}</td>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo_cur > 0 ? '#1B3A5C' : '#a08a74' }}
+                            title={m.po_list && m.po_list.length > 0
+                              ? 'Verwachte leveringen (totaal voor item):\n' + m.po_list.map(function(p) {
+                                  var d = new Date(p.date);
+                                  return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
+                                }).join('\n')
+                              : 'Geen verwachte leveringen geregistreerd'}>{m.qoo_cur > 0 ? fmt(Math.round(m.qoo_cur)) : '-'}</td>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo_bon > 0 ? '#1B3A5C' : '#a08a74' }}
+                            title={m.po_list && m.po_list.length > 0
+                              ? 'Verwachte leveringen (totaal voor item):\n' + m.po_list.map(function(p) {
+                                  var d = new Date(p.date);
+                                  return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
+                                }).join('\n')
+                              : 'Geen verwachte leveringen geregistreerd'}>{m.qoo_bon > 0 ? fmt(Math.round(m.qoo_bon)) : '-'}</td>
+                      </Fragment>
+                    ) : (
+                      <Fragment>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]">{fmt(Math.round(m.qoh))}</td>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo > 0 ? '#1B3A5C' : '#a08a74' }}
+                            title={m.po_list && m.po_list.length > 0
+                              ? 'Verwachte leveringen:\n' + m.po_list.map(function(p) {
+                                  var d = new Date(p.date);
+                                  return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
+                                }).join('\n')
+                              : 'Geen verwachte leveringen geregistreerd'}>{m.qoo > 0 ? fmt(Math.round(m.qoo)) : '-'}</td>
+                      </Fragment>
+                    )}
                     {(function() {
                       // Volgende ETA + aantal kolommen
                       if (!m.next_eta) {
