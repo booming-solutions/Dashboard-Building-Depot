@@ -222,7 +222,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/sales/daily-report': 'sales',
     '/dashboard/inventory/budget': 'inventory_budget',
     '/dashboard/inventory/buying': 'inventory_buying',
-    '/dashboard/inventory/negative': 'inventory_negative',
+    '/dashboard/inventory/negatieve-voorraad': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
     '/dashboard/hr/salary': 'hr_payroll',
@@ -245,7 +245,7 @@ export default function DashboardLayout({ children }) {
       { href: '/dashboard/inventory/stockrisk/daniel', label: 'DANIEL' },
       { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
     ]},
-    { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
+    { href: '/dashboard/inventory/negatieve-voorraad', label: 'Negatieve Voorraad' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
       { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
