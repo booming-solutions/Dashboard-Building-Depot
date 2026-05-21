@@ -16,6 +16,15 @@ const MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','D
 
 export const STORE_LABELS = { '1': 'Curaçao', 'B': 'Bonaire' };
 
+// Helper: filter rij eruit op basis van effective dept_code (FB + dept 64 vanaf 2026)
+function shouldExclude(row) {
+  if (!row) return true;
+  const code = row.effective_dept_code || row.dept_code || '';
+  if (code.startsWith('FB')) return true;       // FB = financial charges, nets to zero
+  if (code === '64') return true;               // Dept 64 verwijderd uit weergave per Q2 2026
+  return false;
+}
+
 const fmt = n => (Number(n) || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtM = n => {
   const a = Math.abs(Number(n) || 0);
@@ -41,15 +50,30 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
   const totalDaysInMonth = daysInMonth(curYear, curMonth);
   const lyYear = curYear - 1;
 
-  // === 1. Vandaag (per dept) ===
-  // FB (Financial Charges) wordt overal in het dashboard gefilterd — nets to zero
+  // === 0. Afdelingen-lookup voor display namen ===
+  // Eén keer ophalen, dan gebruiken om BUM-codes te vertalen naar display namen
+  const { data: bumGroupsData } = await supabase
+    .from('bum_groups')
+    .select('code, display_name, sort_order')
+    .eq('active', true)
+    .order('sort_order');
+  const bumGroupLabels = {};
+  const bumGroupOrder = {};
+  (bumGroupsData || []).forEach(g => {
+    bumGroupLabels[g.code] = g.display_name;
+    bumGroupOrder[g.code] = g.sort_order;
+  });
+  // Fallback: als bum_groups leeg blijkt (edge case), gebruik code als display
+  const labelFor = (code) => bumGroupLabels[code] || code || 'Overig';
+
+  // === 1. Vandaag (per dept) — via sales_data_enriched view ===
   let allTodayRowsRaw = [];
   {
     let from = 0; const step = 1000;
     while (true) {
       const { data: b } = await supabase
-        .from('sales_data')
-        .select('dept_code, dept_name, bum, net_sales, gross_margin')
+        .from('sales_data_enriched')
+        .select('dept_code, dept_name, bum, net_sales, gross_margin, effective_dept_code, effective_dept_name, effective_bum_group')
         .eq('store_number', storeNumber)
         .eq('sale_date', reportDateStr)
         .range(from, from + step - 1);
@@ -59,20 +83,20 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
       from += step;
     }
   }
-  const allTodayRows = allTodayRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const allTodayRows = allTodayRowsRaw.filter(r => !shouldExclude(r));
   const todaySales = allTodayRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const todayMargin = allTodayRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const todayMarginPct = todaySales ? (todayMargin / todaySales * 100) : 0;
 
-  // === 2. Vandaag LY (zelfde dag vorig jaar) ===
+  // === 2. Vandaag LY (zelfde dag vorig jaar) — via enriched view ===
   const lyDateStr = `${lyYear}-${String(curMonth).padStart(2,'0')}-${String(dayOfMonth).padStart(2,'0')}`;
   let lyTodayRowsRaw = [];
   {
     let from = 0; const step = 1000;
     while (true) {
       const { data: b } = await supabase
-        .from('sales_data')
-        .select('dept_code, net_sales, gross_margin')
+        .from('sales_data_enriched')
+        .select('dept_code, net_sales, gross_margin, effective_dept_code, effective_dept_name, effective_bum_group')
         .eq('store_number', storeNumber)
         .eq('sale_date', lyDateStr)
         .range(from, from + step - 1);
@@ -82,22 +106,20 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
       from += step;
     }
   }
-  const lyTodayRows = lyTodayRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const lyTodayRows = lyTodayRowsRaw.filter(r => !shouldExclude(r));
   const lyTodaySales = lyTodayRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const lyTodayMargin = lyTodayRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const lyTodayMarginPct = lyTodaySales ? (lyTodayMargin / lyTodaySales * 100) : 0;
 
-  // === 3. MTD t/m vandaag — directe sales_data aggregatie ===
-  // Gebruikt sales_data direct (niet sales_monthly view) zodat we 100% real-time data hebben.
-  // Filter FB (Financial Charges) uit zoals overal in het dashboard.
+  // === 3. MTD t/m vandaag — via enriched view ===
   let mtdRows = [];
   const monthStartStr = `${curYear}-${String(curMonth).padStart(2,'0')}-01`;
   {
     let from = 0; const step = 1000;
     while (true) {
       const { data: b } = await supabase
-        .from('sales_data')
-        .select('net_sales, gross_margin, dept_code')
+        .from('sales_data_enriched')
+        .select('net_sales, gross_margin, dept_code, effective_dept_code')
         .eq('store_number', storeNumber)
         .gte('sale_date', monthStartStr)
         .lte('sale_date', reportDateStr)
@@ -108,8 +130,7 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
       from += step;
     }
   }
-  // Filter FB-rijen (Financial Charges, nets to zero) eruit
-  const mtdRowsFiltered = mtdRows.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const mtdRowsFiltered = mtdRows.filter(r => !shouldExclude(r));
   const mtdSales = mtdRowsFiltered.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const mtdMargin = mtdRowsFiltered.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const mtdMarginPct = mtdSales ? (mtdMargin / mtdSales * 100) : 0;
@@ -146,15 +167,15 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
     .eq('month', curMonth);
   const lyFullMonthSales = (lyFullMonthRows || []).reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
 
-  // === 6. YTD — directe sales_data aggregatie (real-time, inclusief vandaag) ===
+  // === 6. YTD — via enriched view, real-time inclusief vandaag ===
   let ytdRowsRaw = [];
   const yearStartStr = `${curYear}-01-01`;
   {
     let from = 0; const step = 1000;
     while (true) {
       const { data: b } = await supabase
-        .from('sales_data')
-        .select('net_sales, gross_margin, dept_code')
+        .from('sales_data_enriched')
+        .select('net_sales, gross_margin, dept_code, effective_dept_code')
         .eq('store_number', storeNumber)
         .gte('sale_date', yearStartStr)
         .lte('sale_date', reportDateStr)
@@ -165,7 +186,7 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
       from += step;
     }
   }
-  const ytdRowsFiltered = ytdRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const ytdRowsFiltered = ytdRowsRaw.filter(r => !shouldExclude(r));
   const ytdSales = ytdRowsFiltered.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const ytdMargin = ytdRowsFiltered.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const ytdMarginPct = ytdSales ? (ytdMargin / ytdSales * 100) : 0;
@@ -251,23 +272,24 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
   const fyLyPacingPct = lyFullYearSales ? (lyYTDSales / lyFullYearSales) : (dayOfYear / totalDaysInYear);
   const fyLyPacingForecast = fyLyPacingPct > 0 ? (ytdSales / fyLyPacingPct) : 0;
 
-  // === 11. Top performers vs LY (departementen) ===
+  // === 11. Top performers vs LY (departementen) — gebruikt effective_dept_code voor merges ===
   const deptAgg = {};
   allTodayRows.forEach(r => {
-    if (!r.dept_code) return;
-    const key = r.dept_code;
-    if (!deptAgg[key]) deptAgg[key] = { dept_code: r.dept_code, dept_name: r.dept_name, sales: 0, margin: 0 };
-    deptAgg[key].sales += parseFloat(r.net_sales || 0);
-    deptAgg[key].margin += parseFloat(r.gross_margin || 0);
+    const code = r.effective_dept_code || r.dept_code;
+    const name = r.effective_dept_name || r.dept_name;
+    if (!code) return;
+    if (!deptAgg[code]) deptAgg[code] = { dept_code: code, dept_name: name, sales: 0, margin: 0 };
+    deptAgg[code].sales += parseFloat(r.net_sales || 0);
+    deptAgg[code].margin += parseFloat(r.gross_margin || 0);
   });
-  // LY sales per dept op dezelfde dag
+  // LY sales per dept op dezelfde dag — via enriched view zodat merges ook historisch worden toegepast
   let lyDeptRows = [];
   {
     let from = 0; const step = 1000;
     while (true) {
       const { data: b } = await supabase
-        .from('sales_data')
-        .select('dept_code, net_sales')
+        .from('sales_data_enriched')
+        .select('dept_code, net_sales, effective_dept_code')
         .eq('store_number', storeNumber)
         .eq('sale_date', lyDateStr)
         .range(from, from + step - 1);
@@ -279,8 +301,10 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
   }
   const lyDeptAgg = {};
   lyDeptRows.forEach(r => {
-    if (!lyDeptAgg[r.dept_code]) lyDeptAgg[r.dept_code] = 0;
-    lyDeptAgg[r.dept_code] += parseFloat(r.net_sales || 0);
+    if (shouldExclude(r)) return;
+    const code = r.effective_dept_code || r.dept_code;
+    if (!lyDeptAgg[code]) lyDeptAgg[code] = 0;
+    lyDeptAgg[code] += parseFloat(r.net_sales || 0);
   });
   const deptList = Object.values(deptAgg).map(d => ({
     ...d,
@@ -293,13 +317,14 @@ export async function getDailyReportData(supabase, storeNumber, reportDate) {
     .filter(d => d.var_pct !== null && d.var_pct < 0)
     .sort((a, b) => a.var_pct - b.var_pct).slice(0, 5);
 
-  // === 12. BUM ranking vandaag ===
+  // === 12. Afdelings-ranking vandaag — gebruikt effective_bum_group + display namen ===
   const bumAgg = {};
   allTodayRows.forEach(r => {
-    if (!r.bum || r.bum === 'OTHER') return;
-    if (!bumAgg[r.bum]) bumAgg[r.bum] = { bum: r.bum, sales: 0, margin: 0 };
-    bumAgg[r.bum].sales += parseFloat(r.net_sales || 0);
-    bumAgg[r.bum].margin += parseFloat(r.gross_margin || 0);
+    const code = r.effective_bum_group;
+    if (!code || code === 'OVERIG') return;  // skip "Overig" uit ranking zoals voorheen 'OTHER'
+    if (!bumAgg[code]) bumAgg[code] = { code, label: labelFor(code), sales: 0, margin: 0 };
+    bumAgg[code].sales += parseFloat(r.net_sales || 0);
+    bumAgg[code].margin += parseFloat(r.gross_margin || 0);
   });
   const bumRanking = Object.values(bumAgg).sort((a, b) => b.sales - a.sales);
 
@@ -561,17 +586,17 @@ export function renderEmailHTML(storeReports, siteUrl) {
             </td></tr>
           </table>` : ''}
 
-          <!-- BUM RANKING -->
+          <!-- AFDELINGS RANKING -->
           ${r.bumRanking.length ? `
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ${colors.border};border-radius:8px;margin-bottom:16px;background:#fff;">
             <tr><td style="padding:12px 16px;background:${colors.bg};border-bottom:1px solid ${colors.border};">
-              <p style="margin:0;font-size:11px;font-weight:700;color:${colors.mute};text-transform:uppercase;letter-spacing:0.6px;">BUM Ranking (vandaag)</p>
+              <p style="margin:0;font-size:11px;font-weight:700;color:${colors.mute};text-transform:uppercase;letter-spacing:0.6px;">Afdelings-ranking (vandaag)</p>
             </td></tr>
             <tr><td style="padding:8px 16px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="font-size:12px;">
                 ${r.bumRanking.map((b, i) => `
                 <tr>
-                  <td style="padding:6px 0;color:${colors.text};border-bottom:1px solid ${colors.border};font-weight:600;">${i+1}. ${b.bum}</td>
+                  <td style="padding:6px 0;color:${colors.text};border-bottom:1px solid ${colors.border};font-weight:600;">${i+1}. ${b.label}</td>
                   <td style="padding:6px 8px 6px 0;text-align:right;font-family:monospace;border-bottom:1px solid ${colors.border};">${fmt(b.sales)}</td>
                   <td style="padding:6px 0;text-align:right;border-bottom:1px solid ${colors.border};font-size:11px;color:${colors.mute};">${b.sales ? fmtP(b.margin/b.sales*100) : '—'} BM</td>
                 </tr>`).join('')}

@@ -57,13 +57,13 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
   const totalDaysInYear = daysInMonth(curYear, 2) === 29 ? 366 : 365;
   const dayOfYear = Math.floor((reportDate - new Date(curYear, 0, 0)) / (1000 * 60 * 60 * 24));
 
-  // 1. Vandaag (FB-rijen gefilterd)
+  // 1. Vandaag — via sales_data_enriched view
   let allTodayRowsRaw = [];
   let from = 0; const step = 1000;
   while (true) {
     const { data: b } = await supabase
-      .from('sales_data')
-      .select('dept_code, dept_name, bum, net_sales, gross_margin')
+      .from('sales_data_enriched')
+      .select('dept_code, dept_name, bum, net_sales, gross_margin, effective_dept_code, effective_dept_name, effective_bum_group')
       .eq('store_number', storeNumber)
       .eq('sale_date', reportDateStr)
       .range(from, from + step - 1);
@@ -72,18 +72,22 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
     if (b.length < step) break;
     from += step;
   }
-  const allTodayRows = allTodayRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const excl = r => {
+    const code = r.effective_dept_code || r.dept_code || '';
+    return code.startsWith('FB') || code === '64';
+  };
+  const allTodayRows = allTodayRowsRaw.filter(r => !excl(r));
   const todaySales = allTodayRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const todayMargin = allTodayRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const todayMarginPct = todaySales ? (todayMargin / todaySales * 100) : 0;
 
-  // 2. Vandaag LY (FB-rijen gefilterd)
+  // 2. Vandaag LY
   let lyTodayRowsRaw = [];
   from = 0;
   while (true) {
     const { data: b } = await supabase
-      .from('sales_data')
-      .select('dept_code, net_sales, gross_margin')
+      .from('sales_data_enriched')
+      .select('dept_code, net_sales, gross_margin, effective_dept_code, effective_dept_name, effective_bum_group')
       .eq('store_number', storeNumber)
       .eq('sale_date', lyDateStr)
       .range(from, from + step - 1);
@@ -92,19 +96,19 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
     if (b.length < step) break;
     from += step;
   }
-  const lyTodayRows = lyTodayRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const lyTodayRows = lyTodayRowsRaw.filter(r => !excl(r));
   const lyTodaySales = lyTodayRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const lyTodayMargin = lyTodayRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const lyTodayMarginPct = lyTodaySales ? (lyTodayMargin / lyTodaySales * 100) : 0;
 
-  // 3. MTD — directe sales_data aggregatie, real-time inclusief vandaag
+  // 3. MTD via enriched view
   let mtdRowsRaw = [];
   const monthStartStr = `${curYear}-${String(curMonth).padStart(2,'0')}-01`;
   from = 0;
   while (true) {
     const { data: b } = await supabase
-      .from('sales_data')
-      .select('net_sales, gross_margin, dept_code')
+      .from('sales_data_enriched')
+      .select('net_sales, gross_margin, dept_code, effective_dept_code')
       .eq('store_number', storeNumber)
       .gte('sale_date', monthStartStr)
       .lte('sale_date', reportDateStr)
@@ -114,7 +118,7 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
     if (b.length < step) break;
     from += step;
   }
-  const mtdRows = mtdRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const mtdRows = mtdRowsRaw.filter(r => !excl(r));
   const mtdSales = mtdRows.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const mtdMargin = mtdRows.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const mtdMarginPct = mtdSales ? (mtdMargin / mtdSales * 100) : 0;
@@ -142,14 +146,14 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
     .eq('store_number', storeNumber).eq('year', lyYear).eq('month', curMonth);
   const lyFullMonthSales = (lyFullMonthRows || []).reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
 
-  // 6. YTD — directe sales_data aggregatie, real-time inclusief vandaag
+  // 6. YTD via enriched view, real-time inclusief vandaag
   let ytdRowsRaw = [];
   const yearStartStr = `${curYear}-01-01`;
   from = 0;
   while (true) {
     const { data: b } = await supabase
-      .from('sales_data')
-      .select('net_sales, gross_margin, dept_code')
+      .from('sales_data_enriched')
+      .select('net_sales, gross_margin, dept_code, effective_dept_code')
       .eq('store_number', storeNumber)
       .gte('sale_date', yearStartStr)
       .lte('sale_date', reportDateStr)
@@ -159,7 +163,7 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
     if (b.length < step) break;
     from += step;
   }
-  const ytdRowsFiltered = ytdRowsRaw.filter(r => !(r.dept_code && r.dept_code.startsWith('FB')));
+  const ytdRowsFiltered = ytdRowsRaw.filter(r => !excl(r));
   const ytdSales = ytdRowsFiltered.reduce((s, r) => s + parseFloat(r.net_sales || 0), 0);
   const ytdMargin = ytdRowsFiltered.reduce((s, r) => s + parseFloat(r.gross_margin || 0), 0);
   const ytdMarginPct = ytdSales ? (ytdMargin / ytdSales * 100) : 0;
@@ -224,18 +228,21 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
   const fyLyPacingPct = lyFullYearSales ? (lyYTDSales / lyFullYearSales) : (dayOfYear / totalDaysInYear);
   const fyLyPacingForecast = fyLyPacingPct > 0 ? (ytdSales / fyLyPacingPct) : 0;
 
-  // 11. Departementen vandaag + LY
+  // 11. Departementen vandaag + LY (effective_dept_code voor merges)
   const deptAgg = {};
   allTodayRows.forEach(r => {
-    if (!r.dept_code) return;
-    if (!deptAgg[r.dept_code]) deptAgg[r.dept_code] = { dept_code: r.dept_code, dept_name: r.dept_name, sales: 0, margin: 0 };
-    deptAgg[r.dept_code].sales += parseFloat(r.net_sales || 0);
-    deptAgg[r.dept_code].margin += parseFloat(r.gross_margin || 0);
+    const code = r.effective_dept_code || r.dept_code;
+    const name = r.effective_dept_name || r.dept_name;
+    if (!code) return;
+    if (!deptAgg[code]) deptAgg[code] = { dept_code: code, dept_name: name, sales: 0, margin: 0 };
+    deptAgg[code].sales += parseFloat(r.net_sales || 0);
+    deptAgg[code].margin += parseFloat(r.gross_margin || 0);
   });
   const lyDeptAgg = {};
   lyTodayRows.forEach(r => {
-    if (!lyDeptAgg[r.dept_code]) lyDeptAgg[r.dept_code] = 0;
-    lyDeptAgg[r.dept_code] += parseFloat(r.net_sales || 0);
+    const code = r.effective_dept_code || r.dept_code;
+    if (!lyDeptAgg[code]) lyDeptAgg[code] = 0;
+    lyDeptAgg[code] += parseFloat(r.net_sales || 0);
   });
   const deptList = Object.values(deptAgg).map(d => ({
     ...d,
@@ -246,13 +253,22 @@ async function fetchStoreReport(supabase, storeNumber, reportDate) {
   const topByVolume = [...deptList].sort((a, b) => b.sales - a.sales).slice(0, 5);
   const worstVsLY = deptList.filter(d => d.var_pct !== null && d.var_pct < 0).sort((a, b) => a.var_pct - b.var_pct).slice(0, 5);
 
-  // 12. BUM ranking
+  // 12. Afdelings-ranking — via effective_bum_group + bum_groups labels
+  // Haal bum_groups labels op (één keer)
+  const { data: bumGroupsData } = await supabase
+    .from('bum_groups')
+    .select('code, display_name')
+    .eq('active', true)
+    .order('sort_order');
+  const labelMap = {};
+  (bumGroupsData || []).forEach(g => { labelMap[g.code] = g.display_name; });
   const bumAgg = {};
   allTodayRows.forEach(r => {
-    if (!r.bum || r.bum === 'OTHER') return;
-    if (!bumAgg[r.bum]) bumAgg[r.bum] = { bum: r.bum, sales: 0, margin: 0 };
-    bumAgg[r.bum].sales += parseFloat(r.net_sales || 0);
-    bumAgg[r.bum].margin += parseFloat(r.gross_margin || 0);
+    const code = r.effective_bum_group;
+    if (!code || code === 'OVERIG') return;
+    if (!bumAgg[code]) bumAgg[code] = { code, label: labelMap[code] || code, sales: 0, margin: 0 };
+    bumAgg[code].sales += parseFloat(r.net_sales || 0);
+    bumAgg[code].margin += parseFloat(r.gross_margin || 0);
   });
   const bumRanking = Object.values(bumAgg).sort((a, b) => b.sales - a.sales);
 
@@ -476,13 +492,13 @@ function StoreSection({ r }) {
       {r.bumRanking.length > 0 && (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-4">
           <div className="p-3 bg-[#faf7f4] border-b border-[#e5ddd4]">
-            <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">BUM Ranking (vandaag)</p>
+            <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">Afdelings-ranking (vandaag)</p>
           </div>
           <table className="w-full">
             <tbody>
               {r.bumRanking.map((b, i) => (
-                <tr key={b.bum}>
-                  <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-semibold">{i+1}. {b.bum}</td>
+                <tr key={b.code}>
+                  <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-semibold">{i+1}. {b.label}</td>
                   <td className="p-2 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(b.sales)}</td>
                   <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-right text-[#6b5240]">
                     {b.sales ? fmtP(b.margin/b.sales*100) : '—'} BM
