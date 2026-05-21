@@ -248,11 +248,11 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/inventory/negatieve-voorraad', label: 'Negatieve Voorraad' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
-      { href: '/dashboard/inventory/health/henk', label: 'HENK' },
-      { href: '/dashboard/inventory/health/john', label: 'JOHN' },
-      { href: '/dashboard/inventory/health/daniel', label: 'DANIEL' },
-      { href: '/dashboard/inventory/health/gijs', label: 'GIJS' },
+      { href: '/dashboard/inventory/health/building-materials', label: 'Building Materials' },
+      { href: '/dashboard/inventory/health/sanitair-keukens', label: 'Sanitair & Keukens' },
+      { href: '/dashboard/inventory/health/hardware', label: 'Hardware' },
+      { href: '/dashboard/inventory/health/living', label: 'Living' },
+      { href: '/dashboard/inventory/health/appliances-houseware', label: 'Appliances & Houseware' },
     ]},
   ];
   const hrItemsAll = [

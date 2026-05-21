@@ -1,7 +1,7 @@
 /* ============================================================
-   BESTAND: page.js (Gezondheid - Totaaloverzicht)
-   KOPIEER NAAR: src/app/dashboard/inventory/health/page.js
+   BESTAND: page.js (Gezondheid - Hardware)
+   KOPIEER NAAR: src/app/dashboard/inventory/health/hardware/page.js
    ============================================================ */
 'use client';
 import HealthDashboardShared from '@/components/HealthDashboardShared';
-export default function HealthTotaal() { return <HealthDashboardShared bumFilter={null} />; }
+export default function HealthHardware() { return <HealthDashboardShared bumFilter="HARDWARE" />; }
