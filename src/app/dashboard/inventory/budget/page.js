@@ -119,6 +119,11 @@ export default function InventoryDashboard() {
     // For '1': CUR only (already XCG)
     // For 'B': BON only in USD
     var map = {};
+    // Budget tracking: per (effective_dept, original_dept) eenmaal het budget setten.
+    // Dit zorgt dat:
+    //  - Repliceerde rijen in inventory_data (1 budget waarde × N snapshots) maar 1x meetellen
+    //  - Bij merge (31+32 → 30) worden de budgets van de originele depts wel opgeteld
+    var budgetSeen = {};  // key: 'effectiveCode|originalCode' → true als al verwerkt
     data.forEach(function(r) {
       if (storeFilter !== 'all' && r.store_number !== storeFilter) return;
       // Gebruik effective_dept_code zodat merges (31+32→30) automatisch worden samengevoegd
@@ -132,8 +137,15 @@ export default function InventoryDashboard() {
       if (!map[key]) {
         map[key] = { deptCode: eCode, deptName: eName, bum: eBum, budget: 0, history: {} };
       }
-      // Budget: only CUR has budget, don't convert. Som over gemerged-depts.
-      if (!isBon) map[key].budget += parseFloat(r.budget) || 0;
+      // Budget: only CUR has budget. Per origineel dept_code maar 1x meetellen.
+      // Bij merge (31+32→30) tel je 31's budget + 32's budget bij elkaar (eenmalig elk).
+      if (!isBon) {
+        var bKey = eCode + '|' + r.dept_code;
+        if (!budgetSeen[bKey]) {
+          budgetSeen[bKey] = true;
+          map[key].budget += parseFloat(r.budget) || 0;
+        }
+      }
 
       var dt = r.inventory_date;
       if (!map[key].history[dt]) map[key].history[dt] = 0;
