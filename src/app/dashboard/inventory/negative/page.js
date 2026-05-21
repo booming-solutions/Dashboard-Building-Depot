@@ -1,33 +1,16 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v14.js
+   BESTAND: page.js (Negatieve Voorraad)
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
-   (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.18
+   VERSIE: v3.29 — gemigreerd naar enriched view (afdelingen ipv BUMs)
 
-   Wijzigingen t.o.v. v13:
-   - "Ovg locaties" kolom gesplitst in "Ovg CUR" + "Ovg BON"
-     · Voor eigen regio: regio_totaal − eigen_QOH (zelfde logica als voorheen)
-     · Voor andere regio: het volledige regio_totaal (geen aftrek)
-   - "QOO" kolom gesplitst in "QOO CUR" + "QOO BON"
-     · Som van qty_on_order per regio
-   - Sorteerbaar op alle 4 nieuwe kolommen
-   - Excel-export aangepast: van 1 Ovg + 1 QOO naar 2 + 2 kolommen
-   - regioQoo state toegevoegd (per item × regio QOO som)
-   - Tabel-breedte van 1530px naar 1660px (2 extra kolommen erbij)
-   - Sticky tabel-headers: kolomnamen blijven zichtbaar bij scrollen
-     · Container heeft max-height 70vh met overflow-auto
-     · thead heeft position sticky top:0
-
-   Wijzigingen t.o.v. v11:
-   - BUGFIX: kolomnaam buying_data.region → buying_data.regio
-     (waardoor "Ovg locaties" altijd "—" toonde)
-
-   Wijzigingen t.o.v. v10:
-   - Nieuwe kolom "Ovg locaties" in detail tabel
-     · Berekening: buying_data.qoh (regio-totaal) − eigen_qty_on_hand
-     · Streepje (—) bij 0, rood bij negatief, blauw bij positief
-     · Sortable kolom
-     · Ook in Excel-export opgenomen
+   WIJZIGINGEN T.O.V. v3.28.18:
+   - negative_inventory → negative_inventory_enriched
+   - it.bum (PASCAL/HENK/etc) → it.effective_bum_group (afdelings-code)
+   - it.dept_code → it.effective_dept_code (voor merges)
+   - it.dept_name → it.effective_dept_name
+   - Filter pills tonen afdelingsnamen via bum_groups lookup
+   - BU_ORDER hardcoded weg → komt nu uit bum_groups.sort_order
+   - Excel-export kolom "BUM" → "Afdeling"
    ============================================================ */
 'use client';
 
@@ -42,7 +25,6 @@ Chart.register(CategoryScale, LinearScale, LineElement, PointElement, LineContro
 var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : (a / 1e3).toFixed(0) + 'K'); };
-var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
 
 function fmtDate(d) {
   if (!d) return '';
@@ -107,6 +89,7 @@ export default function NegativeInventoryPage() {
   var _qoo = _s({}), buyingQoo = _qoo[0], setBuyingQoo = _qoo[1];   // { item_number: { qoo: number, unitPrice: number } }
   var _rqoh = _s({}), regioQoh = _rqoh[0], setRegioQoh = _rqoh[1];   // { 'item_number|regio': qoh_total }
   var _rqoo = _s({}), regioQoo = _rqoo[0], setRegioQoo = _rqoo[1];   // { 'item_number|regio': qoo_total }
+  var _bgd = _s([]), bumGroupDefs = _bgd[0], setBumGroupDefs = _bgd[1];  // [{code, display_name, sort_order}]
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
   var _me = _s({ email: '', name: '' }), me = _me[0], setMe = _me[1];
 
@@ -152,14 +135,20 @@ export default function NegativeInventoryPage() {
       var prof = (await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle()).data;
       setMe({ email: session.user.email, name: prof?.full_name || prof?.name || session.user.email });
     }
-    await Promise.all([loadItems(), loadNotes(), loadSnapshots(), loadFirstSeen(), loadBuyingQoo()]);
+    await Promise.all([loadItems(), loadNotes(), loadSnapshots(), loadFirstSeen(), loadBuyingQoo(), loadBumGroups()]);
     setLoading(false);
+  }
+
+  async function loadBumGroups() {
+    var r = await supabase.from('bum_groups').select('*').eq('active', true).order('sort_order');
+    setBumGroupDefs(r.data || []);
   }
 
   async function loadItems() {
     var all = [], from = 0, step = 1000;
     while (true) {
-      var r = await supabase.from('negative_inventory').select('*').lt('qty_on_hand', 0).range(from, from + step - 1);
+      // Gebruikt enriched view → effective_dept_code/_name/_bum_group erbij
+      var r = await supabase.from('negative_inventory_enriched').select('*').lt('qty_on_hand', 0).range(from, from + step - 1);
       if (!r.data || !r.data.length) break;
       all = all.concat(r.data);
       if (r.data.length < step) break;
@@ -279,16 +268,33 @@ export default function NegativeInventoryPage() {
   }
 
   /* ── Apply global filters ── */
+  // selBum is een afdelings-code (zoals 'APPLIANCES_HOUSEWARE'), wordt vergeleken met it.effective_bum_group
+  // selDept en dept-filters gebruiken effective_dept_code (voor merges 31+32→30)
   function matchFilters(it) {
     if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return false;
     if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return false;
-    if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return false;
-    if (selDept !== '__total__' && it.dept_code !== selDept) return false;
+    if (selBum !== 'all' && it.effective_bum_group !== selBum) return false;
+    var eCode = it.effective_dept_code || it.dept_code;
+    if (selDept !== '__total__' && eCode !== selDept) return false;
     if (qtyFilter && (it.qty_on_hand || 0) >= -5) return false;
     if (valFilter && (it.inv_value || 0) >= -500) return false;
     return true;
   }
   var filteredItems = useMemo(function() { return items.filter(matchFilters); }, [items, store, selBum, selDept, qtyFilter, valFilter]);
+
+  // bumLabel: lookup van afdelings-code → display naam, voor UI weergave
+  var bumLabel = useMemo(function() {
+    var m = {};
+    bumGroupDefs.forEach(function(g) { m[g.code] = g.display_name; });
+    return m;
+  }, [bumGroupDefs]);
+
+  // bumOrder: voor sorteren in lijsten — codes met lagere sort_order eerst
+  var bumOrder = useMemo(function() {
+    var m = {};
+    bumGroupDefs.forEach(function(g) { m[g.code] = g.sort_order; });
+    return m;
+  }, [bumGroupDefs]);
 
   /* ── Filter options ── */
   var bums = useMemo(function() {
@@ -296,35 +302,36 @@ export default function NegativeInventoryPage() {
     items.forEach(function(it) {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (it.bum) s[it.bum.toUpperCase()] = true;
+      var code = it.effective_bum_group;
+      if (code && code !== 'OVERIG') s[code] = true;
     });
     var l = Object.keys(s);
     l.sort(function(a, b) {
-      var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b);
-      if (ai !== -1 && bi !== -1) return ai - bi;
-      if (ai !== -1) return -1;
-      if (bi !== -1) return 1;
-      return a.localeCompare(b);
+      var ai = bumOrder[a] != null ? bumOrder[a] : 999;
+      var bi = bumOrder[b] != null ? bumOrder[b] : 999;
+      return ai - bi;
     });
     return l;
-  }, [items, store]);
+  }, [items, store, bumOrder]);
 
   var departments = useMemo(function() {
     var m = {};
     items.forEach(function(it) {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
+      if (selBum !== 'all' && it.effective_bum_group !== selBum) return;
       if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
       if (valFilter && (it.inv_value || 0) >= -500) return;
-      var code = it.dept_code;
-      if (!m[code]) m[code] = { deptCode: code, deptName: it.dept_name, items: 0, value: 0, bumSet: {} };
+      var code = it.effective_dept_code || it.dept_code;
+      var name = it.effective_dept_name || it.dept_name;
+      if (!m[code]) m[code] = { deptCode: code, deptName: name, items: 0, value: 0, bumSet: {} };
       m[code].items += 1;
       m[code].value += parseFloat(it.inv_value) || 0;
-      if (it.bum) m[code].bumSet[it.bum.toUpperCase()] = true;
+      if (it.effective_bum_group) m[code].bumSet[it.effective_bum_group] = true;
     });
     var arr = Object.values(m).map(function(d) {
-      d.bum = Object.keys(d.bumSet).sort().join(', ');
+      // bum string: één of meer afdelings-codes; toon als display-namen, comma-separated
+      d.bum = Object.keys(d.bumSet).map(function(c) { return bumLabel[c] || c; }).sort().join(', ');
       delete d.bumSet;
       return d;
     });
@@ -334,22 +341,23 @@ export default function NegativeInventoryPage() {
       return (parseInt(a.deptCode) || 999) - (parseInt(b.deptCode) || 999);
     });
     return arr;
-  }, [items, store, selBum, qtyFilter, valFilter]);
+  }, [items, store, selBum, qtyFilter, valFilter, bumLabel]);
 
-  /* ── BUM groups (for "per BUM" view) ── */
+  /* ── Afdelings-groepen (voor "per Afdeling" view) ── */
   var bumGroups = useMemo(function() {
     var m = {};
     items.forEach(function(it) {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
+      if (selBum !== 'all' && it.effective_bum_group !== selBum) return;
       if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
       if (valFilter && (it.inv_value || 0) >= -500) return;
-      var b = (it.bum || '—').toUpperCase();
-      if (!m[b]) m[b] = { bum: b, items: 0, value: 0, deptSet: {} };
+      var b = it.effective_bum_group || 'OVERIG';
+      if (!m[b]) m[b] = { bum: b, bumDisplay: bumLabel[b] || b, items: 0, value: 0, deptSet: {} };
       m[b].items += 1;
       m[b].value += parseFloat(it.inv_value) || 0;
-      if (it.dept_code) m[b].deptSet[it.dept_code] = true;
+      var eCode = it.effective_dept_code || it.dept_code;
+      if (eCode) m[b].deptSet[eCode] = true;
     });
     var arr = Object.values(m).map(function(g) {
       g.deptCount = Object.keys(g.deptSet).length;
@@ -357,14 +365,12 @@ export default function NegativeInventoryPage() {
       return g;
     });
     arr.sort(function(a, b) {
-      var ai = BU_ORDER.indexOf(a.bum), bi = BU_ORDER.indexOf(b.bum);
-      if (ai !== -1 && bi !== -1) return ai - bi;
-      if (ai !== -1) return -1;
-      if (bi !== -1) return 1;
-      return a.bum.localeCompare(b.bum);
+      var ai = bumOrder[a.bum] != null ? bumOrder[a.bum] : 999;
+      var bi = bumOrder[b.bum] != null ? bumOrder[b.bum] : 999;
+      return ai - bi;
     });
     return arr;
-  }, [items, store, selBum, qtyFilter, valFilter]);
+  }, [items, store, selBum, qtyFilter, valFilter, bumLabel, bumOrder]);
 
   /* ── Sorted rows for Overview tab ── */
   var overviewRows = useMemo(function() {
@@ -374,14 +380,13 @@ export default function NegativeInventoryPage() {
       var va, vb;
       if (groupBy === 'bum') {
         switch (ovSortCol) {
-          case 'bum': va = a.bum; vb = b.bum; break;
+          case 'bum': va = a.bumDisplay || a.bum; vb = b.bumDisplay || b.bum; break;
           case 'items': va = a.items; vb = b.items; break;
           case 'value': va = a.value; vb = b.value; break;
           case 'name':
           case 'code':
           default:
-            // "code" for BUMs = bum name
-            va = a.bum; vb = b.bum; break;
+            va = a.bumDisplay || a.bum; vb = b.bumDisplay || b.bum; break;
         }
       } else {
         switch (ovSortCol) {
@@ -513,8 +518,8 @@ export default function NegativeInventoryPage() {
       var va, vb;
       switch (sortCol) {
         case 'store': va = a.store_number; vb = b.store_number; break;
-        case 'dept': va = a.dept_code; vb = b.dept_code; break;
-        case 'bum': va = a.bum || ''; vb = b.bum || ''; break;
+        case 'dept': va = a.effective_dept_code || a.dept_code; vb = b.effective_dept_code || b.dept_code; break;
+        case 'bum': va = bumLabel[a.effective_bum_group] || a.effective_bum_group || ''; vb = bumLabel[b.effective_bum_group] || b.effective_bum_group || ''; break;
         case 'item': va = a.item_number; vb = b.item_number; break;
         case 'desc': va = a.item_description || ''; vb = b.item_description || ''; break;
         case 'qty_on_hand': va = a.qty_on_hand || 0; vb = b.qty_on_hand || 0; break;
@@ -552,7 +557,7 @@ export default function NegativeInventoryPage() {
       return String(va).localeCompare(String(vb)) * dir;
     });
     return arr;
-  }, [filteredItems, search, hideResolved, sortCol, sortDir, notesByKey, firstSeen, buyingQoo, regioQoh, regioQoo]);
+  }, [filteredItems, search, hideResolved, sortCol, sortDir, notesByKey, firstSeen, buyingQoo, regioQoh, regioQoo, bumLabel]);
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -627,10 +632,10 @@ export default function NegativeInventoryPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
           <div className="flex gap-1">
             <Pill label="Alle" active={selBum === 'all'} onClick={function() { setSelBum('all'); setSelDept('__total__'); }} />
-            {bums.map(function(b) { return <Pill key={b} label={b} active={selBum === b} onClick={function() { setSelBum(b); setSelDept('__total__'); }} />; })}
+            {bums.map(function(b) { return <Pill key={b} label={bumLabel[b] || b} active={selBum === b} onClick={function() { setSelBum(b); setSelDept('__total__'); }} />; })}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -680,7 +685,7 @@ export default function NegativeInventoryPage() {
                   return {
                     'Dept': d.deptCode,
                     'Departement': d.deptName,
-                    'BUM': d.bum,
+                    'Afdeling': d.bum,
                     'Aantal items': d.items,
                     'Negatieve waarde (XCG)': Math.round(d.value),
                   };
@@ -696,9 +701,9 @@ export default function NegativeInventoryPage() {
                   var ovgCur = rqCur === undefined ? '' : (ownRegio === 'CUR' ? (rqCur - ownQoh) : rqCur);
                   var ovgBon = rqBon === undefined ? '' : (ownRegio === 'BON' ? (rqBon - ownQoh) : rqBon);
                   return {
-                    'Dept': it.dept_code,
-                    'Departement': it.dept_name,
-                    'BUM': it.bum || '',
+                    'Dept': it.effective_dept_code || it.dept_code,
+                    'Departement': it.effective_dept_name || it.dept_name,
+                    'Afdeling': bumLabel[it.effective_bum_group] || it.effective_bum_group || '',
                     'Item': it.item_number,
                     'Omschrijving': it.item_description,
                     'Store': it.store_number,
@@ -748,7 +753,7 @@ export default function NegativeInventoryPage() {
               <div>
                 <h3 className="text-[15px] font-bold">Verloop in de tijd</h3>
                 <p className="text-[12px] text-[#6b5240]">
-                  {selDept !== '__total__' ? 'Departement ' + selDept : (selBum !== 'all' ? 'Manager ' + selBum : storeName)}
+                  {selDept !== '__total__' ? 'Departement ' + selDept : (selBum !== 'all' ? 'Afdeling ' + (bumLabel[selBum] || selBum) : storeName)}
                 </p>
               </div>
             </div>
@@ -774,7 +779,7 @@ export default function NegativeInventoryPage() {
                 <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px]">Groepeer op</span>
                 <div className="flex gap-1">
                   <Pill label="Departement" active={groupBy === 'dept'} onClick={function() { setGroupBy('dept'); setOvSortCol('code'); setOvSortDir('asc'); }} />
-                  <Pill label="Manager (BUM)" active={groupBy === 'bum'} onClick={function() { setGroupBy('bum'); setOvSortCol('bum'); setOvSortDir('asc'); }} />
+                  <Pill label="Per Afdeling" active={groupBy === 'bum'} onClick={function() { setGroupBy('bum'); setOvSortCol('bum'); setOvSortDir('asc'); }} />
                 </div>
               </div>
               <span className="text-[11px] text-[#a08a74]">
@@ -796,13 +801,13 @@ export default function NegativeInventoryPage() {
                       <>
                         <OvSortableTh col="code" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} w="70px">Dep</OvSortableTh>
                         <OvSortableTh col="name" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort}>Departement</OvSortableTh>
-                        <OvSortableTh col="bum" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} w="120px">Manager</OvSortableTh>
+                        <OvSortableTh col="bum" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} w="120px">Afdeling</OvSortableTh>
                         <OvSortableTh col="items" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} align="right" w="130px">Aantal items</OvSortableTh>
                         <OvSortableTh col="value" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} align="right" w="160px">Waarde (XCG)</OvSortableTh>
                       </>
                     ) : (
                       <>
-                        <OvSortableTh col="bum" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} w="180px">Manager</OvSortableTh>
+                        <OvSortableTh col="bum" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} w="180px">Afdeling</OvSortableTh>
                         <OvSortableTh col="items" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} align="right" w="150px">Aantal items</OvSortableTh>
                         <OvSortableTh col="value" current={ovSortCol} dir={ovSortDir} onClick={handleOvSort} align="right" w="180px">Waarde (XCG)</OvSortableTh>
                       </>
@@ -848,9 +853,9 @@ export default function NegativeInventoryPage() {
                       <tr
                         key={g.bum}
                         className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0] cursor-pointer'}
-                        onClick={function() { if (g.bum !== '—') setSelBum(g.bum); setView('detail'); }}
+                        onClick={function() { if (g.bum !== 'OVERIG') setSelBum(g.bum); setView('detail'); }}
                       >
-                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-semibold">{g.bum}</td>
+                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-semibold">{g.bumDisplay || g.bum}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]">{fmt(g.items)}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(Math.round(g.value))}</td>
                       </tr>
@@ -895,7 +900,7 @@ export default function NegativeInventoryPage() {
                   <tr className="bg-[#f0ebe5]">
                     <SortableTh col="store" current={sortCol} dir={sortDir} onClick={handleSort} w="60px">Store</SortableTh>
                     <SortableTh col="dept" current={sortCol} dir={sortDir} onClick={handleSort} w="60px">Dep</SortableTh>
-                    <SortableTh col="bum" current={sortCol} dir={sortDir} onClick={handleSort} w="80px">Mgr</SortableTh>
+                    <SortableTh col="bum" current={sortCol} dir={sortDir} onClick={handleSort} w="120px">Afd</SortableTh>
                     <SortableTh col="item" current={sortCol} dir={sortDir} onClick={handleSort} w="120px">Item</SortableTh>
                     <SortableTh col="desc" current={sortCol} dir={sortDir} onClick={handleSort}>Omschrijving</SortableTh>
                     <SortableTh col="qty_on_hand" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="60px">QOH</SortableTh>
@@ -923,8 +928,8 @@ export default function NegativeInventoryPage() {
                     return (
                       <tr key={it.id} className={rowBg + ' align-top'}>
                         <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono">{it.store_number}</td>
-                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono text-[#6b5240]">{it.dept_code}</td>
-                        <td className="p-2 text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{it.bum || ''}</td>
+                        <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono text-[#6b5240]">{it.effective_dept_code || it.dept_code}</td>
+                        <td className="p-2 text-[11px] border-b border-[#f0ebe5] text-[#6b5240]">{bumLabel[it.effective_bum_group] || it.effective_bum_group || ''}</td>
                         <td className="p-2 text-[12px] border-b border-[#f0ebe5] font-mono">{it.item_number}</td>
                         <td className="p-2 text-[12px] border-b border-[#f0ebe5] truncate max-w-[280px]" title={it.item_description}>{it.item_description}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(it.qty_on_hand)}</td>
