@@ -1,13 +1,15 @@
 /* ============================================================
-   BESTAND: page_inventory_v8.js
+   BESTAND: page.js (Voorraad vs Budget)
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
-   (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.16
-   
-   Wijzigingen t.o.v. v5:
-   - Tabel-container heeft nu max-height met eigen scroll
-   - Thead is sticky binnen de container — blauwe balk + kolom-namen
-     blijven zichtbaar bij scrollen door rijen
+   VERSIE: v3.29 — gemigreerd naar enriched view (afdelingen ipv BUMs)
+
+   WIJZIGINGEN T.O.V. v3.28.16:
+   - inventory_data → inventory_data_enriched
+   - r.bum (PASCAL/HENK/etc) → r.effective_bum_group (afdelings-code)
+   - r.dept_code → r.effective_dept_code (voor merges)
+   - r.dept_name → r.effective_dept_name
+   - Filter pills tonen afdelingsnamen via bum_groups lookup
+   - BU_ORDER hardcoded weg → komt nu uit bum_groups.sort_order
    ============================================================ */
 'use client';
 
@@ -24,7 +26,6 @@ var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractio
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : (a / 1e3).toFixed(0) + 'K'); };
 var fmtP = function(n) { return (n || 0).toFixed(1) + '%'; };
 var SN = { '1': 'Curaçao', 'B': 'Bonaire' };
-var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
 var XCG_USD = 1.82;
 
 function pctColor(pct) {
@@ -77,6 +78,7 @@ export default function InventoryDashboard() {
   var _store = _s('1'), store = _store[0], setStore = _store[1];
   var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = _s('__total__'), selDept = _dept[0], setSelDept = _dept[1];
+  var _bg = _s([]), bumGroups = _bg[0], setBumGroups = _bg[1];  // [{code, display_name, sort_order}]
   var trendRef = useRef(null);
   var chartRef = useRef(null);
 
@@ -86,7 +88,8 @@ export default function InventoryDashboard() {
   async function loadData() {
     var all = [], from = 0, step = 1000;
     while (true) {
-      var r = await supabase.from('inventory_data').select('*').order('dept_code').order('inventory_date').range(from, from + step - 1);
+      // Gebruikt enriched view → krijgen effective_dept_code/_name/_bum_group erbij
+      var r = await supabase.from('inventory_data_enriched').select('*').order('dept_code').order('inventory_date').range(from, from + step - 1);
       if (!r.data || !r.data.length) break;
       all = all.concat(r.data);
       if (r.data.length < step) break;
@@ -102,8 +105,12 @@ export default function InventoryDashboard() {
       });
     }
 
+    // Load bum_groups voor display namen + volgorde
+    var bg = await supabase.from('bum_groups').select('*').eq('active', true).order('sort_order');
+
     setData(all);
     setQooData(qooMap);
+    setBumGroups(bg.data || []);
     setLoading(false);
   }
 
@@ -114,15 +121,19 @@ export default function InventoryDashboard() {
     var map = {};
     data.forEach(function(r) {
       if (storeFilter !== 'all' && r.store_number !== storeFilter) return;
-      var key = r.dept_code;
+      // Gebruik effective_dept_code zodat merges (31+32→30) automatisch worden samengevoegd
+      var eCode = r.effective_dept_code || r.dept_code;
+      var eName = r.effective_dept_name || r.dept_name;
+      var eBum = r.effective_bum_group;
+      var key = eCode;
       var isBon = r.store_number === 'B';
       var valMultiplier = (storeFilter === 'all' && isBon) ? XCG_USD : 1;
 
       if (!map[key]) {
-        map[key] = { deptCode: r.dept_code, deptName: r.dept_name, bum: r.bum, budget: 0, history: {} };
+        map[key] = { deptCode: eCode, deptName: eName, bum: eBum, budget: 0, history: {} };
       }
-      // Budget: only CUR has budget, don't convert
-      if (!isBon) map[key].budget = parseFloat(r.budget) || 0;
+      // Budget: only CUR has budget, don't convert. Som over gemerged-depts.
+      if (!isBon) map[key].budget += parseFloat(r.budget) || 0;
 
       var dt = r.inventory_date;
       if (!map[key].history[dt]) map[key].history[dt] = 0;
@@ -164,13 +175,29 @@ export default function InventoryDashboard() {
 
   var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum, qooData]);
 
+  // Bums lijst uit data via effective_bum_group; volgorde uit bum_groups.sort_order
   var bums = useMemo(function() {
     var s = {};
-    data.filter(function(r) { return store === 'all' || r.store_number === store; }).forEach(function(r) { if (r.bum) s[r.bum] = true; });
+    data.filter(function(r) { return store === 'all' || r.store_number === store; })
+        .forEach(function(r) { if (r.effective_bum_group && r.effective_bum_group !== 'OVERIG') s[r.effective_bum_group] = true; });
     var l = Object.keys(s);
-    l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); });
+    // Sorteer op bum_groups.sort_order
+    var orderMap = {};
+    bumGroups.forEach(function(g) { orderMap[g.code] = g.sort_order; });
+    l.sort(function(a, b) {
+      var ai = orderMap[a] != null ? orderMap[a] : 999;
+      var bi = orderMap[b] != null ? orderMap[b] : 999;
+      return ai - bi;
+    });
     return l;
-  }, [data, store]);
+  }, [data, store, bumGroups]);
+
+  // Lookup van afdelings-code naar display naam
+  var bumLabel = useMemo(function() {
+    var m = {};
+    bumGroups.forEach(function(g) { m[g.code] = g.display_name; });
+    return m;
+  }, [bumGroups]);
 
   var totals = useMemo(function() { 
     var src = departments;
@@ -262,10 +289,10 @@ export default function InventoryDashboard() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
           <div className="flex gap-1">
             <Pill label="Alle" active={selBum === 'all'} onClick={function() { setSelBum('all'); setSelDept('__total__'); }} />
-            {bums.map(function(b) { return <Pill key={b} label={b} active={selBum === b} onClick={function() { setSelBum(b); setSelDept('__total__'); }} />; })}
+            {bums.map(function(b) { return <Pill key={b} label={bumLabel[b] || b} active={selBum === b} onClick={function() { setSelBum(b); setSelDept('__total__'); }} />; })}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -288,8 +315,8 @@ export default function InventoryDashboard() {
           })}
         </div>
         <ExcelExportButton
-          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraad_budget_' + (selBum !== 'all' ? selBum : 'alle') + '_' + storeName.replace(/[ç]/g,'c'); })()}
-          reportTitle={'Voorraad vs Budget — ' + (selBum !== 'all' ? selBum + ' — ' : '') + storeName}
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraad_budget_' + (selBum !== 'all' ? (bumLabel[selBum] || selBum).replace(/[ &]/g,'_') : 'alle') + '_' + storeName.replace(/[ç]/g,'c'); })()}
+          reportTitle={'Voorraad vs Budget — ' + (selBum !== 'all' ? (bumLabel[selBum] || selBum) + ' — ' : '') + storeName}
           sheets={function() {
             return [{
               name: 'Per Afdeling',
@@ -297,7 +324,7 @@ export default function InventoryDashboard() {
                 var row = {
                   'Dept': d.deptCode,
                   'Departement': d.deptName,
-                  'BUM': d.bum || '',
+                  'Afdeling': bumLabel[d.bum] || d.bum || '',
                 };
                 if (!isBonaire && !isTotaal) {
                   row['Budget'] = Math.round(d.budget);
