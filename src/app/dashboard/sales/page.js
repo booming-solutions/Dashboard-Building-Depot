@@ -102,6 +102,8 @@ export default function SalesDashboard(){
   const[corrSales,setCorrSales]=useState('');
   const[corrMargin,setCorrMargin]=useState('');
   const[corrNotes,setCorrNotes]=useState('');
+  const[bumGroups,setBumGroups]=useState([]);  // [{code, display_name, sort_order}]
+  const[deptBumMapping,setDeptBumMapping]=useState([]);  // [{dept_code, bum_group_code, valid_from, valid_until}]
   const monthlyRef=useRef(null);const gmRef=useRef(null);const mgrRef=useRef(null);const deptRef=useRef(null);const chartsRef=useRef({});
   const supabase=createClient();
 
@@ -109,11 +111,15 @@ export default function SalesDashboard(){
 
   async function loadData(){
     let allSales=[],allBudget=[],from=0;const step=1000;
-    while(true){const{data:b}=await supabase.from('sales_monthly').select('*').order('year').order('month').range(from,from+step-1);if(!b||!b.length)break;allSales=allSales.concat(b);if(b.length<step)break;from+=step}
+    while(true){const{data:b}=await supabase.from('sales_monthly_enriched').select('*').order('year').order('month').range(from,from+step-1);if(!b||!b.length)break;allSales=allSales.concat(b);if(b.length<step)break;from+=step}
     from=0;while(true){const{data:b}=await supabase.from('budget_data').select('*').range(from,from+step-1);if(!b||!b.length)break;allBudget=allBudget.concat(b);if(b.length<step)break;from+=step}
     const{data:corr}=await supabase.from('corrections').select('*').order('created_at',{ascending:false});
     const{data:md}=await supabase.from('sales_data').select('sale_date').order('sale_date',{ascending:false}).limit(1);
     if(md&&md.length){const d=md[0].sale_date;const[y,m,day]=d.split('-').map(Number);setLastDate(new Date(y,m-1,day))}
+    // Afdelingen + mapping ophalen voor filters
+    const{data:bg}=await supabase.from('bum_groups').select('*').eq('active',true).order('sort_order');
+    const{data:dbm}=await supabase.from('dept_bum_mapping').select('*');
+    setBumGroups(bg||[]);setDeptBumMapping(dbm||[]);
     setData(allSales);setBudgetData(allBudget);if(corr)setCorrections(corr);setLoading(false);
   }
   async function checkAuth(){
@@ -148,15 +154,44 @@ export default function SalesDashboard(){
   }
   function matchMonth(m){if(isAll)return true;if(isYTD)return m<=maxDataMonth;if(selectedMonths)return selectedMonths.includes(m);return true}
 
-  const filtered=useMemo(()=>data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.bum===bum)&&(dept==='all'||r.dept_code===dept)&&r.year===currentYear&&matchMonth(r.month))),[data,store,currentYear,months,bum,dept,maxDataMonth]);
-  const priorFiltered=useMemo(()=>data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.bum===bum)&&(dept==='all'||r.dept_code===dept)&&r.year===priorYear&&matchMonth(r.month))),[data,store,priorYear,months,bum,dept,maxDataMonth]);
+  // BUM filter werkt nu op effective_bum_group (afdelings-code, niet persoonsnaam)
+  const filtered=useMemo(()=>data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===currentYear&&matchMonth(r.month))),[data,store,currentYear,months,bum,dept,maxDataMonth]);
+  const priorFiltered=useMemo(()=>data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===priorYear&&matchMonth(r.month))),[data,store,priorYear,months,bum,dept,maxDataMonth]);
   const salesType=budgetMode==='target'?'target_sales':'cgf_sales';
   const marginType=budgetMode==='target'?'target_margin':'cgf_margin';
 
-  const deptBumMap=useMemo(()=>{const m={};data.forEach(r=>{if(r.dept_code&&r.bum)m[r.dept_code]=r.bum});return m},[data]);
+  // Bepaal voor het LOPENDE jaar welke depts onder welke afdeling vallen (voor budget filter).
+  // Time-aware: gebruik 1 jan van het jaar als check-datum.
+  // Aangezien alle wijzigingen op 1 januari ingaan, geeft dit het juiste resultaat per jaar.
+  const deptBumMap=useMemo(()=>{
+    const m={};
+    const yearStartStr=`${currentYear}-01-01`;
+    deptBumMapping.forEach(map=>{
+      if(map.valid_from<=yearStartStr&&(!map.valid_until||map.valid_until>=yearStartStr)){
+        m[map.dept_code]=map.bum_group_code;
+      }
+    });
+    return m;
+  },[deptBumMapping,currentYear]);
 
-  const budgetFiltered=useMemo(()=>budgetData.filter(b=>{if(store!=='all'&&b.store_number!==store)return false;if(dept!=='all'&&b.dept_code!==dept)return false;if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;const[by,bm]=b.month.split('-').map(Number);if(by!==currentYear||!matchMonth(bm))return false;return b.budget_type===salesType||b.budget_type===marginType}),[budgetData,store,currentYear,months,dept,bum,deptBumMap,budgetMode,maxDataMonth,salesType,marginType]);
-  const corrFiltered=useMemo(()=>corrections.filter(c=>((store==='all'||c.store_number===store)&&(bum==='all'||c.bum===bum)&&(dept==='all'||c.dept_code===dept)&&c.year===currentYear&&matchMonth(c.month))),[corrections,store,currentYear,months,bum,dept,maxDataMonth]);
+  // Budget filter: gebruikt deptBumMap voor afdelings-filtering (lookup per jaar)
+  const budgetFiltered=useMemo(()=>budgetData.filter(b=>{
+    if(store!=='all'&&b.store_number!==store)return false;
+    if(dept!=='all'&&b.dept_code!==dept)return false;
+    if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
+    const[by,bm]=b.month.split('-').map(Number);
+    if(by!==currentYear||!matchMonth(bm))return false;
+    return b.budget_type===salesType||b.budget_type===marginType;
+  }),[budgetData,store,currentYear,months,dept,bum,deptBumMap,budgetMode,maxDataMonth,salesType,marginType]);
+
+  // Correcties: legacy data heeft 'bum' = persoonsnaam. Vertaal naar afdelingscode voor filtering.
+  const personToGroup={PASCAL:'BUILDING_MATERIALS',HENK:'SANITAIR_KEUKENS',JOHN:'HARDWARE',GIJS:'LIVING',DANIEL:'APPLIANCES_HOUSEWARE',OTHER:'OVERIG'};
+  function corrBumToGroup(c){
+    // Als bum al een afdelings-code is, gebruik die. Anders vertaal persoonsnaam.
+    if(c.bum&&personToGroup[c.bum])return personToGroup[c.bum];
+    return c.bum||'OVERIG';
+  }
+  const corrFiltered=useMemo(()=>corrections.filter(c=>((store==='all'||c.store_number===store)&&(bum==='all'||corrBumToGroup(c)===bum)&&(dept==='all'||c.dept_code===dept)&&c.year===currentYear&&matchMonth(c.month))),[corrections,store,currentYear,months,bum,dept,maxDataMonth]);
 
   const sum=(a,k)=>a.reduce((s,r)=>s+parseFloat(r[k]||0),0);
   const corrS=sum(corrFiltered,'sales_correction'),corrG=sum(corrFiltered,'margin_correction');
@@ -178,8 +213,12 @@ export default function SalesDashboard(){
 
   const stores=useMemo(()=>[...new Set(data.map(r=>r.store_number))].sort(),[data]);
   const years=useMemo(()=>[...new Set(data.map(r=>r.year))].sort(),[data]);
-  const bums=useMemo(()=>[...new Set(data.filter(r=>r.year===currentYear&&(store==='all'||r.store_number===store)&&r.bum!=='OTHER').map(r=>r.bum))].sort(),[data,currentYear,store]);
-  const depts=useMemo(()=>[...new Set(data.map(r=>r.dept_code+'|'+r.dept_name))].sort((a,b)=>{const na=parseInt(a),nb=parseInt(b);if(isNaN(na)&&isNaN(nb))return a.localeCompare(b);if(isNaN(na))return 1;if(isNaN(nb))return -1;return na-nb}),[data]);
+  // Afdelingen die nog wijzigbaar zijn voor het lopende jaar (skip OVERIG zoals voorheen OTHER)
+  const bums=useMemo(()=>bumGroups.filter(g=>g.code!=='OVERIG').map(g=>g.code),[bumGroups]);
+  // Map: code → display naam, voor weergave in pills en tabel
+  const bumLabel=useMemo(()=>{const m={};bumGroups.forEach(g=>{m[g.code]=g.display_name});return m},[bumGroups]);
+  // Depts list — gebruikt effective_dept_code/_name voor merged display
+  const depts=useMemo(()=>[...new Set(data.map(r=>(r.effective_dept_code||r.dept_code)+'|'+(r.effective_dept_name||r.dept_name)))].sort((a,b)=>{const na=parseInt(a),nb=parseInt(b);if(isNaN(na)&&isNaN(nb))return a.localeCompare(b);if(isNaN(na))return 1;if(isNaN(nb))return -1;return na-nb}),[data]);
   const budgetLabel=budgetMode==='target'?'Target':'CGF';
 
   function handleMonthClick(m,e){if(m==='all'||m==='ytd'){setMonths([m]);return}if(e&&e.ctrlKey){setMonths(prev=>{const c=prev.filter(x=>x!=='all'&&x!=='ytd');if(c.includes(m))return c.filter(x=>x!==m).length?c.filter(x=>x!==m):['all'];return[...c,m]})}else setMonths([m])}
@@ -200,32 +239,34 @@ export default function SalesDashboard(){
 
     if(monthlyRef.current){chartsRef.current.monthly=new Chart(monthlyRef.current,{type:'bar',data:{labels:lb,datasets:[{label:currentYear+' TY',data:aM.map(m=>conv(cM[m]?.s||0)),backgroundColor:'rgba(232,78,27,0.25)',borderColor:'#E84E1B',borderWidth:1,borderRadius:4,order:2},{label:priorYear+' LY',data:aM.map(m=>conv(lM[m]?.s||0)),type:'line',borderColor:'#888',borderDash:[5,5],pointBackgroundColor:'#888',pointRadius:4,tension:0.3,fill:false,order:1},{label:budgetLabel+' Budget',data:aM.map(m=>conv(bM[m]?.s||0)),type:'line',borderColor:'#d97706',borderDash:[3,3],pointBackgroundColor:'#d97706',pointRadius:4,tension:0.3,fill:false,order:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:16,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.raw)} ${curr}`}}},scales:{y:{min:yMin,ticks:{callback:v=>fmtM(v)},grid:{color:'#f0ebe5'}},x:{grid:{display:false}}}}})}
     if(gmRef.current){chartsRef.current.gm=new Chart(gmRef.current,{type:'line',data:{labels:lb,datasets:[{label:currentYear+' TY',data:aM.map(m=>cM[m]&&cM[m].s?(cM[m].g/cM[m].s*100):null),borderColor:'#E84E1B',pointBackgroundColor:'#E84E1B',pointRadius:4,tension:0.3,fill:false},{label:priorYear+' LY',data:aM.map(m=>lM[m]&&lM[m].s?(lM[m].g/lM[m].s*100):null),borderColor:'#888',borderDash:[5,5],pointBackgroundColor:'#888',pointRadius:4,tension:0.3,fill:false},{label:budgetLabel+' Budget',data:aM.map(m=>bM[m]&&bM[m].s?(bM[m].g/bM[m].s*100):null),borderColor:'#d97706',borderDash:[3,3],pointBackgroundColor:'#d97706',pointRadius:4,tension:0.3,fill:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:16,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmtP(c.raw)}`}}},scales:{y:{ticks:{callback:v=>v+'%'},grid:{color:'#f0ebe5'}},x:{grid:{display:false}}}}})}
-    const bumA={};filtered.forEach(r=>{if(!bumA[r.bum])bumA[r.bum]={s:0,g:0};bumA[r.bum].s+=parseFloat(r.net_sales);bumA[r.bum].g+=parseFloat(r.gross_margin)});const bumS=Object.entries(bumA).sort((a,b)=>b[1].s-a[1].s);const tP=bumS.reduce((s,b)=>s+b[1].s,0);
-    if(mgrRef.current&&bumS.length){const md2=mgrMetric==='sales'?bumS.map(b=>tP?b[1].s/tP*100:0):mgrMetric==='margin'?bumS.map(b=>conv(b[1].g)):bumS.map(b=>b[1].s?b[1].g/b[1].s*100:0);chartsRef.current.mgr=new Chart(mgrRef.current,{type:'bar',data:{labels:bumS.map(b=>b[0]),datasets:[{data:md2,backgroundColor:'rgba(232,78,27,0.3)',borderColor:'#E84E1B',borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>mgrMetric==='gm'||mgrMetric==='sales'?fmtP(c.raw):fmt(c.raw)+' '+curr}}},scales:{x:{ticks:{callback:v=>mgrMetric==='gm'||mgrMetric==='sales'?v+'%':fmtM(v)},grid:{color:'#f0ebe5'}},y:{grid:{display:false}}}}})}
-    const dA={};filtered.forEach(r=>{const n=r.dept_name;if(!dA[n])dA[n]={s:0,g:0};dA[n].s+=parseFloat(r.net_sales);dA[n].g+=parseFloat(r.gross_margin)});const dSrt=Object.entries(dA).sort((a,b)=>b[1].s-a[1].s).slice(0,15);
+    const bumA={};filtered.forEach(r=>{const code=r.effective_bum_group;if(!code)return;if(!bumA[code])bumA[code]={s:0,g:0};bumA[code].s+=parseFloat(r.net_sales);bumA[code].g+=parseFloat(r.gross_margin)});const bumS=Object.entries(bumA).sort((a,b)=>b[1].s-a[1].s);const tP=bumS.reduce((s,b)=>s+b[1].s,0);
+    if(mgrRef.current&&bumS.length){const md2=mgrMetric==='sales'?bumS.map(b=>tP?b[1].s/tP*100:0):mgrMetric==='margin'?bumS.map(b=>conv(b[1].g)):bumS.map(b=>b[1].s?b[1].g/b[1].s*100:0);chartsRef.current.mgr=new Chart(mgrRef.current,{type:'bar',data:{labels:bumS.map(b=>bumLabel[b[0]]||b[0]),datasets:[{data:md2,backgroundColor:'rgba(232,78,27,0.3)',borderColor:'#E84E1B',borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>mgrMetric==='gm'||mgrMetric==='sales'?fmtP(c.raw):fmt(c.raw)+' '+curr}}},scales:{x:{ticks:{callback:v=>mgrMetric==='gm'||mgrMetric==='sales'?v+'%':fmtM(v)},grid:{color:'#f0ebe5'}},y:{grid:{display:false}}}}})}
+    const dA={};filtered.forEach(r=>{const n=r.effective_dept_name||r.dept_name;if(!dA[n])dA[n]={s:0,g:0};dA[n].s+=parseFloat(r.net_sales);dA[n].g+=parseFloat(r.gross_margin)});const dSrt=Object.entries(dA).sort((a,b)=>b[1].s-a[1].s).slice(0,15);
     if(deptRef.current&&dSrt.length){const dd2=deptMetric==='sales'?dSrt.map(d=>conv(d[1].s)):deptMetric==='margin'?dSrt.map(d=>conv(d[1].g)):dSrt.map(d=>d[1].s?d[1].g/d[1].s*100:0);chartsRef.current.dept=new Chart(deptRef.current,{type:'bar',data:{labels:dSrt.map(d=>{const n=d[0].replace(/^\d+\s/,'');return n.length>25?n.substring(0,22)+'...':n}),datasets:[{data:dd2,backgroundColor:'rgba(232,78,27,0.3)',borderColor:'#E84E1B',borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>deptMetric==='gm'?fmtP(c.raw):fmt(c.raw)+' '+curr}}},scales:{x:{ticks:{callback:v=>deptMetric==='gm'?v+'%':fmtM(v)},grid:{color:'#f0ebe5'}},y:{grid:{display:false}}}}})}
-  },[filtered,priorFiltered,budgetFiltered,corrFiltered,currentYear,priorYear,budgetLabel,mgrMetric,deptMetric,selectedMonths,salesType,marginType,dayFrac,conv,curr]);
+  },[filtered,priorFiltered,budgetFiltered,corrFiltered,currentYear,priorYear,budgetLabel,mgrMetric,deptMetric,selectedMonths,salesType,marginType,dayFrac,conv,curr,bumLabel]);
 
   useEffect(()=>{if(data.length&&tab==='actuals')renderCharts()},[renderCharts,data.length,tab]);
 
   const tableData=useMemo(()=>{
-    const agg={};filtered.forEach(r=>{const k=`${r.dept_name}-${r.bum}`;if(!agg[k])agg[k]={dept:r.dept_name,bum:r.bum,net_sales:0,gross_margin:0,dept_code:r.dept_code};agg[k].net_sales+=parseFloat(r.net_sales);agg[k].gross_margin+=parseFloat(r.gross_margin)});
-    corrFiltered.forEach(c=>{const k=`${c.dept_name}-${c.bum}`;if(!agg[k])agg[k]={dept:c.dept_name,bum:c.bum,net_sales:0,gross_margin:0,dept_code:c.dept_code};agg[k].net_sales+=parseFloat(c.sales_correction);agg[k].gross_margin+=parseFloat(c.margin_correction)});
-    const lyA={};priorFiltered.forEach(r=>{const k=`${r.dept_name}-${r.bum}`;if(!lyA[k])lyA[k]={s:0,g:0};lyA[k].s+=parseFloat(r.net_sales);lyA[k].g+=parseFloat(r.gross_margin)});
+    // Aggregeer per (effective dept, effective bum) — merges en BUM-wijzigingen worden automatisch toegepast
+    const agg={};filtered.forEach(r=>{const eCode=r.effective_dept_code||r.dept_code;const eName=r.effective_dept_name||r.dept_name;const eBum=r.effective_bum_group;const k=`${eCode}-${eBum}`;if(!agg[k])agg[k]={dept:eName,bum:eBum,bumLabel:bumLabel[eBum]||eBum,net_sales:0,gross_margin:0,dept_code:eCode};agg[k].net_sales+=parseFloat(r.net_sales);agg[k].gross_margin+=parseFloat(r.gross_margin)});
+    // Correcties: bum kan persoonsnaam zijn (legacy) of afdelingscode. Vertaal naar afdelingscode.
+    corrFiltered.forEach(c=>{const eBum=corrBumToGroup(c);const k=`${c.dept_code}-${eBum}`;if(!agg[k])agg[k]={dept:c.dept_name,bum:eBum,bumLabel:bumLabel[eBum]||eBum,net_sales:0,gross_margin:0,dept_code:c.dept_code};agg[k].net_sales+=parseFloat(c.sales_correction);agg[k].gross_margin+=parseFloat(c.margin_correction)});
+    const lyA={};priorFiltered.forEach(r=>{const eCode=r.effective_dept_code||r.dept_code;const eBum=r.effective_bum_group;const k=`${eCode}-${eBum}`;if(!lyA[k])lyA[k]={s:0,g:0};lyA[k].s+=parseFloat(r.net_sales);lyA[k].g+=parseFloat(r.gross_margin)});
     const bA={};budgetFiltered.forEach(b=>{const k=b.dept_code;if(!bA[k])bA[k]={s:0,g:0};if(b.budget_type===salesType)bA[k].s+=parseFloat(b.amount);if(b.budget_type===marginType)bA[k].g+=parseFloat(b.amount)});
     return Object.values(agg).map(r=>{
-      const lk=`${r.dept}-${r.bum}`;let lS=lyA[lk]?.s||0,lG=lyA[lk]?.g||0;
-      if(dayFrac.month){priorFiltered.filter(p=>p.dept_name===r.dept&&p.bum===r.bum&&needsProrate(p.month)).forEach(p=>{lS-=parseFloat(p.net_sales)*(1-dayFrac.frac);lG-=parseFloat(p.gross_margin)*(1-dayFrac.frac)})}
+      const lk=`${r.dept_code}-${r.bum}`;let lS=lyA[lk]?.s||0,lG=lyA[lk]?.g||0;
+      if(dayFrac.month){priorFiltered.filter(p=>(p.effective_dept_code||p.dept_code)===r.dept_code&&p.effective_bum_group===r.bum&&needsProrate(p.month)).forEach(p=>{lS-=parseFloat(p.net_sales)*(1-dayFrac.frac);lG-=parseFloat(p.gross_margin)*(1-dayFrac.frac)})}
       let bd={...bA[r.dept_code]||{s:0,g:0}};
       if(dayFrac.month){budgetFiltered.filter(b=>b.dept_code===r.dept_code&&needsProrate(parseInt(b.month.split('-')[1]))).forEach(b=>{if(b.budget_type===salesType)bd.s-=parseFloat(b.amount)*(1-dayFrac.frac);if(b.budget_type===marginType)bd.g-=parseFloat(b.amount)*(1-dayFrac.frac)})}
       return{...r,dept_code_num:parseInt(r.dept_code)||999,ly:conv(lS),varPct:lS?((r.net_sales-lS)/Math.abs(lS)*100):0,gmPct:r.net_sales?r.gross_margin/r.net_sales*100:0,net_sales_conv:conv(r.net_sales),gm_conv:conv(r.gross_margin),budMargin:conv(bd.g),budGmPct:bd.s?bd.g/bd.s*100:0};
-    }).filter(r=>!search||r.dept.toLowerCase().includes(search.toLowerCase())||r.bum.toLowerCase().includes(search.toLowerCase()))
+    }).filter(r=>!search||r.dept.toLowerCase().includes(search.toLowerCase())||(r.bumLabel||'').toLowerCase().includes(search.toLowerCase()))
     .sort((a,b)=>{
       if(a.dept_code==='OT'&&b.dept_code!=='OT')return 1;
       if(b.dept_code==='OT'&&a.dept_code!=='OT')return -1;
       return sortDir==='desc'?(b[sortCol]||0)-(a[sortCol]||0):(a[sortCol]||0)-(b[sortCol]||0);
     });
-  },[filtered,priorFiltered,budgetFiltered,corrFiltered,search,sortCol,sortDir,dayFrac,conv,salesType,marginType]);
+  },[filtered,priorFiltered,budgetFiltered,corrFiltered,search,sortCol,sortDir,dayFrac,conv,salesType,marginType,bumLabel]);
 
   function toggleSort(c2){if(sortCol===c2)setSortDir(d=>d==='desc'?'asc':'desc');else{setSortCol(c2);setSortDir('desc')}}
 
@@ -268,7 +309,7 @@ export default function SalesDashboard(){
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span></div>
-        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Manager</span><div className="flex gap-1"><Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>{bums.map(b=><Pill key={b} label={b} active={bum===b} onClick={()=>setBum(b)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Budget</span><div className="flex gap-1"><Pill label="Target (70M)" active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label="CGF (65M)" active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
+        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Afdeling</span><div className="flex gap-1"><Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>{bums.map(b=><Pill key={b} label={bumLabel[b]||b} active={bum===b} onClick={()=>setBum(b)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Budget</span><div className="flex gap-1"><Pill label="Target (70M)" active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label="CGF (65M)" active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Departement</span><select value={dept} onChange={e=>setDept(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg"><option value="all">Alle Departementen</option>{depts.map(d=>{const[c2,n]=d.split('|');return<option key={c2} value={c2}>{n}</option>})}</select></div>
       </div>
 
@@ -292,7 +333,7 @@ export default function SalesDashboard(){
         <div className="flex justify-between items-center mb-4 flex-wrap gap-3"><h3 className="text-[15px] font-bold">Detail Tabel</h3><div className="flex gap-2 items-center"><input className="bg-[#faf7f4] border border-[#e5ddd4] px-3 py-1.5 rounded-lg text-[13px] w-[180px]" placeholder="Zoeken..." value={search} onChange={e=>setSearch(e.target.value)}/><select className="bg-[#faf7f4] border border-[#e5ddd4] px-2 py-1.5 rounded-lg text-[13px]" value={tableRows} onChange={e=>setTableRows(Number(e.target.value))}><option value={20}>20 rijen</option><option value={50}>50 rijen</option><option value={100}>100 rijen</option><option value={9999}>Alle</option></select></div></div>
         <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
           <table className="w-full border-collapse"><thead><tr>
-            {[['Departement','dept'],['Manager','bum']].map(([l,k])=><th key={k} className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0">{l}</th>)}
+            {[['Departement','dept'],['Afdeling','bum']].map(([l,k])=><th key={k} className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0">{l}</th>)}
             {[['Omzet','net_sales_conv'],['LY','ly'],['Var %','varPct'],['BM','gm_conv'],['Bud BM','budMargin'],['BM %','gmPct'],['Bud BM %','budGmPct']].map(([l,k])=><th key={k} onClick={()=>toggleSort(k)} className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0 cursor-pointer hover:text-[#E84E1B] whitespace-nowrap">{l}{sortCol===k?(sortDir==='desc'?' ↓':' ↑'):''}</th>)}
           </tr></thead><tbody>
             {(function(){const tSales=tableData.reduce((s,r)=>s+r.net_sales_conv,0);const tLY=tableData.reduce((s,r)=>s+r.ly,0);const tGM=tableData.reduce((s,r)=>s+r.gm_conv,0);const tBudGM=tableData.reduce((s,r)=>s+r.budMargin,0);const tVarPct=tLY?((tSales-tLY)/Math.abs(tLY)*100):0;const tGmPct=tSales?tGM/tSales*100:0;const tBudGmPct=tSales?tBudGM/tSales*100:0;const tgc=tGmPct>=35?'#16a34a':tGmPct>=25?'#d97706':'#dc2626';const tbc=tBudGmPct>=35?'#16a34a':tBudGmPct>=25?'#d97706':'#dc2626';return(
@@ -310,7 +351,7 @@ export default function SalesDashboard(){
             {tableData.slice(0,tableRows).map((r,i)=>{const gc=r.gmPct>=35?'#16a34a':r.gmPct>=25?'#d97706':'#dc2626';const bc=r.budGmPct>=35?'#16a34a':r.budGmPct>=25?'#d97706':'#dc2626';const isOther=r.dept_code==='OT';const rowStyle=isOther?{color:'#b0a090',fontStyle:'italic'}:{};return(
               <tr key={i} className="hover:bg-[#faf5f0]" style={isOther?{backgroundColor:'#f9f7f5'}:{}}>
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]" style={rowStyle}>{r.dept}{isOther?' (FA/FB/FC/FF/XX)':''}</td>
-                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]" style={rowStyle}>{r.bum}</td>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4]" style={rowStyle}>{r.bumLabel||r.bum}</td>
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.net_sales_conv/1000))}</td>
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.ly/1000))}</td>
                 <td className={`p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold`} style={isOther?rowStyle:{color:r.varPct>=0?'#16a34a':'#dc2626'}}>{r.varPct>=0?'+':''}{fmtP(r.varPct)}</td>
@@ -332,7 +373,7 @@ export default function SalesDashboard(){
           <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Jaar</label><select value={corrYear} onChange={e=>setCorrYear(parseInt(e.target.value))} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]">{years.map(y=><option key={y} value={y}>{y}</option>)}</select></div>
           <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Maand</label><select value={corrMonth} onChange={e=>setCorrMonth(parseInt(e.target.value))} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]">{MN.map((m,i)=><option key={i} value={i+1}>{m}</option>)}</select></div>
           <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Departement</label><select value={corrDept} onChange={e=>setCorrDept(e.target.value)} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]"><option value="">Kies...</option>{depts.map(d=>{const[c2,n]=d.split('|');return<option key={c2} value={c2}>{n}</option>})}</select></div>
-          <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Manager</label><select value={corrBum} onChange={e=>setCorrBum(e.target.value)} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]"><option value="">Kies...</option>{bums.map(b=><option key={b} value={b}>{b}</option>)}</select></div>
+          <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Afdeling</label><select value={corrBum} onChange={e=>setCorrBum(e.target.value)} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]"><option value="">Kies...</option>{bums.map(b=><option key={b} value={b}>{bumLabel[b]||b}</option>)}</select></div>
           <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Type</label><select value={corrType} onChange={e=>setCorrType(e.target.value)} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]"><option>Afrondingsverschil</option><option>Ontbrekende boeking</option><option>Handmatige correctie</option><option>Overig</option></select></div>
           <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Omzet correctie (±)</label><input value={corrSales} onChange={e=>setCorrSales(e.target.value)} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]" placeholder="bv. -1500 of 2300"/></div>
           <div><label className="text-[10px] text-[#6b5240] font-bold uppercase">Marge correctie (±)</label><input value={corrMargin} onChange={e=>setCorrMargin(e.target.value)} className="w-full mt-1 px-2 py-2 border border-[#e5ddd4] rounded-lg text-[13px]" placeholder="bv. -500 of 800"/></div>
@@ -341,7 +382,7 @@ export default function SalesDashboard(){
         <div className="flex gap-3">
           <button onClick={addCorrection} className="px-5 py-2 rounded-lg bg-[#E84E1B] text-white text-[13px] font-semibold">+ Correctie Toevoegen</button>
           <button onClick={clearAll} className="px-5 py-2 rounded-lg bg-white text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Alles Wissen</button>
-          <button onClick={()=>{const csv=['Winkel,Jaar,Maand,Dept,Manager,Type,Omzet,Marge,Toelichting',...corrections.map(c=>`${SN[c.store_number]||c.store_number},${c.year},${MN[c.month-1]},${c.dept_name},${c.bum},${c.correction_type},${c.sales_correction},${c.margin_correction},"${c.notes||''}"`)].join('\n');const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='correcties.csv';a.click()}} className="px-5 py-2 rounded-lg bg-white text-[#E84E1B] text-[13px] font-semibold border border-[#E84E1B]">Exporteer CSV</button>
+          <button onClick={()=>{const csv=['Winkel,Jaar,Maand,Dept,Afdeling,Type,Omzet,Marge,Toelichting',...corrections.map(c=>{const eBum=corrBumToGroup(c);const lbl=bumLabel[eBum]||c.bum;return `${SN[c.store_number]||c.store_number},${c.year},${MN[c.month-1]},${c.dept_name},${lbl},${c.correction_type},${c.sales_correction},${c.margin_correction},"${c.notes||''}"`}) ].join('\n');const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='correcties.csv';a.click()}} className="px-5 py-2 rounded-lg bg-white text-[#E84E1B] text-[13px] font-semibold border border-[#E84E1B]">Exporteer CSV</button>
         </div>
 
         <div className="grid grid-cols-3 gap-4 mt-6 mb-6">
@@ -351,14 +392,14 @@ export default function SalesDashboard(){
         </div>
 
         {corrections.length>0&&<div className="overflow-x-auto"><table className="w-full border-collapse"><thead><tr>
-          {['Winkel','Jaar','Mnd','Departement','Manager','Type','Omzet','Marge','Toelichting',''].map((h,i)=><th key={i} className="text-left p-2.5 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">{h}</th>)}
+          {['Winkel','Jaar','Mnd','Departement','Afdeling','Type','Omzet','Marge','Toelichting',''].map((h,i)=><th key={i} className="text-left p-2.5 text-[10px] text-[#6b5240] font-bold uppercase border-b-2 border-[#e5ddd4]">{h}</th>)}
         </tr></thead><tbody>
           {corrections.map(c=><tr key={c.id} className="hover:bg-[#faf5f0]">
             <td className="p-2 text-[13px] border-b border-[#e5ddd4]">{SN[c.store_number]||c.store_number}</td>
             <td className="p-2 text-[13px] border-b border-[#e5ddd4]">{c.year}</td>
             <td className="p-2 text-[13px] border-b border-[#e5ddd4]">{MN[c.month-1]}</td>
             <td className="p-2 text-[13px] border-b border-[#e5ddd4]">{c.dept_name}</td>
-            <td className="p-2 text-[13px] border-b border-[#e5ddd4]">{c.bum}</td>
+            <td className="p-2 text-[13px] border-b border-[#e5ddd4]">{bumLabel[corrBumToGroup(c)]||c.bum}</td>
             <td className="p-2 text-[13px] border-b border-[#e5ddd4]">{c.correction_type}</td>
             <td className={`p-2 text-[13px] border-b border-[#e5ddd4] font-mono ${parseFloat(c.sales_correction)>=0?'text-green-600':'text-red-600'}`}>{parseFloat(c.sales_correction)>=0?'+':''}{fmt(c.sales_correction)}</td>
             <td className={`p-2 text-[13px] border-b border-[#e5ddd4] font-mono ${parseFloat(c.margin_correction)>=0?'text-green-600':'text-red-600'}`}>{parseFloat(c.margin_correction)>=0?'+':''}{fmt(c.margin_correction)}</td>

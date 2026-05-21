@@ -29,6 +29,20 @@ function todayStr() {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
+// Wijzigingen gaan altijd in op 1 januari van het huidige jaar.
+// Management reporting voor afgesloten jaren ligt vast.
+function jan1ThisYear() {
+  return new Date().getFullYear() + '-01-01';
+}
+
+function dec31LastYear() {
+  return (new Date().getFullYear() - 1) + '-12-31';
+}
+
+function currentYear() {
+  return new Date().getFullYear();
+}
+
 export default function DeptConfigPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
@@ -192,8 +206,10 @@ function MappingsTab({ supabase }) {
   // Wijziging form
   const [changeDepts, setChangeDepts] = useState('');  // comma-separated dept codes
   const [changeToGroup, setChangeToGroup] = useState('');
-  const [changeFromDate, setChangeFromDate] = useState(todayStr());
   const [changeNote, setChangeNote] = useState('');
+  // Wijzigingen gaan altijd in per 1 jan van het huidige jaar
+  const changeFromDate = jan1ThisYear();
+  const closeOldOn = dec31LastYear();
   const [saving, setSaving] = useState(false);
   const [filterText, setFilterText] = useState('');
 
@@ -235,15 +251,16 @@ function MappingsTab({ supabase }) {
     const deptList = changeDepts.split(',').map(d => d.trim()).filter(d => d.length > 0);
     if (!deptList.length) { alert('Voer minimaal één dept code in'); return; }
     if (!changeToGroup) { alert('Kies een afdeling'); return; }
-    if (!changeFromDate) { alert('Kies een ingangsdatum'); return; }
+
+    const groupLabel = groups.find(g => g.code === changeToGroup)?.display_name || changeToGroup;
 
     // Bevestiging
     const ok = confirm(
       `Wijziging doorvoeren?\n\n` +
       `Dept(s): ${deptList.join(', ')}\n` +
-      `Naar afdeling: ${changeToGroup}\n` +
-      `Vanaf: ${changeFromDate}\n\n` +
-      `Bestaande huidige mapping krijgt valid_until = dag vóór ingangsdatum.\n` +
+      `Naar afdeling: ${groupLabel}\n` +
+      `Vanaf: 1 januari ${currentYear()}\n\n` +
+      `Bestaande mapping wordt afgesloten op ${closeOldOn}.\n` +
       `Nieuwe mapping rij krijgt valid_from = ${changeFromDate}.`
     );
     if (!ok) return;
@@ -251,21 +268,16 @@ function MappingsTab({ supabase }) {
     setSaving(true);
     const errors = [];
 
-    // Bepaal dag voor ingangsdatum
-    const fromDate = new Date(changeFromDate + 'T00:00:00');
-    const dayBefore = new Date(fromDate); dayBefore.setDate(dayBefore.getDate() - 1);
-    const dayBeforeStr = dayBefore.toISOString().slice(0, 10);
-
     for (const dept of deptList) {
-      // 1. Sluit huidige actieve mapping voor deze dept af (valid_until = dayBeforeStr)
+      // 1. Sluit huidige actieve mapping voor deze dept af (valid_until = 31 dec vorig jaar)
       const { error: e1 } = await supabase
         .from('dept_bum_mapping')
-        .update({ valid_until: dayBeforeStr })
+        .update({ valid_until: closeOldOn })
         .eq('dept_code', dept)
         .is('valid_until', null);
       if (e1) { errors.push(`Dept ${dept} afsluiten: ${e1.message}`); continue; }
 
-      // 2. Insert nieuwe mapping
+      // 2. Insert nieuwe mapping vanaf 1 jan huidig jaar
       const { error: e2 } = await supabase
         .from('dept_bum_mapping')
         .insert({
@@ -340,13 +352,11 @@ function MappingsTab({ supabase }) {
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-semibold text-[#6b5240] uppercase tracking-wide mb-1">Vanaf datum</label>
-            <input
-              type="date"
-              value={changeFromDate}
-              onChange={e => setChangeFromDate(e.target.value)}
-              className="w-full border border-[#e5ddd4] rounded-lg px-3 py-2 text-[13px]"
-            />
+            <label className="block text-[11px] font-semibold text-[#6b5240] uppercase tracking-wide mb-1">Ingangsdatum</label>
+            <div className="border border-[#e5ddd4] bg-[#faf7f4] rounded-lg px-3 py-2 text-[13px] text-[#6b5240]">
+              1 januari {currentYear()} <span className="text-[10px] italic ml-2">(automatisch — hele jaar)</span>
+            </div>
+            <p className="text-[10px] text-[#a08a74] italic mt-1">Wijzigingen gelden altijd voor het hele lopende jaar</p>
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-[#6b5240] uppercase tracking-wide mb-1">Notitie (optioneel)</label>
@@ -462,9 +472,11 @@ function MergesTab({ supabase }) {
   const [origCodes, setOrigCodes] = useState('');  // comma-separated
   const [displayCode, setDisplayCode] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [mergeFromDate, setMergeFromDate] = useState(todayStr());
   const [mergeNote, setMergeNote] = useState('');
   const [saving, setSaving] = useState(false);
+  // Merges gaan altijd in per 1 jan huidig jaar (management reporting ligt vast)
+  const mergeFromDate = jan1ThisYear();
+  const closeOldOn = dec31LastYear();
 
   useEffect(() => { load(); }, []);
 
@@ -502,7 +514,8 @@ function MergesTab({ supabase }) {
 
     const ok = confirm(
       `Merge doorvoeren?\n\n` +
-      `Dept(s) ${origList.join(', ')} worden vanaf ${mergeFromDate} weergegeven als dept ${displayCode}.\n\n` +
+      `Dept(s) ${origList.join(', ')} worden vanaf 1 januari ${currentYear()} weergegeven als dept ${displayCode}.\n\n` +
+      `Bestaande merge wordt afgesloten op ${closeOldOn}.\n` +
       `Onderliggende data blijft ongewijzigd; alleen de weergave verandert.`
     );
     if (!ok) return;
@@ -511,12 +524,10 @@ function MergesTab({ supabase }) {
     const errors = [];
 
     for (const orig of origList) {
-      // Sluit eventuele bestaande actieve merge af
-      const fromDate = new Date(mergeFromDate + 'T00:00:00');
-      const dayBefore = new Date(fromDate); dayBefore.setDate(dayBefore.getDate() - 1);
+      // Sluit eventuele bestaande actieve merge af (valid_until = 31 dec vorig jaar)
       const { error: e1 } = await supabase
         .from('dept_merge_mapping')
-        .update({ valid_until: dayBefore.toISOString().slice(0, 10) })
+        .update({ valid_until: closeOldOn })
         .eq('original_code', orig)
         .is('valid_until', null);
       if (e1) { errors.push(`${orig} afsluiten: ${e1.message}`); continue; }
@@ -594,13 +605,11 @@ function MergesTab({ supabase }) {
             />
           </div>
           <div>
-            <label className="block text-[11px] font-semibold text-[#6b5240] uppercase tracking-wide mb-1">Vanaf datum</label>
-            <input
-              type="date"
-              value={mergeFromDate}
-              onChange={e => setMergeFromDate(e.target.value)}
-              className="w-full border border-[#e5ddd4] rounded-lg px-3 py-2 text-[13px]"
-            />
+            <label className="block text-[11px] font-semibold text-[#6b5240] uppercase tracking-wide mb-1">Ingangsdatum</label>
+            <div className="border border-[#e5ddd4] bg-[#faf7f4] rounded-lg px-3 py-2 text-[13px] text-[#6b5240]">
+              1 januari {currentYear()} <span className="text-[10px] italic ml-2">(automatisch — hele jaar)</span>
+            </div>
+            <p className="text-[10px] text-[#a08a74] italic mt-1">Merges gelden altijd voor het hele lopende jaar</p>
           </div>
         </div>
         <div className="mb-3">
