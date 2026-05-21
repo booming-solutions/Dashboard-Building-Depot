@@ -211,6 +211,39 @@ export default function SalesDashboard(){
   const lyS=adj.lyS,lyG=adj.lyG,lyGP=lyS?lyG/lyS*100:0;
   const bS=adj.bS,bG=adj.bG,bGP=bS?bG/bS*100:0;
 
+  // Format voor budget pill — minder decimalen voor grote ronde bedragen
+  const fmtBudgetPill=n=>{
+    const a=Math.abs(n||0);
+    if(a>=1e6){
+      const m=a/1e6;
+      // Voor ronde bedragen (zoals 70.0) geen decimalen, anders 1
+      return (m===Math.floor(m)?m.toFixed(0):m.toFixed(1))+'M';
+    }
+    return (a/1e3).toFixed(0)+'K';
+  };
+  // Onafhankelijk van de maand-selectie. Voor weergave in budget-knop.
+  const targetForFilter=useMemo(()=>{
+    const targetType=budgetMode==='target'?'target_sales':'cgf_sales';
+    return budgetData.filter(b=>{
+      if(store!=='all'&&b.store_number!==store)return false;
+      if(dept!=='all'&&b.dept_code!==dept)return false;
+      if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
+      const[by]=b.month.split('-').map(Number);
+      if(by!==currentYear)return false;
+      return b.budget_type===targetType;
+    }).reduce((s,b)=>s+parseFloat(b.amount||0),0);
+  },[budgetData,store,dept,bum,deptBumMap,currentYear,budgetMode]);
+  const cgfForFilter=useMemo(()=>{
+    return budgetData.filter(b=>{
+      if(store!=='all'&&b.store_number!==store)return false;
+      if(dept!=='all'&&b.dept_code!==dept)return false;
+      if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
+      const[by]=b.month.split('-').map(Number);
+      if(by!==currentYear)return false;
+      return b.budget_type==='cgf_sales';
+    }).reduce((s,b)=>s+parseFloat(b.amount||0),0);
+  },[budgetData,store,dept,bum,deptBumMap,currentYear]);
+
   const stores=useMemo(()=>[...new Set(data.map(r=>r.store_number))].sort(),[data]);
   const years=useMemo(()=>[...new Set(data.map(r=>r.year))].sort(),[data]);
   // Afdelingen die nog wijzigbaar zijn voor het lopende jaar (skip OVERIG zoals voorheen OTHER)
@@ -309,7 +342,8 @@ export default function SalesDashboard(){
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span></div>
-        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Afdeling</span><div className="flex gap-1"><Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>{bums.map(b=><Pill key={b} label={bumLabel[b]||b} active={bum===b} onClick={()=>setBum(b)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Budget</span><div className="flex gap-1"><Pill label="Target (70M)" active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label="CGF (65M)" active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
+        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Afdeling</span><div className="flex gap-1"><Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>{bums.map(b=><Pill key={b} label={bumLabel[b]||b} active={bum===b} onClick={()=>setBum(b)}/>)}</div></div>
+        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Budget</span><div className="flex gap-1"><Pill label={`Target (${fmtBudgetPill(targetForFilter)})`} active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label={`CGF (${fmtBudgetPill(cgfForFilter)})`} active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Departement</span><select value={dept} onChange={e=>setDept(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg"><option value="all">Alle Departementen</option>{depts.map(d=>{const[c2,n]=d.split('|');return<option key={c2} value={c2}>{n}</option>})}</select></div>
       </div>
 
