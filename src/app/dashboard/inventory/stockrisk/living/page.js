@@ -1,7 +1,7 @@
 /* ============================================================
-   BESTAND: page.js (Stock Risk - Totaaloverzicht)
-   KOPIEER NAAR: src/app/dashboard/inventory/stockrisk/page.js
+   BESTAND: page.js (Stock Risk - Living)
+   KOPIEER NAAR: src/app/dashboard/inventory/stockrisk/living/page.js
    ============================================================ */
 'use client';
 import StockRiskShared from '@/components/StockRiskShared';
-export default function StockRiskTotaal() { return <StockRiskShared bumFilter={null} />; }
+export default function StockRiskLiving() { return <StockRiskShared bumFilter="LIVING" />; }

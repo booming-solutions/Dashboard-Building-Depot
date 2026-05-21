@@ -1,34 +1,19 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v7.js
+   BESTAND: StockRiskShared.js
    KOPIEER NAAR: src/components/StockRiskShared.js
-   (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.21
+   VERSIE: v3.29 — gemigreerd naar enriched view + afdelingen
 
-   Wijzigingen t.o.v. v6:
-   - Op tab "Alle": QOH en QOO worden gesplitst in CUR/BON
-     · 4 kolommen: QOH CUR | QOH BON | QOO CUR | QOO BON
-     · Aggregatie houdt per (item × regio) bij
-     · Op tab Curaçao of Bonaire: 1 kolom QOH en 1 kolom QOO (oude layout)
-   - Excel-export: altijd alle 6 kolommen
-     (QOH totaal, QOH CUR, QOH BON, QOO totaal, QOO CUR, QOO BON)
-   - TOTAAL-rij toont per-regio totalen op "Alle" tab
-   - Voorraad & Dekking groep header colspan dynamisch (6 of 8)
-
-   Wijzigingen t.o.v. v5:
-   - Nieuwe feature: PO (purchase order) delivery info per item
-     · Twee nieuwe kolommen rechts van QOO:
-       "Volgende ETA" (datum, rood als in verleden)
-       "Aantal" (qty op die ETA)
-     · Tooltip op QOO cel: lijst van alle openstaande PO's
-   - Sticky tabel-header bij scrollen
-
-   Wijzigingen t.o.v. v4:
-   - BUGFIX: lead time werd uit kolom 'max_lead_time' gehaald, maar
-     die kolom is in Compass verkeerd gelabeld (was bedoeld als
-     doel-voorraad). Werkelijke transit-tijd staat in 'min_lead_time'.
-   - UI kolom 'Max Lead Time' hernoemd naar 'Lead Time'
-   - BUGFIX: Excel-export filename gebruikte 'selBum' variabele die
-     niet bestond. Vervangen door bumFilter (prop).
+   WIJZIGINGEN T.O.V. v3.28.21:
+   - bumFilter prop is nu een AFDELINGS-CODE (BUILDING_MATERIALS etc),
+     niet meer een persoonsnaam (PASCAL etc)
+   - buying_data → buying_data_enriched (filter op effective_bum_group)
+   - r.dept_code → r.effective_dept_code (voor merges 31+32→30)
+   - r.bum → r.effective_bum_group (voor afdelings-aggregatie)
+   - nos_coverage_snapshots heeft nog persoonsnamen in 'bum' kolom;
+     filter vertaalt afdelings-code → persoonsnaam tijdens query
+   - NOS Stacked Bar / Trend Chart: persoonsnamen in display
+     worden on-the-fly vertaald naar afdelingsnamen
+   - BUM_COLORS keys zijn nu afdelings-codes
    ============================================================ */
 'use client';
 
@@ -45,16 +30,39 @@ var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractio
 var fmtC = function(n) { return 'Cg ' + (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(0) + 'K' : fmt(a)); };
 var XCG_USD = 1.82;
-var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
 
-// Color palette per BUM (used in trend chart legend)
+// Mapping tussen afdelings-codes en persoonsnamen (voor legacy NOS snapshots)
+var GROUP_TO_PERSON = {
+  BUILDING_MATERIALS: 'PASCAL',
+  SANITAIR_KEUKENS:   'HENK',
+  HARDWARE:           'JOHN',
+  LIVING:             'GIJS',
+  APPLIANCES_HOUSEWARE: 'DANIEL',
+};
+var PERSON_TO_GROUP = {
+  PASCAL: 'BUILDING_MATERIALS',
+  HENK:   'SANITAIR_KEUKENS',
+  JOHN:   'HARDWARE',
+  GIJS:   'LIVING',
+  DANIEL: 'APPLIANCES_HOUSEWARE',
+};
+var GROUP_LABEL = {
+  BUILDING_MATERIALS:   'Building Materials',
+  SANITAIR_KEUKENS:     'Sanitair & Keukens',
+  HARDWARE:             'Hardware',
+  LIVING:               'Living',
+  APPLIANCES_HOUSEWARE: 'Appliances & Houseware',
+};
+var GROUP_ORDER = ['BUILDING_MATERIALS', 'SANITAIR_KEUKENS', 'HARDWARE', 'LIVING', 'APPLIANCES_HOUSEWARE'];
+
+// Color palette per afdeling (kleur blijft consistent met vorige BUM)
 var BUM_COLORS = {
-  PASCAL: '#1B3A5C',
-  HENK:   '#0891b2',
-  JOHN:   '#16a34a',
-  DANIEL: '#a16207',
-  GIJS:   '#7c3aed',
-  TOTAL:  '#E84E1B',
+  BUILDING_MATERIALS:   '#1B3A5C',  // was PASCAL
+  SANITAIR_KEUKENS:     '#0891b2',  // was HENK
+  HARDWARE:             '#16a34a',  // was JOHN
+  APPLIANCES_HOUSEWARE: '#a16207',  // was DANIEL
+  LIVING:               '#7c3aed',  // was GIJS
+  TOTAL:                '#E84E1B',
 };
 
 function Pill({ label, active, onClick }) {
@@ -101,7 +109,7 @@ function Spark({ sales }) {
 }
 
 /* ════════════════════════════════════════════════════════════
-   NEW: NOS Stacked Bar (per BUM)
+   NEW: NOS Stacked Bar (per Afdeling)
    ════════════════════════════════════════════════════════════ */
 function NosStackedBar({ snapshotsToday, store }) {
   // store: 'all' (=> Total), '1' (=> Curacao), 'B' (=> Bonaire)
@@ -112,18 +120,29 @@ function NosStackedBar({ snapshotsToday, store }) {
     return s.region === region && s.bum !== 'TOTAL';
   });
 
-  // Sort by BU_ORDER
+  // Voeg afdelings-code en display label toe per rij (legacy bum = persoonsnaam)
+  rows = rows.map(function(r) {
+    var groupCode = PERSON_TO_GROUP[r.bum] || r.bum;
+    return Object.assign({}, r, {
+      groupCode: groupCode,
+      groupLabel: GROUP_LABEL[groupCode] || r.bum,
+    });
+  });
+
+  // Sort op afdelings-volgorde
   rows.sort(function(a, b) {
-    var ai = BU_ORDER.indexOf(a.bum); var bi = BU_ORDER.indexOf(b.bum);
+    var ai = GROUP_ORDER.indexOf(a.groupCode);
+    var bi = GROUP_ORDER.indexOf(b.groupCode);
     if (ai !== -1 && bi !== -1) return ai - bi;
-    if (ai !== -1) return -1; if (bi !== -1) return 1;
-    return a.bum.localeCompare(b.bum);
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return a.groupLabel.localeCompare(b.groupLabel);
   });
 
   if (rows.length === 0) {
     return (
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-        <h3 className="text-[15px] font-bold mb-1">NOS Voorraad-status per BUM</h3>
+        <h3 className="text-[15px] font-bold mb-1">NOS Voorraad-status per Afdeling</h3>
         <p className="text-[12px] text-[#6b5240] mb-3">Nog geen snapshot beschikbaar.</p>
       </div>
     );
@@ -133,7 +152,7 @@ function NosStackedBar({ snapshotsToday, store }) {
 
   return (
     <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-      <h3 className="text-[15px] font-bold mb-1">NOS Voorraad-status per BUM</h3>
+      <h3 className="text-[15px] font-bold mb-1">NOS Voorraad-status per Afdeling</h3>
       <p className="text-[12px] text-[#6b5240] mb-3">{regionLabel} — % van NOS-items per categorie</p>
       <div className="flex items-center gap-4 text-[10px] mb-4">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span> Op voorraad (QOH &gt; 0)</span>
@@ -148,8 +167,8 @@ function NosStackedBar({ snapshotsToday, store }) {
           var pUnc = (r.uncovered / total) * 100;
           return (
             <div key={r.bum} className="flex items-center gap-2">
-              <div className="w-[80px] text-right text-[11px] font-semibold text-[#1a0a04] flex-shrink-0">
-                {r.bum}
+              <div className="w-[160px] text-right text-[11px] font-semibold text-[#1a0a04] flex-shrink-0">
+                {r.groupLabel}
               </div>
               <div className="flex-1 flex h-[20px] rounded-sm overflow-hidden bg-[#f0ebe5] relative">
                 {pIn > 0 && (
@@ -192,7 +211,7 @@ function NosStackedBar({ snapshotsToday, store }) {
 }
 
 /* ════════════════════════════════════════════════════════════
-   NEW: NOS Trend Chart (% in stock over time per BUM)
+   NEW: NOS Trend Chart (% in stock over time per Afdeling)
    ════════════════════════════════════════════════════════════ */
 function NosTrendChart({ allSnapshots, store }) {
   var canvasId = 'nos-trend-chart-' + (store || 'all');
@@ -201,12 +220,15 @@ function NosTrendChart({ allSnapshots, store }) {
   // Filter for this region
   var rows = allSnapshots.filter(function(s) { return s.region === region; });
 
-  // Group by date -> { bum: pct }
+  // Group by date -> { groupCode: pct }
+  // Legacy 'bum' kolom in snapshots = persoonsnaam, vertaal naar afdelings-code
   var byDate = {};
   rows.forEach(function(r) {
+    if (r.bum === 'TOTAL') return;  // TOTAL wordt apart berekend
     if (!byDate[r.snapshot_date]) byDate[r.snapshot_date] = {};
     var pct = r.total_nos_items > 0 ? (r.in_stock / r.total_nos_items * 100) : 0;
-    byDate[r.snapshot_date][r.bum] = pct;
+    var groupCode = PERSON_TO_GROUP[r.bum] || r.bum;
+    byDate[r.snapshot_date][groupCode] = pct;
   });
   var dates = Object.keys(byDate).sort();
 
@@ -214,17 +236,21 @@ function NosTrendChart({ allSnapshots, store }) {
   var totalsByDate = {};
   dates.forEach(function(d) {
     var sumIn = 0, sumTot = 0;
-    rows.filter(function(r) { return r.snapshot_date === d; }).forEach(function(r) {
+    rows.filter(function(r) { return r.snapshot_date === d && r.bum !== 'TOTAL'; }).forEach(function(r) {
       sumIn += r.in_stock; sumTot += r.total_nos_items;
     });
     totalsByDate[d] = sumTot > 0 ? (sumIn / sumTot * 100) : 0;
   });
 
-  // BUMs present in data
-  var bums = {};
-  rows.forEach(function(r) { bums[r.bum] = true; });
-  var bumList = Object.keys(bums).sort(function(a, b) {
-    var ai = BU_ORDER.indexOf(a); var bi = BU_ORDER.indexOf(b);
+  // Afdelingen aanwezig in data
+  var presentGroups = {};
+  rows.forEach(function(r) {
+    if (r.bum === 'TOTAL') return;
+    var gc = PERSON_TO_GROUP[r.bum] || r.bum;
+    presentGroups[gc] = true;
+  });
+  var groupList = Object.keys(presentGroups).sort(function(a, b) {
+    var ai = GROUP_ORDER.indexOf(a); var bi = GROUP_ORDER.indexOf(b);
     if (ai !== -1 && bi !== -1) return ai - bi;
     if (ai !== -1) return -1; if (bi !== -1) return 1;
     return a.localeCompare(b);
@@ -237,11 +263,11 @@ function NosTrendChart({ allSnapshots, store }) {
     var canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    var datasets = bumList.map(function(b) {
+    var datasets = groupList.map(function(g) {
       return {
-        label: b,
-        data: dates.map(function(d) { return byDate[d][b] != null ? Math.round(byDate[d][b] * 10) / 10 : null; }),
-        borderColor: BUM_COLORS[b] || '#888',
+        label: GROUP_LABEL[g] || g,
+        data: dates.map(function(d) { return byDate[d][g] != null ? Math.round(byDate[d][g] * 10) / 10 : null; }),
+        borderColor: BUM_COLORS[g] || '#888',
         backgroundColor: 'transparent',
         pointRadius: 3,
         tension: 0.25,
@@ -299,7 +325,7 @@ function NosTrendChart({ allSnapshots, store }) {
   return (
     <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
       <h3 className="text-[15px] font-bold mb-1">% NOS op voorraad — verloop in tijd</h3>
-      <p className="text-[12px] text-[#6b5240] mb-3">{regionLabel} — per BUM, plus TOTAAL (gestreept)</p>
+      <p className="text-[12px] text-[#6b5240] mb-3">{regionLabel} — per afdeling, plus TOTAAL (gestreept)</p>
       {dates.length === 0 ? (
         <div className="py-8 text-center bg-[#faf7f4] rounded-lg">
           <p className="text-[12px] text-[#6b5240]">Nog geen snapshots beschikbaar.</p>
@@ -319,7 +345,7 @@ function NosTrendChart({ allSnapshots, store }) {
   );
 }
 
-// bumFilter: null = all BUMs (totaal), 'PASCAL' = only PASCAL, etc.
+// bumFilter: null = all (totaal), 'BUILDING_MATERIALS' = only Building Materials, etc.
 export default function StockRiskShared({ bumFilter }) {
   var _s = useState;
   var _d = _s([]), data = _d[0], setData = _d[1];
@@ -349,8 +375,10 @@ export default function StockRiskShared({ bumFilter }) {
     setLoading(true);
     var all = [], from = 0, step = 1000;
     while (true) {
-      var q = supabase.from('buying_data').select('*').order('item_number').range(from, from + step - 1);
-      if (bumFilter) q = q.eq('bum', bumFilter);
+      // Gebruik enriched view → effective_dept_code/_name/_bum_group
+      var q = supabase.from('buying_data_enriched').select('*').order('item_number').range(from, from + step - 1);
+      // bumFilter is een afdelings-code (BUILDING_MATERIALS etc); vergelijk met effective_bum_group
+      if (bumFilter) q = q.eq('effective_bum_group', bumFilter);
       var r = await q;
       if (!r.data || !r.data.length) break;
       all = all.concat(r.data);
@@ -367,9 +395,12 @@ export default function StockRiskShared({ bumFilter }) {
 
   async function loadNosSnapshots() {
     var all = [], from = 0, step = 1000;
+    // nos_coverage_snapshots heeft nog 'bum' kolom met persoonsnamen.
+    // Vertaal afdelings-code naar persoonsnaam voor de filter.
+    var personFilter = bumFilter ? GROUP_TO_PERSON[bumFilter] : null;
     while (true) {
       var q = supabase.from('nos_coverage_snapshots').select('*').order('snapshot_date', { ascending: true }).range(from, from + step - 1);
-      if (bumFilter) q = q.eq('bum', bumFilter);
+      if (personFilter) q = q.eq('bum', personFilter);
       var r = await q;
       if (r.error) { console.error('NOS snapshots load error:', r.error.message); break; }
       if (!r.data || !r.data.length) break;
@@ -435,8 +466,10 @@ export default function StockRiskShared({ bumFilter }) {
       if (!map[key]) {
         map[key] = {
           item: r.item_number, desc: r.item_description,
-          dept_code: r.dept_code, dept_name: r.dept_name,
-          bum: r.bum || '', vendor: r.vendor_name || 'ONBEKEND',
+          dept_code: r.effective_dept_code || r.dept_code,
+          dept_name: r.effective_dept_name || r.dept_name,
+          bum: r.effective_bum_group || '',
+          vendor: r.vendor_name || 'ONBEKEND',
           nos: r.nos === 'N',
           // Lead time = transit-tijd van leverancier naar magazijn.
           // Compass labelt dit als 'Min Lead Time' (Eagle Vendor Code 3).
@@ -604,13 +637,14 @@ export default function StockRiskShared({ bumFilter }) {
   function toggleSort(col) { if (sortCol === col) setSortDir(function(d) { return d === 'desc' ? 'asc' : 'desc'; }); else { setSortCol(col); setSortDir(col === 'months_cover' || col === 'stockout_months' ? 'asc' : 'desc'); } }
   var arrow = function(col) { return sortCol === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''; };
 
-  var title = bumFilter ? 'Stock Risk Alert — ' + bumFilter : 'Stock Risk Alert — Totaaloverzicht';
+  var displayName = bumFilter ? (GROUP_LABEL[bumFilter] || bumFilter) : '';
+  var title = bumFilter ? 'Stock Risk Alert — ' + displayName : 'Stock Risk Alert — Totaaloverzicht';
   var subtitle = bumFilter
-    ? 'Items at risk voor ' + bumFilter + ' — welke producten gaan op raken vóór nieuwe levering?'
-    : 'Alle BUMs — welke producten gaan op raken vóór nieuwe levering?';
+    ? 'Items at risk voor ' + displayName + ' — welke producten gaan op raken vóór nieuwe levering?'
+    : 'Alle afdelingen — welke producten gaan op raken vóór nieuwe levering?';
   var updateLabel = lastUpdate ? (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return 'Data t/m ' + parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
 
-  if (loading) return <LoadingLogo text={'Stock Risk laden' + (bumFilter ? ' (' + bumFilter + ')' : '') + '...'} />;
+  if (loading) return <LoadingLogo text={'Stock Risk laden' + (bumFilter ? ' (' + displayName + ')' : '') + '...'} />;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen data beschikbaar.</p></div>;
 
   return (
@@ -740,8 +774,8 @@ export default function StockRiskShared({ bumFilter }) {
           })}
         </div>
         <ExcelExportButton
-          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_stock_risk_' + (bumFilter || 'alle') + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Totaal'); })()}
-          reportTitle={'Stock Risk Alert — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'Totaal')}
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_stock_risk_' + (bumFilter ? displayName.toLowerCase().replace(/[ &]/g, '_') : 'alle') + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Totaal'); })()}
+          reportTitle={'Stock Risk Alert — ' + (bumFilter ? displayName + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'Totaal')}
           sheets={function() {
             return [
               {
@@ -750,7 +784,7 @@ export default function StockRiskShared({ bumFilter }) {
                   return {
                     'Dept': d.code,
                     'Departement': d.name,
-                    'BUM': d.bum || '',
+                    'Afdeling': GROUP_LABEL[d.bum] || d.bum || '',
                     'Totaal items': d.total,
                     'Kritiek': d.critical,
                     'Urgent': d.urgent,
@@ -768,7 +802,7 @@ export default function StockRiskShared({ bumFilter }) {
                     'Dept': m.dept_code,
                     'Item': m.item,
                     'Omschrijving': m.desc,
-                    'BUM': m.bum,
+                    'Afdeling': GROUP_LABEL[m.bum] || m.bum,
                     'Vendor': m.vendor,
                     'NOS': m.nos ? 'Ja' : 'Nee',
                     'Status': m.risk === 'critical' ? 'Kritiek' : m.risk === 'urgent' ? 'Urgent' : m.risk === 'watch' ? 'Aandacht' : 'OK',

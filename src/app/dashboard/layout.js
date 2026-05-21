@@ -239,11 +239,11 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
     { href: '/dashboard/inventory/stockrisk', label: 'Stock Risk Alert', children: [
       { href: '/dashboard/inventory/stockrisk', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/stockrisk/pascal', label: 'PASCAL' },
-      { href: '/dashboard/inventory/stockrisk/henk', label: 'HENK' },
-      { href: '/dashboard/inventory/stockrisk/john', label: 'JOHN' },
-      { href: '/dashboard/inventory/stockrisk/daniel', label: 'DANIEL' },
-      { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
+      { href: '/dashboard/inventory/stockrisk/building-materials', label: 'Building Materials' },
+      { href: '/dashboard/inventory/stockrisk/sanitair-keukens', label: 'Sanitair & Keukens' },
+      { href: '/dashboard/inventory/stockrisk/hardware', label: 'Hardware' },
+      { href: '/dashboard/inventory/stockrisk/living', label: 'Living' },
+      { href: '/dashboard/inventory/stockrisk/appliances-houseware', label: 'Appliances & Houseware' },
     ]},
     { href: '/dashboard/inventory/negatieve-voorraad', label: 'Negatieve Voorraad' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
