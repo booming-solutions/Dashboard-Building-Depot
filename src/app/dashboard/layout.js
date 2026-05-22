@@ -1,19 +1,16 @@
 /* ============================================================
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (overschrijft de bestaande layout.js)
+
+   WIJZIGINGEN T.O.V. V27.07:
+   - Admin menu uitgebreid: "Dyflexis Import" toegevoegd
+   - Versie aangepast naar V27.08
 
    WIJZIGINGEN T.O.V. V27.06:
    - BUM-rol opgeheven, BUMs zijn nu 'manager'
    - isBum check vervangen door isManager
    - Urenplanning zichtbaar voor admin + manager
    - Versie aangepast naar V27.07
-
-   WIJZIGINGEN T.O.V. V27.05:
-   - Urenplanning toegevoegd aan HR-menu (zichtbaar voor BUMs + admin)
-   - Urenplanning Overzicht toegevoegd aan HR-menu (admin only)
-   - isBum check toegevoegd voor role='bum' users
-   - Versie aangepast naar V27.06
    ============================================================ */
 'use client';
 
@@ -24,7 +21,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.07';
+const APP_VERSION = 'V27.08';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -283,6 +280,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
+    { href: '/dashboard/admin/dyflexis-import', label: 'Dyflexis Import', icon: '📅' },
     { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
 
