@@ -11,7 +11,7 @@
    - Verwijdert oude rijen voor zelfde BU+week, insert nieuwe
    ============================================================ */
 import { createClient } from '@supabase/supabase-js';
-import { PDFParse } from 'pdf-parse';
+import { extractText, getDocumentProxy } from 'unpdf';
 
 const WORKER_SECRET = 'bs-compass-2026-secret';
 
@@ -69,39 +69,73 @@ function getISOWeek(date) {
   };
 }
 
-// PDF text parser
-function parseDyflexisPDF(text) {
-  // Naam-regex: "Achternaam, Voornaam X uren" of "Open dienst X uren" (excl "Totaal")
-  const nameRe = /^((?:Open dienst)|(?:[A-Z][^\n]*?[a-zA-Z]))\s{2,}(\d+(?:\.\d+)?)\s*uren\s*$/gm;
-  // Day-regex: "dd-mm-jjjj HH:MM HH:MM <afdeling> [opmerking]"
-  const dayRe = /(\d{2}-\d{2}-\d{4})\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})\s+(\S[^\n]*)/g;
+// Helper: vind naam direct voor een "X uren " marker
+function findNameBefore(text, idx) {
+  const windowStart = Math.max(0, idx - 200);
+  const windowText = text.substring(windowStart, idx);
 
-  // Pak alle naam-matches (excl. "Totaal")
-  const nameMatches = [];
-  let m;
-  while ((m = nameRe.exec(text)) !== null) {
-    const name = m[1].trim();
-    if (name === 'Totaal') continue;
-    nameMatches.push({ name, stated: parseFloat(m[2]), start: m.index, end: m.index + m[0].length });
+  // Check Open dienst eerst
+  const openIdx = windowText.lastIndexOf('Open dienst');
+  if (openIdx >= 0) {
+    const after = windowText.substring(openIdx + 'Open dienst'.length);
+    if (/^\s*$/.test(after)) return 'Open dienst';
   }
-  nameMatches.sort((a, b) => a.start - b.start);
+
+  // Match "Achternaam, Voornaam" (eventueel met tussenvoegsels via meerdere komma's)
+  const nameRe = /([A-Z][a-zA-Z\-]*(?:\s*[a-z]+)?,(?:\s*[A-Z][a-zA-Z\-]*\,?)*(?:\s+[A-Z][a-zA-Z\-]+)+)\s*$/;
+  const match = windowText.match(nameRe);
+  if (match) return match[1].trim();
+
+  // Fallback - simpel patroon
+  const simpleRe = /([A-Z][a-zA-Z][^\d\n]*?,\s*[^,\n\d]+?[a-zA-Z])\s*$/;
+  const m2 = windowText.match(simpleRe);
+  if (m2) {
+    let name = m2[1].trim();
+    const headerStrip = 'Datum Start Eind Afdeling Opmerking';
+    const hi = name.lastIndexOf(headerStrip);
+    if (hi >= 0) name = name.substring(hi + headerStrip.length).trim();
+    return name;
+  }
+  return null;
+}
+
+// PDF text parser (unpdf single-line versie)
+function parseDyflexisPDF(text) {
+  // Vind alle "X uren " markers
+  const urenRe = /(\d+(?:\.\d+)?)\s+uren\s+/g;
+  const markers = [];
+  let m;
+  while ((m = urenRe.exec(text)) !== null) {
+    markers.push({
+      stated: parseFloat(m[1]),
+      statedStart: m.index,
+      statedEnd: m.index + m[0].length,
+    });
+  }
 
   const records = [];
-  for (let i = 0; i < nameMatches.length; i++) {
-    const { name, end } = nameMatches[i];
-    const nextStart = i + 1 < nameMatches.length ? nameMatches[i + 1].start : text.length;
-    const block = text.substring(end, nextStart);
-    const isOpen = name === 'Open dienst';
+  for (let i = 0; i < markers.length; i++) {
+    const naam = findNameBefore(text, markers[i].statedStart);
+    if (!naam || naam === 'Totaal') continue;
+    const isOpen = naam === 'Open dienst';
 
-    // Reset regex state
-    dayRe.lastIndex = 0;
+    // Block met day-records
+    const blockStart = markers[i].statedEnd;
+    const blockEnd = i + 1 < markers.length ? markers[i + 1].statedStart : text.length;
+    const block = text.substring(blockStart, blockEnd);
+
+    // Day records: dd-mm-jjjj HH:MM HH:MM <afdeling-en-opmerking-tot-volgende-datum-of-einde>
+    const dayRe = /(\d{2}-\d{2}-\d{4})\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})\s+(.+?)(?=\s+\d{2}-\d{2}-\d{4}|\s*$)/g;
     let dm;
     while ((dm = dayRe.exec(block)) !== null) {
       const [, datum, startTime, endTime, restRaw] = dm;
-      // Split rest op >=2 spaties: afdeling + opmerking
-      const restSplit = restRaw.trim().split(/\s{2,}/);
-      const afdeling = restSplit[0].trim();
-      const opmerking = restSplit.slice(1).join(' ').trim();
+
+      // Parse rest: afdeling = "Building Depot > ..." of "Multimart ..." of "Repair Center ..."
+      // Opmerking = rest die niet bij afdeling-keten hoort
+      // Heuristiek: afdeling stopt bij de eerste woordovergang naar opmerking-tekst (geen ">")
+      // Voor onze mapping is alleen het BEGIN belangrijk (voor mapAfdeling), opmerking kan rest zijn
+      let afdeling = restRaw.trim();
+      let opmerking = '';
 
       const [h1, mn1] = startTime.split(':').map(Number);
       const [h2, mn2] = endTime.split(':').map(Number);
@@ -109,12 +143,9 @@ function parseDyflexisPDF(text) {
       if (bruto <= 0) continue;
       const netto = nettoFromBruto(bruto);
 
-      // Parse datum dd-mm-jjjj
       const [dd, mm, yyyy] = datum.split('-').map(Number);
       const dateObj = new Date(Date.UTC(yyyy, mm - 1, dd));
-      // ISO week
       const isoW = getISOWeek(dateObj);
-      // Day of week: 1 = ma, 7 = zo
       let dow = dateObj.getUTCDay();
       dow = dow === 0 ? 7 : dow;
 
@@ -129,7 +160,7 @@ function parseDyflexisPDF(text) {
         period_week: isoW.week,
         day_of_week: dow,
         day_date: `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`,
-        employee_name: name,
+        employee_name: naam,
         is_open: isOpen,
         contract_type: null,
         contract_hours: null,
@@ -167,11 +198,11 @@ export async function POST(request) {
     // Decode base64
     const buffer = Buffer.from(base64, 'base64');
 
-    // Parse PDF (pdf-parse v2 syntax)
-    const parser = new PDFParse({ data: buffer });
-    const pdfResult = await parser.getText();
-    const text = pdfResult.text;
-    console.log(`Dyflexis: PDF length=${text.length} chars`);
+    // Parse PDF met unpdf (serverless-vriendelijk)
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const { text: pdfText, totalPages } = await extractText(pdf, { mergePages: true });
+    const text = pdfText;
+    console.log(`Dyflexis: PDF ${totalPages} pages, ${text.length} chars`);
 
     // Parse records
     const records = parseDyflexisPDF(text);
