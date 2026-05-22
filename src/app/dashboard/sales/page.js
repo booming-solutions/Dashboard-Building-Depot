@@ -336,14 +336,33 @@ export default function SalesDashboard(){
         </div>
         <div className="flex items-center gap-3">
           {isBonaire?(
-            <button
-              onClick={()=>setBonCurr(bonCurr==='USD'?'XCG':'USD')}
-              title="Klik om te wisselen tussen USD en XCG"
-              className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold flex items-center gap-2 hover:bg-[#E84E1B]/10 transition-colors cursor-pointer"
-            >
-              <span>{currLabel}</span>
-              <span className="text-[10px] opacity-60">⇄</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-[#6b5240] font-semibold">Bonaire</span>
+              <div
+                onClick={()=>setBonCurr(bonCurr==='USD'?'XCG':'USD')}
+                role="button"
+                tabIndex={0}
+                title="Klik om te wisselen tussen USD en XCG"
+                className="relative inline-flex items-center bg-[#faf5f0] border-2 border-[#E84E1B] rounded-full cursor-pointer select-none p-[2px] hover:bg-[#E84E1B]/10 transition-colors"
+                style={{width:'120px',height:'32px'}}
+              >
+                {/* Slider achtergrond */}
+                <div
+                  className="absolute bg-[#E84E1B] rounded-full transition-all duration-200 ease-out"
+                  style={{
+                    width:'56px',
+                    height:'26px',
+                    top:'2px',
+                    left:bonCurr==='USD'?'2px':'60px'
+                  }}
+                />
+                {/* Labels */}
+                <div className="relative flex w-full text-[11px] font-bold">
+                  <div className="flex-1 text-center" style={{color:bonCurr==='USD'?'#fff':'#E84E1B',transition:'color 0.2s'}}>US$</div>
+                  <div className="flex-1 text-center" style={{color:bonCurr==='XCG'?'#fff':'#E84E1B',transition:'color 0.2s'}}>XCG</div>
+                </div>
+              </div>
+            </div>
           ):(
             <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
           )}
