@@ -1,12 +1,19 @@
 /* ============================================================
    BESTAND: page.js (admin dept-config)
    KOPIEER NAAR: src/app/dashboard/admin/dept-config/page.js
-   (NIEUWE map maken: dept-config)
+   VERSIE: v3.30 — bewerk- en verwijder-functie toegevoegd
 
    Beheer pagina voor:
    - Afdelingen (bum_groups)
    - Dept → Afdeling mapping (time-aware via valid_from/valid_until)
    - Dept merges (bv. 31 → 30)
+
+   WIJZIGINGEN T.O.V. v26.06:
+   - Bewerk-knop per actieve mapping → inline bewerken van afdeling en notitie
+   - Verwijder-knop per actieve mapping → herstelt vorige situatie (heropen
+     meest recente afgesloten rij voor zelfde dept)
+   - Idem voor merges
+   - Historische rijen blijven onaantastbaar
 
    Alleen voor admins.
    ============================================================ */
@@ -212,6 +219,11 @@ function MappingsTab({ supabase }) {
   const closeOldOn = dec31LastYear();
   const [saving, setSaving] = useState(false);
   const [filterText, setFilterText] = useState('');
+  // Inline edit / delete state
+  const [editingMapId, setEditingMapId] = useState(null);
+  const [editGroup, setEditGroup] = useState('');
+  const [editNote, setEditNote] = useState('');
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -300,6 +312,64 @@ function MappingsTab({ supabase }) {
       setChangeToGroup('');
       setChangeNote('');
     }
+    await load();
+  }
+
+  // Start inline bewerken van een actieve mapping
+  function startEdit(m) {
+    setEditingMapId(m.id);
+    setEditGroup(m.bum_group_code);
+    setEditNote(m.note || '');
+  }
+  function cancelEdit() {
+    setEditingMapId(null);
+    setEditGroup('');
+    setEditNote('');
+  }
+  async function saveEdit(m) {
+    if (!editGroup) { alert('Kies een afdeling'); return; }
+    setSaving(true);
+    const { error } = await supabase
+      .from('dept_bum_mapping')
+      .update({ bum_group_code: editGroup, note: editNote || null })
+      .eq('id', m.id);
+    setSaving(false);
+    if (error) { alert('Fout bij opslaan: ' + error.message); return; }
+    cancelEdit();
+    await load();
+  }
+
+  // Verwijder een actieve mapping en heropen de meest recente afgesloten rij voor zelfde dept.
+  // Resultaat: terug naar de situatie vóór deze wijziging.
+  async function deleteMapping(m) {
+    const groupLabel = groups.find(g => g.code === m.bum_group_code)?.display_name || m.bum_group_code;
+    // Zoek meest recente afgesloten rij voor dezelfde dept (valid_until vlak voor m.valid_from)
+    const previous = mappings
+      .filter(x => x.dept_code === m.dept_code && x.id !== m.id && x.valid_until !== null)
+      .sort((a, b) => (b.valid_until || '').localeCompare(a.valid_until || ''))[0];
+
+    const previousLabel = previous
+      ? (groups.find(g => g.code === previous.bum_group_code)?.display_name || previous.bum_group_code)
+      : null;
+
+    const msg = previous
+      ? `Verwijder wijziging dept ${m.dept_code} naar ${groupLabel} per ${fmtDate(m.valid_from)}?\n\nDe vorige mapping (${previousLabel}) wordt heropend en loopt door tot heden.`
+      : `Verwijder wijziging dept ${m.dept_code} naar ${groupLabel} per ${fmtDate(m.valid_from)}?\n\nLet op: er is geen vorige mapping om te heropenen. Deze dept heeft daarna géén mapping meer.`;
+    if (!confirm(msg)) return;
+
+    setDeletingId(m.id);
+    // 1. DELETE de actieve rij
+    const { error: e1 } = await supabase.from('dept_bum_mapping').delete().eq('id', m.id);
+    if (e1) { alert('Fout bij verwijderen: ' + e1.message); setDeletingId(null); return; }
+    // 2. Heropen vorige rij (valid_until = NULL)
+    if (previous) {
+      const { error: e2 } = await supabase
+        .from('dept_bum_mapping')
+        .update({ valid_until: null })
+        .eq('id', previous.id);
+      if (e2) { alert('Verwijderd maar vorige rij niet heropend: ' + e2.message); setDeletingId(null); await load(); return; }
+    }
+    setDeletingId(null);
     await load();
   }
 
@@ -411,18 +481,69 @@ function MappingsTab({ supabase }) {
               <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Afdeling</th>
               <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Sinds</th>
               <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Notitie</th>
+              <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4] w-[160px]">Acties</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map(m => (
-              <tr key={m.id} className="hover:bg-[#faf5f0]">
-                <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-mono font-semibold">{m.dept_code}</td>
-                <td className="p-2 text-[12px] border-b border-[#e5ddd4] text-[#6b5240]">{deptNames[m.dept_code] || '—'}</td>
-                <td className="p-2 text-[12px] border-b border-[#e5ddd4]">{groups.find(g => g.code === m.bum_group_code)?.display_name || m.bum_group_code}</td>
-                <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240]">{fmtDate(m.valid_from)}</td>
-                <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240] italic">{m.note || '—'}</td>
-              </tr>
-            ))}
+            {filtered.map(m => {
+              const isEditing = editingMapId === m.id;
+              const isDeleting = deletingId === m.id;
+              return (
+                <tr key={m.id} className="hover:bg-[#faf5f0]">
+                  <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-mono font-semibold">{m.dept_code}</td>
+                  <td className="p-2 text-[12px] border-b border-[#e5ddd4] text-[#6b5240]">{deptNames[m.dept_code] || '—'}</td>
+                  <td className="p-2 text-[12px] border-b border-[#e5ddd4]">
+                    {isEditing ? (
+                      <select
+                        value={editGroup}
+                        onChange={e => setEditGroup(e.target.value)}
+                        className="w-full border border-[#e5ddd4] rounded px-2 py-1 text-[12px]"
+                      >
+                        {groups.map(g => <option key={g.code} value={g.code}>{g.display_name}</option>)}
+                      </select>
+                    ) : (
+                      groups.find(g => g.code === m.bum_group_code)?.display_name || m.bum_group_code
+                    )}
+                  </td>
+                  <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240]">{fmtDate(m.valid_from)}</td>
+                  <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240] italic">
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editNote}
+                        onChange={e => setEditNote(e.target.value)}
+                        placeholder="Notitie..."
+                        className="w-full border border-[#e5ddd4] rounded px-2 py-1 text-[11px] not-italic"
+                      />
+                    ) : (
+                      m.note || '—'
+                    )}
+                  </td>
+                  <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-right">
+                    {isEditing ? (
+                      <div className="flex gap-1 justify-end">
+                        <button onClick={cancelEdit} className="px-2 py-1 rounded bg-[#faf7f4] text-[#6b5240] text-[11px]">Annuleer</button>
+                        <button onClick={() => saveEdit(m)} disabled={saving} className="px-2 py-1 rounded bg-[#1B3A5C] text-white text-[11px]">{saving ? '...' : 'Opslaan'}</button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={() => startEdit(m)}
+                          className="text-[#1B3A5C] hover:underline text-[11px] font-medium"
+                          title="Bewerk afdeling/notitie"
+                        >Bewerk</button>
+                        <button
+                          onClick={() => deleteMapping(m)}
+                          disabled={isDeleting}
+                          className="text-[#dc2626] hover:underline text-[11px] font-medium"
+                          title="Verwijder en herstel vorige situatie"
+                        >{isDeleting ? '...' : 'Verwijder'}</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -477,6 +598,12 @@ function MergesTab({ supabase }) {
   // Merges gaan altijd in per 1 jan huidig jaar (management reporting ligt vast)
   const mergeFromDate = jan1ThisYear();
   const closeOldOn = dec31LastYear();
+  // Edit / delete state
+  const [editingMergeId, setEditingMergeId] = useState(null);
+  const [editDisplayCode, setEditDisplayCode] = useState('');
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editMergeNote, setEditMergeNote] = useState('');
+  const [deletingMergeId, setDeletingMergeId] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -553,6 +680,57 @@ function MergesTab({ supabase }) {
       alert(`Merge doorgevoerd voor ${origList.length} dept(s).`);
       setOrigCodes(''); setDisplayCode(''); setDisplayName(''); setMergeNote('');
     }
+    await load();
+  }
+
+  function startEditMerge(m) {
+    setEditingMergeId(m.id);
+    setEditDisplayCode(m.display_code);
+    setEditDisplayName(m.display_name || '');
+    setEditMergeNote(m.note || '');
+  }
+  function cancelEditMerge() {
+    setEditingMergeId(null);
+  }
+  async function saveEditMerge(m) {
+    if (!editDisplayCode.trim()) { alert('Display code is verplicht'); return; }
+    setSaving(true);
+    const { error } = await supabase
+      .from('dept_merge_mapping')
+      .update({
+        display_code: editDisplayCode.trim(),
+        display_name: editDisplayName.trim() || null,
+        note: editMergeNote || null,
+      })
+      .eq('id', m.id);
+    setSaving(false);
+    if (error) { alert('Fout bij opslaan: ' + error.message); return; }
+    cancelEditMerge();
+    await load();
+  }
+
+  // Verwijder een actieve merge en heropen de meest recente afgesloten rij voor zelfde original_code.
+  async function deleteMerge(m) {
+    const previous = merges
+      .filter(x => x.original_code === m.original_code && x.id !== m.id && x.valid_until !== null)
+      .sort((a, b) => (b.valid_until || '').localeCompare(a.valid_until || ''))[0];
+
+    const msg = previous
+      ? `Verwijder samenvoeging dept ${m.original_code} → ${m.display_code} per ${fmtDate(m.valid_from)}?\n\nVorige samenvoeging (${m.original_code} → ${previous.display_code}) wordt heropend.`
+      : `Verwijder samenvoeging dept ${m.original_code} → ${m.display_code} per ${fmtDate(m.valid_from)}?\n\nLet op: er is geen vorige merge. Dept ${m.original_code} wordt daarna niet meer samengevoegd.`;
+    if (!confirm(msg)) return;
+
+    setDeletingMergeId(m.id);
+    const { error: e1 } = await supabase.from('dept_merge_mapping').delete().eq('id', m.id);
+    if (e1) { alert('Fout bij verwijderen: ' + e1.message); setDeletingMergeId(null); return; }
+    if (previous) {
+      const { error: e2 } = await supabase
+        .from('dept_merge_mapping')
+        .update({ valid_until: null })
+        .eq('id', previous.id);
+      if (e2) { alert('Verwijderd maar vorige niet heropend: ' + e2.message); setDeletingMergeId(null); await load(); return; }
+    }
+    setDeletingMergeId(null);
     await load();
   }
 
@@ -650,18 +828,78 @@ function MergesTab({ supabase }) {
                 <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Display naam</th>
                 <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Sinds</th>
                 <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Notitie</th>
+                <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4] w-[160px]">Acties</th>
               </tr>
             </thead>
             <tbody>
-              {activeMerges.map(m => (
-                <tr key={m.id}>
-                  <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-mono font-semibold">{m.original_code} <span className="text-[10px] text-[#a08a74] font-normal">({deptNames[m.original_code] || '—'})</span></td>
-                  <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-mono font-semibold">→ {m.display_code} <span className="text-[10px] text-[#a08a74] font-normal">({deptNames[m.display_code] || '—'})</span></td>
-                  <td className="p-2 text-[12px] border-b border-[#e5ddd4]">{m.display_name || <span className="italic text-[#a08a74]">auto</span>}</td>
-                  <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240]">{fmtDate(m.valid_from)}</td>
-                  <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240] italic">{m.note || '—'}</td>
-                </tr>
-              ))}
+              {activeMerges.map(m => {
+                const isEditing = editingMergeId === m.id;
+                const isDeleting = deletingMergeId === m.id;
+                return (
+                  <tr key={m.id}>
+                    <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-mono font-semibold">{m.original_code} <span className="text-[10px] text-[#a08a74] font-normal">({deptNames[m.original_code] || '—'})</span></td>
+                    <td className="p-2 text-[12px] border-b border-[#e5ddd4] font-mono font-semibold">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editDisplayCode}
+                          onChange={e => setEditDisplayCode(e.target.value)}
+                          className="w-20 border border-[#e5ddd4] rounded px-2 py-1 text-[12px] font-mono"
+                        />
+                      ) : (
+                        <>→ {m.display_code} <span className="text-[10px] text-[#a08a74] font-normal">({deptNames[m.display_code] || '—'})</span></>
+                      )}
+                    </td>
+                    <td className="p-2 text-[12px] border-b border-[#e5ddd4]">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editDisplayName}
+                          onChange={e => setEditDisplayName(e.target.value)}
+                          placeholder="(auto)"
+                          className="w-full border border-[#e5ddd4] rounded px-2 py-1 text-[12px]"
+                        />
+                      ) : (
+                        m.display_name || <span className="italic text-[#a08a74]">auto</span>
+                      )}
+                    </td>
+                    <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240]">{fmtDate(m.valid_from)}</td>
+                    <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-[#6b5240] italic">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editMergeNote}
+                          onChange={e => setEditMergeNote(e.target.value)}
+                          placeholder="Notitie..."
+                          className="w-full border border-[#e5ddd4] rounded px-2 py-1 text-[11px] not-italic"
+                        />
+                      ) : (
+                        m.note || '—'
+                      )}
+                    </td>
+                    <td className="p-2 text-[11px] border-b border-[#e5ddd4] text-right">
+                      {isEditing ? (
+                        <div className="flex gap-1 justify-end">
+                          <button onClick={cancelEditMerge} className="px-2 py-1 rounded bg-[#faf7f4] text-[#6b5240] text-[11px]">Annuleer</button>
+                          <button onClick={() => saveEditMerge(m)} disabled={saving} className="px-2 py-1 rounded bg-[#1B3A5C] text-white text-[11px]">{saving ? '...' : 'Opslaan'}</button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => startEditMerge(m)}
+                            className="text-[#1B3A5C] hover:underline text-[11px] font-medium"
+                          >Bewerk</button>
+                          <button
+                            onClick={() => deleteMerge(m)}
+                            disabled={isDeleting}
+                            className="text-[#dc2626] hover:underline text-[11px] font-medium"
+                          >{isDeleting ? '...' : 'Verwijder'}</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
