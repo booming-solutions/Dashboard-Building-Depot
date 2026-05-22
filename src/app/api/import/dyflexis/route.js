@@ -13,11 +13,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { PDFParse } from 'pdf-parse';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
 const WORKER_SECRET = 'bs-compass-2026-secret';
 
 export const maxDuration = 60;
@@ -152,6 +147,12 @@ function parseDyflexisPDF(text) {
 
 export async function POST(request) {
   try {
+    // Lazy init - voorkomt build-time errors
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+
     const body = await request.json();
     const { filename, data: base64, sender, secret } = body;
 
