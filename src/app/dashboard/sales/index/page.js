@@ -1,7 +1,16 @@
 /* ============================================================
-   BESTAND: page_index.js
+   BESTAND: page.js (Sales Index — Index MTD/YTD rapport)
    KOPIEER NAAR: src/app/dashboard/sales/index/page.js
-   (hernoem naar page.js bij het plaatsen)
+   VERSIE: v3.29 — gemigreerd naar enriched view + afdelingen
+
+   WIJZIGINGEN T.O.V. vorige versie:
+   - sales_monthly → sales_monthly_enriched
+   - r.bum (Pascal/Henk/etc) → r.effective_bum_group (afdelings-code)
+   - r.dept_code → r.effective_dept_code (voor merges 31+32→30)
+   - r.dept_name → r.effective_dept_name
+   - BU_MAP / BU_ORDER hardcoded weg → GROUP_LABEL / GROUP_ORDER
+   - UI toont afdelingsnamen (Building Materials etc.) ipv codes
+   - Correcties: vertalen on-the-fly van persoonsnamen
    ============================================================ */
 'use client';
 
@@ -13,11 +22,31 @@ const MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','D
 const fmt = n => (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtP = n => (n || 0).toFixed(1) + '%';
 const SN = { '1': 'Curaçao', 'B': 'Bonaire' };
-const BU_MAP = {
-  'Pascal': 'BU-BUILDING MATERIALS', 'Henk': 'BU-FLOORING-SANITARY-KITCHEN',
-  'John': 'BU-HARDWARE', 'Daniel': 'BU-HOUSEHOLD-APPLIANCES', 'Gijs': 'BU-FURNITURE-DECORATION',
+
+// Afdelings-mapping (verving BU_MAP en BU_ORDER)
+const GROUP_LABEL = {
+  BUILDING_MATERIALS:   'Building Materials',
+  SANITAIR_KEUKENS:     'Sanitair & Keukens',
+  HARDWARE:             'Hardware',
+  LIVING:               'Living',
+  APPLIANCES_HOUSEWARE: 'Appliances & Houseware',
 };
-const BU_ORDER = ['Pascal', 'Henk', 'John', 'Daniel', 'Gijs'];
+const GROUP_ORDER = ['BUILDING_MATERIALS', 'SANITAIR_KEUKENS', 'HARDWARE', 'LIVING', 'APPLIANCES_HOUSEWARE'];
+
+// Vertaal-map voor legacy correcties (persoonsnamen → afdelings-code)
+const PERSON_TO_GROUP = {
+  PASCAL: 'BUILDING_MATERIALS', Pascal: 'BUILDING_MATERIALS',
+  HENK:   'SANITAIR_KEUKENS',   Henk:   'SANITAIR_KEUKENS',
+  JOHN:   'HARDWARE',           John:   'HARDWARE',
+  GIJS:   'LIVING',             Gijs:   'LIVING',
+  DANIEL: 'APPLIANCES_HOUSEWARE', Daniel: 'APPLIANCES_HOUSEWARE',
+};
+function corrBumToGroup(bumVal) {
+  // Als bum al een afdelings-code is, gebruik die. Anders vertaal persoonsnaam.
+  if (!bumVal) return 'OVERIG';
+  if (GROUP_LABEL[bumVal]) return bumVal;
+  return PERSON_TO_GROUP[bumVal] || 'OVERIG';
+}
 
 function Pill({ label, active, onClick }) {
   return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
@@ -148,7 +177,8 @@ export default function IndexDashboard() {
 
   async function loadData() {
     var allSales = [], allBudget = [], from = 0, step = 1000;
-    while (true) { var r = await supabase.from('sales_monthly').select('*').order('year').order('month').range(from, from + step - 1); if (!r.data || !r.data.length) break; allSales = allSales.concat(r.data); if (r.data.length < step) break; from += step; }
+    // Gebruik enriched view → effective_dept_code/_name/_bum_group erbij
+    while (true) { var r = await supabase.from('sales_monthly_enriched').select('*').order('year').order('month').range(from, from + step - 1); if (!r.data || !r.data.length) break; allSales = allSales.concat(r.data); if (r.data.length < step) break; from += step; }
     from = 0;
     while (true) { var r2 = await supabase.from('budget_data').select('*').range(from, from + step - 1); if (!r2.data || !r2.data.length) break; allBudget = allBudget.concat(r2.data); if (r2.data.length < step) break; from += step; }
     var cr = await supabase.from('corrections').select('*').order('created_at', { ascending: false });
@@ -182,12 +212,12 @@ export default function IndexDashboard() {
     var ytdMonths = [];
     for (var i = 1; i <= month; i++) ytdMonths.push(i);
 
-    // Sales aggregation
+    // Sales aggregation — gebruikt effective_dept_code voor merges (31+32→30)
     function aggS(rows) {
       var a = {};
       rows.forEach(function(r) {
-        var k = r.dept_code;
-        if (!a[k]) a[k] = { s: 0, dept_code: r.dept_code, dept_name: r.dept_name, bum: r.bum };
+        var k = r.effective_dept_code || r.dept_code;
+        if (!a[k]) a[k] = { s: 0, dept_code: k, dept_name: r.effective_dept_name || r.dept_name, bum: r.effective_bum_group };
         a[k].s += parseFloat(r.net_sales || 0);
       });
       return a;
@@ -196,17 +226,19 @@ export default function IndexDashboard() {
       var a = {};
       rows.forEach(function(b) {
         if (b.budget_type !== btype) return;
-        var k = b.dept_code;
+        var k = b.dept_code;  // budget_data: dept_code blijft origineel; merges worden via dept_merge_mapping toegepast
         if (!a[k]) a[k] = 0;
         a[k] += parseFloat(b.amount || 0);
       });
       return a;
     }
     function aggC(rows) {
+      // Correcties: bum kan persoonsnaam zijn (legacy) of afdelings-code.
+      // Vertaal naar afdelings-code via corrBumToGroup.
       var a = {};
       rows.forEach(function(c) {
         var k = c.dept_code;
-        if (!a[k]) a[k] = { s: 0, dept_code: c.dept_code, dept_name: c.dept_name, bum: c.bum };
+        if (!a[k]) a[k] = { s: 0, dept_code: c.dept_code, dept_name: c.dept_name, bum: corrBumToGroup(c.bum) };
         a[k].s += parseFloat(c.sales_correction || 0);
       });
       return a;
@@ -268,7 +300,7 @@ export default function IndexDashboard() {
       var bumName = mc.bum || mco.bum || ml.bum || yc.bum || '';
       var deptName = mc.dept_name || mco.dept_name || ml.dept_name || yc.dept_name || dc;
 
-      // Clean dept code: remove ".0" 
+      // Clean dept code: remove ".0"
       var cleanCode = String(dc).replace(/\.0$/, '');
 
       // Prorate MTD budget: if we have data through day X of the month, budget = full month × (X / days in month)
@@ -297,7 +329,7 @@ export default function IndexDashboard() {
         deptCode: cleanCode,
         deptName: deptName,
         bum: bumName,
-        buName: BU_MAP[bumName] || 'OTHER',
+        buName: GROUP_LABEL[bumName] || '',
         mtdActual: mtdA,
         mtdBudget: mtdBudProrated,
         mtdDiffBud: mtdA - mtdBudProrated,
@@ -325,7 +357,7 @@ export default function IndexDashboard() {
     });
 
     var buTotals = {};
-    BU_ORDER.forEach(function(bum) {
+    GROUP_ORDER.forEach(function(bum) {
       var d2 = departments.filter(function(d) { return d.bum === bum; });
       if (d2.length) buTotals[bum] = sumRows(d2);
     });
@@ -347,8 +379,8 @@ export default function IndexDashboard() {
 
   var buGroups = _m(function() {
     if (!reportData.departments) return [];
-    return BU_ORDER.map(function(bum) {
-      return { bum: bum, buName: BU_MAP[bum], departments: reportData.departments.filter(function(d) { return d.bum === bum; }), total: reportData.buTotals[bum] };
+    return GROUP_ORDER.map(function(bum) {
+      return { bum: bum, buName: GROUP_LABEL[bum] || '', departments: reportData.departments.filter(function(d) { return d.bum === bum; }), total: reportData.buTotals[bum] };
     }).filter(function(g) { return g.departments.length > 0; });
   }, [reportData]);
 
@@ -358,14 +390,14 @@ export default function IndexDashboard() {
     var seen = {};
     reportData.departments.forEach(function(d) { if (d.bum && !seen[d.bum]) { seen[d.bum] = true; all.push(d.bum); } });
     all.sort(function(a, b) {
-      var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b);
+      var ai = GROUP_ORDER.indexOf(a), bi = GROUP_ORDER.indexOf(b);
       if (ai !== -1 && bi !== -1) return ai - bi;
       if (ai !== -1) return -1; if (bi !== -1) return 1;
       return a.localeCompare(b);
     });
     return all.map(function(bum) {
       var deps = reportData.departments.filter(function(d) { return d.bum === bum; });
-      return { bum: bum, buName: BU_MAP[bum] || '', departments: deps, total: sumRows(deps) };
+      return { bum: bum, buName: GROUP_LABEL[bum] || '', departments: deps, total: sumRows(deps) };
     });
   }, [reportData.departments]);
 
@@ -418,19 +450,19 @@ export default function IndexDashboard() {
               {/* TOTAAL row */}
               {gt && <tr className="bg-[#faf7f4]"><td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">TOTAAL</td><RowCells d={gt} bold /></tr>}
               <tr><td colSpan={COLS} className="h-2 bg-[#faf7f4]"></td></tr>
-              {/* Per Manager rows - clickable to expand */}
+              {/* Per Afdeling rows - clickable to expand */}
               {bumGroups.map(function(g) {
                 var isOpen = expanded[g.bum] || false;
+                var displayLabel = GROUP_LABEL[g.bum] || g.bum;
                 var rows = [];
-                // Manager total row (clickable)
+                // Afdeling total row (clickable)
                 rows.push(
                   <tr key={'mgr-' + g.bum} className="bg-[#1B3A5C]/5 cursor-pointer hover:bg-[#1B3A5C]/10" onClick={function() { setExpanded(function(prev) { var n = Object.assign({}, prev); n[g.bum] = !n[g.bum]; return n; }); }}>
                     <td colSpan={2} className="p-2 border-b border-[#c5d4e6] border-r border-[#e5ddd4]">
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] select-none" style={{ display: 'inline-block', width: '16px', textAlign: 'center', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                        <span className="w-7 h-7 rounded-full bg-[#E84E1B] text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0">{g.bum.charAt(0)}</span>
-                        <span className="text-[13px] font-bold text-[#1B3A5C]">{g.bum}</span>
-                        {g.buName ? <span className="text-[10px] text-[#6b5240]">{'— ' + g.buName}</span> : null}
+                        <span className="w-7 h-7 rounded-full bg-[#E84E1B] text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0">{displayLabel.charAt(0)}</span>
+                        <span className="text-[13px] font-bold text-[#1B3A5C]">{displayLabel}</span>
                         <span className="ml-auto text-[10px] text-[#6b5240]">{g.departments.length + ' dept.'}</span>
                       </div>
                     </td>
@@ -451,7 +483,7 @@ export default function IndexDashboard() {
                   // Subtotal row
                   if (g.total) rows.push(
                     <tr key={'sub-' + g.bum} className="bg-[#f5f0ea]">
-                      <td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] italic text-[#6b5240] pl-10">{'TOTAAL ' + g.bum.toUpperCase()}</td>
+                      <td colSpan={2} className="p-1.5 text-[11px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4] italic text-[#6b5240] pl-10">{'TOTAAL ' + displayLabel.toUpperCase()}</td>
                       <RowCells d={g.total} bold />
                     </tr>
                   );
