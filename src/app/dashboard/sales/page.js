@@ -134,8 +134,15 @@ export default function SalesDashboard(){
   const currentYear=year,priorYear=year-1;
   const isYTD=months.includes('ytd'),isAll=months.includes('all');
   const selectedMonths=useMemo(()=>{if(isAll||isYTD)return null;return months.map(m=>parseInt(m)).filter(m=>!isNaN(m))},[months,isAll,isYTD]);
-  const isBonaire=store==='B';const curr=isBonaire?'US$':'XCG';
-  const conv=useCallback(v=>v,[isBonaire]);
+  const isBonaire=store==='B';
+  // Bonaire toont default USD; gebruiker kan switchen naar XCG (× 1.82) via toggle in header
+  const [bonCurr,setBonCurr]=useState('USD');
+  const XCG_USD=1.82;
+  // Reset naar USD als store van Bonaire af gaat
+  useEffect(()=>{if(!isBonaire&&bonCurr!=='USD')setBonCurr('USD')},[isBonaire,bonCurr]);
+  const curr=isBonaire?(bonCurr==='XCG'?'XCG':'US$'):'XCG';
+  // Conversie: alleen voor Bonaire + XCG modus. Anders 1:1.
+  const conv=useCallback(v=>(isBonaire&&bonCurr==='XCG')?v*XCG_USD:v,[isBonaire,bonCurr]);
   const fmtMC=useCallback(n=>fmtM(conv(n)),[conv]);
 
   const dayFrac=useMemo(()=>{
@@ -328,7 +335,18 @@ export default function SalesDashboard(){
           <p className="text-[13px] text-[#6b5240]">Building Depot{lastDate?` — data t/m ${lastDate.getDate()} ${MN[lastDate.getMonth()]} ${lastDate.getFullYear()}`:''}</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
+          {isBonaire?(
+            <button
+              onClick={()=>setBonCurr(bonCurr==='USD'?'XCG':'USD')}
+              title="Klik om te wisselen tussen USD en XCG"
+              className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold flex items-center gap-2 hover:bg-[#E84E1B]/10 transition-colors cursor-pointer"
+            >
+              <span>{currLabel}</span>
+              <span className="text-[10px] opacity-60">⇄</span>
+            </button>
+          ):(
+            <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{currLabel}</div>
+          )}
         </div>
       </div>
 
@@ -343,7 +361,7 @@ export default function SalesDashboard(){
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Afdeling</span><div className="flex gap-1"><Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>{bums.map(b=><Pill key={b} label={bumLabel[b]||b} active={bum===b} onClick={()=>setBum(b)}/>)}</div></div>
-        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Budget</span><div className="flex gap-1"><Pill label={`Target (${fmtBudgetPill(targetForFilter)})`} active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label={`CGF (${fmtBudgetPill(cgfForFilter)})`} active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
+        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Budget</span><div className="flex gap-1"><Pill label={`Target (${fmtBudgetPill(conv(targetForFilter))})`} active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label={`CGF (${fmtBudgetPill(conv(cgfForFilter))})`} active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Departement</span><select value={dept} onChange={e=>setDept(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg"><option value="all">Alle Departementen</option>{depts.map(d=>{const[c2,n]=d.split('|');return<option key={c2} value={c2}>{n}</option>})}</select></div>
       </div>
 
