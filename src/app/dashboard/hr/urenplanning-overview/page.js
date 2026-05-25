@@ -112,13 +112,7 @@ export default function UrenplanningOverviewPage() {
   }
 
   if (loading) {
-    return (
-      <div style={{minHeight:'60vh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, fontFamily:"'DM Sans',sans-serif"}}>
-        <img src="/logo.png" alt="Booming Solutions" style={{width:64, height:64, borderRadius:14, animation:'pulse 1.5s ease-in-out infinite'}} />
-        <div style={{fontSize:13, color:'#6b6960', fontWeight:500}}>Overzicht laden...</div>
-        <style>{`@keyframes pulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.95)}}`}</style>
-      </div>
-    );
+    // Render null tijdens loading om hooks-volgorde stabiel te houden — we doen alle hooks eerst, return wordt onderaan na alle hooks
   }
 
   // === DATA TRANSFORMATIES ===
@@ -264,6 +258,17 @@ export default function UrenplanningOverviewPage() {
 
   // === STYLES ===
   const sectionStyle = {background:'#fff', borderRadius:14, padding:20, marginBottom:14, boxShadow:'0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)'};
+
+  // Loading-state (na alle hooks om consistente hook-volgorde te bewaren)
+  if (loading) {
+    return (
+      <div style={{minHeight:'60vh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, fontFamily:"'DM Sans',sans-serif"}}>
+        <img src="/logo.png" alt="Booming Solutions" style={{width:64, height:64, borderRadius:14, animation:'pulse 1.5s ease-in-out infinite'}} />
+        <div style={{fontSize:13, color:'#6b6960', fontWeight:500}}>Overzicht laden...</div>
+        <style>{`@keyframes pulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.95)}}`}</style>
+      </div>
+    );
+  }
 
   return (
     <div style={{maxWidth:1500, margin:'0 auto', padding:'20px', fontFamily:"'DM Sans',sans-serif", color:'#1a1a18'}}>
