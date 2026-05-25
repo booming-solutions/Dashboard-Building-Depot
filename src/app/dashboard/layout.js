@@ -1,16 +1,19 @@
 /* ============================================================
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
-
-   WIJZIGINGEN T.O.V. V27.07:
-   - Admin menu uitgebreid: "Dyflexis Import" toegevoegd
-   - Versie aangepast naar V27.08
+   (overschrijft de bestaande layout.js)
 
    WIJZIGINGEN T.O.V. V27.06:
    - BUM-rol opgeheven, BUMs zijn nu 'manager'
    - isBum check vervangen door isManager
    - Urenplanning zichtbaar voor admin + manager
    - Versie aangepast naar V27.07
+
+   WIJZIGINGEN T.O.V. V27.05:
+   - Urenplanning toegevoegd aan HR-menu (zichtbaar voor BUMs + admin)
+   - Urenplanning Overzicht toegevoegd aan HR-menu (admin only)
+   - isBum check toegevoegd voor role='bum' users
+   - Versie aangepast naar V27.06
    ============================================================ */
 'use client';
 
@@ -21,7 +24,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.08';
+const APP_VERSION = 'V27.09';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -230,6 +233,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
+    '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
     '/dashboard/hr/urenplanning': 'hr_urenplanning',
@@ -247,20 +251,21 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
     { href: '/dashboard/inventory/stockrisk', label: 'Stock Risk Alert', children: [
       { href: '/dashboard/inventory/stockrisk', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/stockrisk/pascal', label: 'PASCAL' },
-      { href: '/dashboard/inventory/stockrisk/henk', label: 'HENK' },
-      { href: '/dashboard/inventory/stockrisk/john', label: 'JOHN' },
-      { href: '/dashboard/inventory/stockrisk/daniel', label: 'DANIEL' },
-      { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
+      { href: '/dashboard/inventory/stockrisk/appliances-houseware', label: 'Appliances & Houseware' },
+      { href: '/dashboard/inventory/stockrisk/building-materials', label: 'Building Materials' },
+      { href: '/dashboard/inventory/stockrisk/hardware', label: 'Hardware' },
+      { href: '/dashboard/inventory/stockrisk/living', label: 'Living' },
+      { href: '/dashboard/inventory/stockrisk/sanitair-keukens', label: 'Sanitair & Keukens' },
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
+    { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
-      { href: '/dashboard/inventory/health/henk', label: 'HENK' },
-      { href: '/dashboard/inventory/health/john', label: 'JOHN' },
-      { href: '/dashboard/inventory/health/daniel', label: 'DANIEL' },
-      { href: '/dashboard/inventory/health/gijs', label: 'GIJS' },
+      { href: '/dashboard/inventory/health/appliances-houseware', label: 'Appliances & Houseware' },
+      { href: '/dashboard/inventory/health/building-materials', label: 'Building Materials' },
+      { href: '/dashboard/inventory/health/hardware', label: 'Hardware' },
+      { href: '/dashboard/inventory/health/living', label: 'Living' },
+      { href: '/dashboard/inventory/health/sanitair-keukens', label: 'Sanitair & Keukens' },
     ]},
   ];
   const hrItemsAll = [
@@ -280,7 +285,6 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
-    { href: '/dashboard/admin/dyflexis-import', label: 'Dyflexis Import', icon: '📅' },
     { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
 
