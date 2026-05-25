@@ -3,16 +3,14 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
-   WIJZIGINGEN V27.09:
-   - HR menu uitgebreid met: Urentarget, Urenplanning, Urenplanning Overzicht
-   - REPORT_MAP uitgebreid: hr_uren toegevoegd voor uren-paginas
+   WIJZIGINGEN V27.10:
    - Admin menu uitgebreid: Dyflexis Planning + Dyflexis Actuals
-   - isManager role-check toegevoegd
-   - Versie aangepast naar V27.09
+   - Versie naar V27.10
 
-   WIJZIGINGEN V26.03 (oud):
-   - Menu items "Overzicht", "Rapportages" en "Bestanden" verborgen
-   - Sales submenu uitgebreid: Actuals, Forecast (concept), Index, Bezoekers en Conversie
+   WIJZIGINGEN T.O.V. V27.06:
+   - BUM-rol opgeheven, BUMs zijn nu 'manager'
+   - isBum check vervangen door isManager
+   - Urenplanning zichtbaar voor admin + manager
    ============================================================ */
 'use client';
 
@@ -23,7 +21,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.09';
+const APP_VERSION = 'V27.10';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -232,10 +230,11 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
+    '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/hr/salary': 'hr_payroll',
-    '/dashboard/hr/urentarget': 'hr_uren',
-    '/dashboard/hr/urenplanning': 'hr_uren',
-    '/dashboard/hr/urenplanning-overview': 'hr_uren',
+    '/dashboard/hr/urentarget': 'hr_urentarget',
+    '/dashboard/hr/urenplanning': 'hr_urenplanning',
+    '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -249,20 +248,21 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
     { href: '/dashboard/inventory/stockrisk', label: 'Stock Risk Alert', children: [
       { href: '/dashboard/inventory/stockrisk', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/stockrisk/pascal', label: 'PASCAL' },
-      { href: '/dashboard/inventory/stockrisk/henk', label: 'HENK' },
-      { href: '/dashboard/inventory/stockrisk/john', label: 'JOHN' },
-      { href: '/dashboard/inventory/stockrisk/daniel', label: 'DANIEL' },
-      { href: '/dashboard/inventory/stockrisk/gijs', label: 'GIJS' },
+      { href: '/dashboard/inventory/stockrisk/appliances-houseware', label: 'Appliances & Houseware' },
+      { href: '/dashboard/inventory/stockrisk/building-materials', label: 'Building Materials' },
+      { href: '/dashboard/inventory/stockrisk/hardware', label: 'Hardware' },
+      { href: '/dashboard/inventory/stockrisk/living', label: 'Living' },
+      { href: '/dashboard/inventory/stockrisk/sanitair-keukens', label: 'Sanitair & Keukens' },
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
+    { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/health/pascal', label: 'PASCAL' },
-      { href: '/dashboard/inventory/health/henk', label: 'HENK' },
-      { href: '/dashboard/inventory/health/john', label: 'JOHN' },
-      { href: '/dashboard/inventory/health/daniel', label: 'DANIEL' },
-      { href: '/dashboard/inventory/health/gijs', label: 'GIJS' },
+      { href: '/dashboard/inventory/health/appliances-houseware', label: 'Appliances & Houseware' },
+      { href: '/dashboard/inventory/health/building-materials', label: 'Building Materials' },
+      { href: '/dashboard/inventory/health/hardware', label: 'Hardware' },
+      { href: '/dashboard/inventory/health/living', label: 'Living' },
+      { href: '/dashboard/inventory/health/sanitair-keukens', label: 'Sanitair & Keukens' },
     ]},
   ];
   const hrItemsAll = [
@@ -275,7 +275,7 @@ export default function DashboardLayout({ children }) {
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const hrItems = hrItemsAll.filter(item => {
-    if (item.visible !== undefined && !item.visible) return false;
+    if (typeof item.visible !== 'undefined') return item.visible;
     return hasReport(REPORT_MAP[item.href]);
   });
   const adminItems = [
