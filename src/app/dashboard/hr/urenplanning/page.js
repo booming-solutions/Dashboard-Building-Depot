@@ -1,6 +1,16 @@
 /* ============================================================
-   BESTAND: page-urenplanning.js (v7)
+   BESTAND: page-urenplanning.js (v8)
    KOPIEER NAAR: src/app/dashboard/hr/urenplanning/page.js
+
+   WIJZIGINGEN v8 (vs v7):
+   - Verleden-modus: gebruikt nu ECHTE week-data uit urenplanning_dyflexis (is_actual=true)
+     i.p.v. maand-schatting. Banner aangepast.
+   - Geen dag-cellen meer in verleden-modus, alleen week-totalen
+   - Nieuwe kolommen in verleden-modus: Verlof, Ziek, Ziek %
+   - Toekomst-modus heeft "Ziek %" kolom met 3-maands gemiddelde (uit actuals)
+   - Kleurcodering: overuren=paarstinten, ziekte=roodtinten
+   - Ziekte-codering: ≤1% groen, 1-5% geel, >5% rood
+   - Overwerk-codering: ≤contract neutraal, 1-10% boven geel, >10% boven rood
 
    WIJZIGINGEN v7 (vs v6):
    - Verleden-modus: weken vóór huidige week tonen Actual data (uit ACTUALS embed)
@@ -206,6 +216,7 @@ export default function UrenplanningPage() {
   const [rows, setRows] = useState([]);     // Raw rijen uit urenplanning_dyflexis
   const [sortMode, setSortMode] = useState('default');
   const [dataLoading, setDataLoading] = useState(false);
+  const [emp3MStats, setEmp3MStats] = useState({}); // employee_name → {sick_pct, avg_work}
 
   useEffect(() => {
     (async () => {
@@ -228,23 +239,60 @@ export default function UrenplanningPage() {
 
   useEffect(() => {
     if (!selectedBU) return;
-    // In verleden-modus: geen dyflexis-data nodig (we gebruiken ACTUALS embed)
-    if (isPastWeek(currentWeek.year, currentWeek.week) && hasActualsForWeek(currentWeek.year, currentWeek.week)) {
-      setRows([]);
-      setDataLoading(false);
-      return;
-    }
     loadData();
+    load3MStats();
   }, [selectedBU, currentWeek]);
+
+  // Laad 3-maandsstats per medewerker (ziek %, gem werkuren)
+  // Pak laatste 13 weken actuals voor deze BU; agg per employee
+  async function load3MStats() {
+    const today = new Date();
+    const isoNow = getISOWeek(today);
+    // Bereken 13 weken eerder
+    const wkStart = shiftWeek(isoNow.year, isoNow.week, -13);
+    const { data, error } = await supabase
+      .from('urenplanning_dyflexis')
+      .select('employee_name, hours_worked, sick_total, total_hours, period_year, period_week')
+      .eq('bu', selectedBU)
+      .eq('is_actual', true)
+      .or(`and(period_year.eq.${wkStart.year},period_week.gte.${wkStart.week}),and(period_year.gt.${wkStart.year})`);
+    if (error || !data) { setEmp3MStats({}); return; }
+    const stats = {};
+    data.forEach(r => {
+      const n = r.employee_name;
+      if (!stats[n]) stats[n] = { work_sum: 0, sick_sum: 0, total_sum: 0, weeks: 0 };
+      stats[n].work_sum += parseFloat(r.hours_worked) || 0;
+      stats[n].sick_sum += parseFloat(r.sick_total) || 0;
+      stats[n].total_sum += parseFloat(r.total_hours) || 0;
+      stats[n].weeks++;
+    });
+    const out = {};
+    Object.entries(stats).forEach(([n, s]) => {
+      out[n] = {
+        sick_pct: s.total_sum > 0 ? (s.sick_sum / s.total_sum * 100) : 0,
+        avg_work: s.weeks > 0 ? (s.work_sum / s.weeks) : 0,
+      };
+    });
+    setEmp3MStats(out);
+  }
 
   async function loadData() {
     setDataLoading(true);
-    const { data, error } = await supabase
+    const inPast = isPastWeek(currentWeek.year, currentWeek.week);
+    // Voor verleden-weken: laad actuals (is_actual=true)
+    // Voor toekomst-weken: laad planning (is_actual=false of null)
+    const query = supabase
       .from('urenplanning_dyflexis')
       .select('*')
       .eq('bu', selectedBU)
       .eq('period_year', currentWeek.year)
       .eq('period_week', currentWeek.week);
+    if (inPast) {
+      query.eq('is_actual', true);
+    } else {
+      query.or('is_actual.is.null,is_actual.eq.false');
+    }
+    const { data, error } = await query;
     if (error) {
       console.error('Load error:', error);
       setRows([]);
@@ -273,48 +321,49 @@ export default function UrenplanningPage() {
     dayDates.push(d);
   }
 
-  // Bepaal modus: planning (toekomst/huidig) of actuals (verleden + binnen 2026)
+  // Bepaal modus: planning (toekomst/huidig) of actuals (verleden)
   const inPast = isPastWeek(currentWeek.year, currentWeek.week);
-  const hasActuals = hasActualsForWeek(currentWeek.year, currentWeek.week);
-  const isActualMode = inPast && hasActuals;
+  const isActualMode = inPast;
 
   // Aggregate per medewerker
   const baseEmployees = BU_EMPLOYEES[selectedBU] || [];
   const empMap = {};
   const openDays = {1:0,2:0,3:0,4:0,5:0,6:0,7:0};
   let openTotal = 0;
+  let weekVerlofTotal = 0;
+  let weekZiekTotal = 0;
+  let weekTotalAll = 0;
 
   if (isActualMode) {
-    // === ACTUAL-MODUS: gebruik ACTUALS embed ===
-    const mKey = monthKeyForWeek(currentWeek.year, currentWeek.week);
-    const monthEmps = ACTUALS[mKey]?.[selectedBU] || [];
-    // Werkdagen in deze maand (voor verdeling)
-    const thursday = new Date(monday); thursday.setUTCDate(monday.getUTCDate() + 3);
-    const wdInMonth = workdaysInMonth(thursday.getUTCFullYear(), thursday.getUTCMonth());
-
-    monthEmps.forEach(e => {
-      const match = matchEmployee(e.n, baseEmployees) || matchEmployee(e.n.replace(/\s+/g, ' '), baseEmployees);
-      // werkuren per werkdag (proportioneel uit maand) 
-      const dailyAvg = e.w / wdInMonth;
-      const days = {1:0,2:0,3:0,4:0,5:0,6:0,7:0};
-      // Verdeel over ma-za (geen zondag): elke werkdag krijgt dailyAvg
-      [1,2,3,4,5,6].forEach(d => { days[d] = dailyAvg; });
-      // Verlof verspreiden over verlof-dagen werkt niet exact, dus alleen werk-uren tonen
-
-      const avg3 = calcAvg3Months(e.n, selectedBU);
-
-      empMap[e.n] = {
-        dyflexis_name: e.n,
-        display_name: e.n.trim(),
+    // === ACTUAL-MODUS: gebruik echte week-data uit Supabase (is_actual=true) ===
+    rows.forEach(r => {
+      const n = r.employee_name;
+      const match = matchEmployee(n, baseEmployees) || matchEmployee(n.replace(/\s+/g, ' '), baseEmployees);
+      const stats3M = emp3MStats[n] || {};
+      const hours_worked = parseFloat(r.hours_worked) || 0;
+      const leave = parseFloat(r.leave_total) || 0;
+      const sick = parseFloat(r.sick_total) || 0;
+      const overtime = parseFloat(r.overtime_total) || 0;
+      const total = parseFloat(r.total_hours) || 0;
+      const sick_pct = parseFloat(r.sick_percentage) || 0;
+      weekVerlofTotal += leave;
+      weekZiekTotal += sick;
+      weekTotalAll += total;
+      empMap[n] = {
+        dyflexis_name: n,
+        display_name: n,
         contract: match ? match.contract : 'Onbekend',
         contract_hours: match ? match.contract_hours : null,
-        sub: match ? match.sub : '',
-        days,
-        total: e.w,
-        overtime: e.ot,
-        leave: e.lv,
-        sick: e.sk,
-        avg3,
+        sub: match ? match.sub : (r.sub_afdeling || ''),
+        days: {1:0,2:0,3:0,4:0,5:0,6:0,7:0},
+        total: hours_worked,
+        overtime,
+        leave,
+        sick,
+        sick_pct,
+        total_hours: total,
+        avg3: stats3M.avg_work || null,
+        sick_3m: stats3M.sick_pct ?? null,
         matched: !!match,
       };
     });
@@ -325,6 +374,7 @@ export default function UrenplanningPage() {
       const key = r.employee_name;
       if (!empMap[key]) {
         const match = matchEmployee(r.employee_name, baseEmployees);
+        const stats3M = emp3MStats[r.employee_name] || {};
         empMap[key] = {
           dyflexis_name: r.employee_name,
           display_name: normalizeName(r.employee_name),
@@ -336,7 +386,9 @@ export default function UrenplanningPage() {
           overtime: 0,
           leave: 0,
           sick: 0,
-          avg3: calcAvg3Months(normalizeName(r.employee_name), selectedBU),
+          sick_pct: 0,
+          avg3: stats3M.avg_work || null,
+          sick_3m: stats3M.sick_pct ?? null,
           matched: !!match,
         };
       }
@@ -406,7 +458,7 @@ export default function UrenplanningPage() {
         </h1>
         <p style={{fontSize:13, color:'#9c978c', margin:'4px 0 0'}}>
           {isActualMode 
-            ? 'Werkelijke uren — geschat per dag uit maandtotalen (Dyflexis maandexport).'
+            ? 'Werkelijke uren — week-actuals uit Dyflexis.'
             : 'Read-only weergave uit Dyflexis. Plannings-data wordt automatisch geïmporteerd (zie Admin → Dyflexis Import).'
           }
         </p>
@@ -434,7 +486,7 @@ export default function UrenplanningPage() {
       {/* Banner verleden-modus */}
       {isActualMode && (
         <div style={{marginBottom:14, padding:'12px 16px', background:'#cce5ff', border:'1.5px solid #0056a3', borderRadius:8, fontSize:12.5, color:'#003d73', lineHeight:1.5}}>
-          <strong>Werkelijke uren — geschat per dag uit maandtotalen.</strong> Maandtotaal gedeeld door werkdagen (ma-za). Dagwaarden zijn dus indicatief, weektotalen zijn betrouwbaar. Voor exact: zie de "Uren (Actual)" rapportage. Per week-data wordt later uit Dyflexis opgehaald.
+          <strong>Werkelijke uren — week-actuals uit Dyflexis.</strong> Geen dag-detail (Dyflexis levert week-totalen). Per medewerker zie je gewerkte uren, verlof, ziekte en overuren voor deze specifieke week.
         </div>
       )}
 
@@ -492,16 +544,21 @@ export default function UrenplanningPage() {
                 <th style={{...headerStyle, textAlign:'left', cursor:'pointer', userSelect:'none'}} onClick={cycleSortMode} title="Klik om te sorteren op voornaam">
                   Medewerker{sortIcon}
                 </th>
-                <th style={{...headerStyle, textAlign:'center', width:70}}>Contract</th>
-                <th style={{...headerStyle, textAlign:'right', width:75}}>Contract uren</th>
-                <th style={{...headerStyle, textAlign:'right', width:80, color:'#6b6960'}} title="Gemiddelde werk-uren per week over feb-apr 2026">Gem 3 mnd</th>
-                {NL_DAYS.map((d, i) => (
-                  <th key={i} style={{...headerStyle, textAlign:'center', padding:'10px 6px', width:60}}>
+                <th style={{...headerStyle, textAlign:'center', width:60}}>Contract</th>
+                <th style={{...headerStyle, textAlign:'right', width:70}}>Contract uren</th>
+                <th style={{...headerStyle, textAlign:'right', width:75, color:'#6b6960'}} title="Gemiddelde werk-uren per week over laatste 13 weken">Gem 3 mnd</th>
+                <th style={{...headerStyle, textAlign:'right', width:65, color:'#6b6960'}} title={isActualMode ? 'Ziekte % deze week' : 'Gemiddeld ziekte % laatste 13 weken'}>
+                  Ziek %
+                </th>
+                {!isActualMode && NL_DAYS.map((d, i) => (
+                  <th key={i} style={{...headerStyle, textAlign:'center', padding:'10px 6px', width:55}}>
                     {d}<br/><span style={{fontSize:9, color:'#9c978c', fontWeight:400}}>{dayDates[i].getUTCDate()}-{dayDates[i].getUTCMonth()+1}</span>
                   </th>
                 ))}
                 <th style={{...headerStyle, textAlign:'right', width:65}}>Wk tot.</th>
-                <th style={{...headerStyle, textAlign:'center', padding:'10px 6px', color:'#a33225', width:80}}>Overuren</th>
+                <th style={{...headerStyle, textAlign:'center', padding:'10px 6px', color:'#6e3bb8', width:75}} title="Uren boven contracturen (Vast contract)">Overuren</th>
+                {isActualMode && <th style={{...headerStyle, textAlign:'right', width:60, color:'#6b6960'}}>Verlof</th>}
+                {isActualMode && <th style={{...headerStyle, textAlign:'right', width:60, color:'#a33225'}}>Ziek</th>}
               </tr>
             </thead>
             <tbody>
@@ -510,20 +567,26 @@ export default function UrenplanningPage() {
                 const showContract = emp.contract === 'Vast' && emp.contract_hours !== null;
                 const overuren = (showContract && emp.total > emp.contract_hours) ? emp.total - emp.contract_hours : 0;
 
-                // Kleurcodering rij: groen ≤contract, geel 1-10% boven, rood >10% boven
-                let rowBg = '';
-                if (showContract && emp.total > 0) {
-                  const pct = (emp.total - emp.contract_hours) / emp.contract_hours * 100;
-                  if (pct <= 0) rowBg = '';  // groen = neutraal, geen highlight nodig
-                  else if (pct <= 10) rowBg = 'rgba(255, 211, 84, 0.18)'; // licht geel
-                  else rowBg = 'rgba(214, 59, 26, 0.10)'; // licht rood
+                // Bepaal te tonen ziek % (verleden = die week, toekomst = 3M gemiddelde)
+                const sickPctShown = isActualMode ? (emp.sick_pct ?? 0) : (emp.sick_3m ?? null);
+                // Kleurcodering ziek-cel (roodtinten)
+                let sickCellBg = '', sickCellColor = '#6b6960';
+                if (sickPctShown !== null && sickPctShown !== undefined) {
+                  if (sickPctShown <= 1) { sickCellBg = ''; sickCellColor = '#3a5a2c'; }
+                  else if (sickPctShown <= 5) { sickCellBg = 'rgba(255, 211, 84, 0.25)'; sickCellColor = '#856404'; }
+                  else { sickCellBg = 'rgba(214, 59, 26, 0.18)'; sickCellColor = '#a33225'; }
                 }
 
-                // Cel-kleur in actual modus: blauwig grijs ipv zwart
-                const dayCellColor = isActualMode ? '#0056a3' : '#1a1a18';
+                // Kleurcodering overuren-cel (paarstinten)
+                let overCellBg = '', overCellColor = '#6e3bb8';
+                if (overuren > 0 && showContract) {
+                  const pct = (emp.total - emp.contract_hours) / emp.contract_hours * 100;
+                  if (pct <= 10) { overCellBg = 'rgba(178, 132, 219, 0.18)'; }
+                  else { overCellBg = 'rgba(110, 59, 184, 0.22)'; overCellColor = '#4a1f8c'; }
+                }
 
                 return (
-                  <tr key={emp.dyflexis_name} style={{background: rowBg}}>
+                  <tr key={emp.dyflexis_name}>
                     <td style={{padding:'8px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', fontSize:12.5}}>
                       {emp.display_name}
                       {!emp.matched && <span style={{marginLeft:6, fontSize:10, color:'#856404', fontWeight:500}} title="Niet gevonden in C16">⚠</span>}
@@ -539,21 +602,34 @@ export default function UrenplanningPage() {
                     <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11, color:'#9c978c'}}>
                       {emp.avg3 !== null && emp.avg3 !== undefined ? emp.avg3.toFixed(1) : '-'}
                     </td>
-                    {NL_DAYS.map((_, i) => {
+                    <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11, background: sickCellBg, color: sickCellColor, fontWeight: sickPctShown > 1 ? 600 : 400}}>
+                      {sickPctShown !== null && sickPctShown !== undefined ? sickPctShown.toFixed(1) + '%' : '-'}
+                    </td>
+                    {!isActualMode && NL_DAYS.map((_, i) => {
                       const day = i + 1;
                       const h = emp.days[day];
                       return (
-                        <td key={day} style={{padding:'8px 6px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontSize:11.5, color: h > 0 ? dayCellColor : '#d4d4d0', fontStyle: isActualMode ? 'italic' : 'normal'}}>
+                        <td key={day} style={{padding:'8px 6px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontSize:11.5, color: h > 0 ? '#1a1a18' : '#d4d4d0'}}>
                           {h > 0 ? h.toFixed(1) : '-'}
                         </td>
                       );
                     })}
-                    <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:12, fontWeight:600, color: overuren > 0 ? '#a33225' : 'inherit'}}>
+                    <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:12, fontWeight:600, color: isActualMode ? '#0056a3' : '#1a1a18'}}>
                       {emp.total > 0 ? emp.total.toFixed(1) : '-'}
                     </td>
-                    <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontSize:11.5, fontWeight:600, color:'#a33225'}}>
+                    <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontSize:11.5, fontWeight:600, background: overCellBg, color: overCellColor}}>
                       {overuren > 0 ? '+' + overuren.toFixed(1) : '-'}
                     </td>
+                    {isActualMode && (
+                      <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11, color:'#6b6960'}}>
+                        {emp.leave > 0 ? emp.leave.toFixed(1) : '-'}
+                      </td>
+                    )}
+                    {isActualMode && (
+                      <td style={{padding:'6px 10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11, color: emp.sick > 0 ? '#a33225' : '#9c978c', fontWeight: emp.sick > 0 ? 600 : 400}}>
+                        {emp.sick > 0 ? emp.sick.toFixed(1) : '-'}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -564,6 +640,7 @@ export default function UrenplanningPage() {
                     OPEN DIENST <span style={{fontSize:10, fontWeight:500, marginLeft:6, color:'#a33225'}}>nog in te plannen</span>
                   </td>
                   <td style={{padding:'10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'center', color:'#9c978c'}}>—</td>
+                  <td style={{padding:'10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', color:'#9c978c'}}>—</td>
                   <td style={{padding:'10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', color:'#9c978c'}}>—</td>
                   <td style={{padding:'10px', borderBottom:'1px solid rgba(0,0,0,0.08)', textAlign:'right', color:'#9c978c'}}>—</td>
                   {NL_DAYS.map((_, i) => {
@@ -584,12 +661,14 @@ export default function UrenplanningPage() {
             </tbody>
             <tfoot>
               <tr style={{background:'#1a1a18', color:'#fff'}}>
-                <td colSpan={4} style={{padding:'10px', fontWeight:700, fontSize:12}}>TOTAAL</td>
-                {dayTotals.map((t, i) => (
+                <td colSpan={isActualMode ? 5 : 5} style={{padding:'10px', fontWeight:700, fontSize:12}}>TOTAAL</td>
+                {!isActualMode && dayTotals.map((t, i) => (
                   <td key={i} style={{padding:'10px', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontWeight:700}}>{t > 0 ? t.toFixed(1) : '-'}</td>
                 ))}
                 <td style={{padding:'10px', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontWeight:700}}>{weekGrandTotal.toFixed(1)}</td>
-                <td style={{padding:'10px', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontWeight:700, color:'#ff8a6c'}}>{overurenTotal > 0 ? '+' + overurenTotal.toFixed(1) : '-'}</td>
+                <td style={{padding:'10px', textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontWeight:700, color:'#c8a8e9'}}>{overurenTotal > 0 ? '+' + overurenTotal.toFixed(1) : '-'}</td>
+                {isActualMode && <td style={{padding:'10px', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontWeight:700}}>{weekVerlofTotal > 0 ? weekVerlofTotal.toFixed(1) : '-'}</td>}
+                {isActualMode && <td style={{padding:'10px', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontWeight:700, color:'#ff8a6c'}}>{weekZiekTotal > 0 ? weekZiekTotal.toFixed(1) : '-'}</td>}
               </tr>
             </tfoot>
           </table>
@@ -597,7 +676,7 @@ export default function UrenplanningPage() {
       </div>
 
       <div style={{marginTop:20, padding:'12px 16px', background:'#f5ebe0', borderRadius:8, fontSize:12, color:'#6b6960', lineHeight:1.6}}>
-        <strong>Hoe te lezen:</strong> Voor huidige en toekomstige weken: planning uit Dyflexis (geplande netto uren, pauze afgetrokken). Voor weken in het verleden (vóór vandaag): werkelijke uren uit Dyflexis maandtotalen, per dag geschat. <strong>Gem 3 mnd</strong> = gemiddelde gewerkte uren per week over feb-apr 2026. <strong>Overuren</strong> = uren boven contracturen (alleen Vast). Rij-kleur in verleden-modus: groen = binnen contract, geel = 1-10% over, rood = {'>'}10% over. Verleden gaat terug tot januari 2026.
+        <strong>Hoe te lezen:</strong> Voor huidige/toekomstige weken (planning): geplande netto uren per dag uit Dyflexis Roosters. Voor weken in het verleden (actuals): werkelijk gewerkte uren per medewerker uit Dyflexis weekrapport. <strong>Gem 3 mnd</strong> = gem werk-uren per week (laatste 13 weken). <strong>Ziek %</strong> = die week (verleden) of 13-weeks gemiddelde (toekomst); ≤1% groen, 1-5% geel, &gt;5% rood. <strong>Overuren</strong> = uren boven contracturen (Vast contract), paars gekleurd.
       </div>
     </div>
   );
