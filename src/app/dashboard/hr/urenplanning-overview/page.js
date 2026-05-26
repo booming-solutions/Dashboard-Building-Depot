@@ -154,19 +154,27 @@ export default function UrenplanningOverviewPage() {
     return allRows.filter(r => cleanSubAfdeling(r.sub_afdeling) === selectedSub);
   }, [allRows, selectedSub]);
 
-  // Unieke medewerkers in deze sub
+  // Unieke medewerkers in deze sub (gegroepeerd op normalized naam zodat actual + planning samenvallen)
   const employeeOptions = useMemo(() => {
-    const emps = new Set();
+    const byNorm = new Map(); // normalized → first-seen raw name
     filteredRowsBySub.forEach(r => {
-      if (r.employee_name && !r.is_open) emps.add(r.employee_name);
+      if (r.employee_name && !r.is_open) {
+        const norm = normalizeName(r.employee_name).toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!byNorm.has(norm)) byNorm.set(norm, normalizeName(r.employee_name));
+      }
     });
-    return ['__all__', ...Array.from(emps).sort()];
+    const sorted = Array.from(byNorm.values()).sort();
+    return ['__all__', ...sorted];
   }, [filteredRowsBySub]);
 
-  // Filter op medewerker
+  // Filter op medewerker — match via normalized naam (zodat zowel "Dangond Pabon, Eliana" als "Eliana Dangond Pabon" matchen)
   const filteredRows = useMemo(() => {
     if (selectedEmployee === '__all__') return filteredRowsBySub;
-    return filteredRowsBySub.filter(r => r.employee_name === selectedEmployee);
+    const targetNorm = selectedEmployee.toLowerCase().replace(/\s+/g, ' ').trim();
+    return filteredRowsBySub.filter(r => {
+      const empNorm = normalizeName(r.employee_name).toLowerCase().replace(/\s+/g, ' ').trim();
+      return empNorm === targetNorm;
+    });
   }, [filteredRowsBySub, selectedEmployee]);
 
   // Aggregaten per week (1..53)
@@ -221,10 +229,19 @@ export default function UrenplanningOverviewPage() {
   }, [weekData, viewMode]);
 
   // Contracturen voor selected employee
+  // selectedEmployee is nu al genormaliseerd ("Voornaam Achternaam"), dus direct matchen
   const empContractInfo = useMemo(() => {
     if (selectedEmployee === '__all__') return null;
     const buEmps = BU_EMPLOYEES[selectedBU] || [];
-    return matchEmployee(selectedEmployee, buEmps);
+    const targetNorm = selectedEmployee.toLowerCase().replace(/\s+/g, ' ').trim();
+    const parts = targetNorm.split(' ');
+    if (parts.length < 2) return null;
+    const first = parts[0], last = parts[parts.length - 1];
+    for (const e of buEmps) {
+      const ep = e.name.toLowerCase().split(/\s+/);
+      if (ep[0] === first && ep[ep.length - 1] === last) return e;
+    }
+    return null;
   }, [selectedEmployee, selectedBU]);
 
   // Bepaal welke weken planning vs actual (voor visual onderscheid)
@@ -321,7 +338,7 @@ export default function UrenplanningOverviewPage() {
         <div>
           <label style={{display:'block', fontSize:10.5, fontWeight:600, textTransform:'uppercase', color:'#9c978c', letterSpacing:'.4px', marginBottom:6}}>Medewerker</label>
           <select value={selectedEmployee} onChange={e => setSelectedEmployee(e.target.value)} style={{padding:'8px 12px', border:'1.5px solid rgba(0,0,0,0.14)', borderRadius:6, fontFamily:'inherit', fontSize:13, minWidth:240}}>
-            {employeeOptions.map(e => <option key={e} value={e}>{e === '__all__' ? '— Hele afdeling —' : normalizeName(e)}</option>)}
+            {employeeOptions.map(e => <option key={e} value={e}>{e === '__all__' ? '— Hele afdeling —' : e}</option>)}
           </select>
         </div>
       </div>
