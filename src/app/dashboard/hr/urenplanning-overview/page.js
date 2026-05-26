@@ -83,6 +83,10 @@ export default function UrenplanningOverviewPage() {
   const [selectedSub, setSelectedSub] = useState('__all__');         // '__all__' = hele BU
   const [selectedEmployee, setSelectedEmployee] = useState('__all__'); // '__all__' = hele sub
 
+  // View mode: 'recent' = vanaf week 13 (nieuwe BU-structuur), 'all' = heel 2026
+  const [viewMode, setViewMode] = useState('recent');
+  const STRUCTURE_START_WEEK = 13;
+
   // Data
   const [allRows, setAllRows] = useState([]); // alle 2026 records voor selected BU
 
@@ -197,11 +201,12 @@ export default function UrenplanningOverviewPage() {
     return out;
   }, [filteredRows]);
 
-  // KPI's
+  // KPI's (respect viewMode: alleen weken >= STRUCTURE_START_WEEK in 'recent' mode)
   const kpis = useMemo(() => {
     let totalWork = 0, totalSick = 0, totalLeave = 0, totalOvertime = 0, totalHours = 0;
     let weeksWithActuals = 0;
     Object.values(weekData).forEach(w => {
+      if (viewMode === 'recent' && w.week < STRUCTURE_START_WEEK) return;
       if (w.actual_count > 0) {
         totalWork += w.hours_worked;
         totalSick += w.sick;
@@ -213,7 +218,7 @@ export default function UrenplanningOverviewPage() {
     });
     const avgSickPct = totalHours > 0 ? (totalSick / totalHours * 100) : 0;
     return { totalWork, totalSick, totalLeave, totalOvertime, avgSickPct, weeksWithActuals };
-  }, [weekData]);
+  }, [weekData, viewMode]);
 
   // Contracturen voor selected employee
   const empContractInfo = useMemo(() => {
@@ -237,16 +242,17 @@ export default function UrenplanningOverviewPage() {
   const COLOR_PLANNED = '#cce5ff';    // licht blauw voor planning
   const COLOR_CONTRACT = '#1a1a18';
 
-  // Vind max-waarde voor chart Y-as (voor schaal)
+  // Vind max-waarde voor chart Y-as (alleen voor weken die getoond worden)
   const chartMax = useMemo(() => {
     let m = 0;
     Object.values(weekData).forEach(w => {
+      if (viewMode === 'recent' && w.week < STRUCTURE_START_WEEK) return;
       const stack = w.regular + w.overtime + w.sick + w.leave;
       const plan = w.planned;
       m = Math.max(m, stack, plan);
     });
-    return m * 1.15 || 50; // 15% headroom
-  }, [weekData]);
+    return m * 1.15 || 50;
+  }, [weekData, viewMode]);
 
   // Weeks om te tonen: 1 t/m max(actual_count, planned_count) week
   const lastWeek = useMemo(() => {
@@ -257,7 +263,8 @@ export default function UrenplanningOverviewPage() {
     return Math.max(last, currentISO.week);
   }, [weekData, currentISO.week]);
 
-  const weeksToShow = Array.from({length: lastWeek}, (_, i) => i + 1);
+  const startWeek = viewMode === 'recent' ? STRUCTURE_START_WEEK : 1;
+  const weeksToShow = Array.from({length: Math.max(0, lastWeek - startWeek + 1)}, (_, i) => startWeek + i);
 
   // SVG chart dimensies
   const chartHeight = 280;
@@ -320,12 +327,21 @@ export default function UrenplanningOverviewPage() {
       </div>
 
       {/* KPI's */}
+      <div style={{display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:6, flexWrap:'wrap', gap:8}}>
+        <h2 style={{fontSize:13, fontWeight:600, margin:0, color:'#1a1a18'}}>
+          KPI's <span style={{fontSize:11, fontWeight:400, color:'#9c978c'}}>
+            {viewMode === 'recent' 
+              ? '* vanaf week 13 (start nieuwe BU-structuur)' 
+              : '* heel 2026 (let op: weken 1-12 hebben oude BU-structuur)'}
+          </span>
+        </h2>
+      </div>
       <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:10, marginBottom:14}}>
-        <KPIBlock label="Gewerkte uren" value={kpis.totalWork.toFixed(0) + 'u'} sub={`${kpis.weeksWithActuals} weken`} color="#0056a3" />
-        <KPIBlock label="Gem ziek %" value={kpis.avgSickPct.toFixed(1) + '%'} sub={kpis.avgSickPct <= 1 ? 'Laag' : kpis.avgSickPct <= 5 ? 'Gemiddeld' : 'Hoog'} color={kpis.avgSickPct <= 1 ? '#3a5a2c' : kpis.avgSickPct <= 5 ? '#856404' : '#a33225'} />
-        <KPIBlock label="Overuren" value={kpis.totalOvertime.toFixed(0) + 'u'} sub={`${(kpis.totalOvertime / kpis.totalWork * 100 || 0).toFixed(1)}% van werk`} color="#6e3bb8" />
-        <KPIBlock label="Verlof" value={kpis.totalLeave.toFixed(0) + 'u'} sub={`${(kpis.totalLeave / kpis.totalHours * 100 || 0).toFixed(1)}% van totaal`} color="#9c978c" />
-        <KPIBlock label="Ziek" value={kpis.totalSick.toFixed(0) + 'u'} sub="totaal YTD" color="#a33225" />
+        <KPIBlock label="Gewerkte uren*" value={kpis.totalWork.toFixed(0) + 'u'} sub={`${kpis.weeksWithActuals} weken`} color="#0056a3" />
+        <KPIBlock label="Gem ziek %*" value={kpis.avgSickPct.toFixed(1) + '%'} sub={kpis.avgSickPct <= 1 ? 'Laag' : kpis.avgSickPct <= 5 ? 'Gemiddeld' : 'Hoog'} color={kpis.avgSickPct <= 1 ? '#3a5a2c' : kpis.avgSickPct <= 5 ? '#856404' : '#a33225'} />
+        <KPIBlock label="Overuren*" value={kpis.totalOvertime.toFixed(0) + 'u'} sub={`${(kpis.totalOvertime / kpis.totalWork * 100 || 0).toFixed(1)}% van werk`} color="#6e3bb8" />
+        <KPIBlock label="Verlof*" value={kpis.totalLeave.toFixed(0) + 'u'} sub={`${(kpis.totalLeave / (kpis.totalWork + kpis.totalLeave + kpis.totalSick) * 100 || 0).toFixed(1)}% van totaal`} color="#9c978c" />
+        <KPIBlock label="Ziek*" value={kpis.totalSick.toFixed(0) + 'u'} sub="totaal" color="#a33225" />
       </div>
 
       {/* Contract uren info (alleen voor individuele medewerker) */}
@@ -337,15 +353,29 @@ export default function UrenplanningOverviewPage() {
 
       {/* Hoofdgrafiek: stacked bar regulier + overwerk + ziek + verlof + planning */}
       <div style={{...sectionStyle}}>
-        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14, flexWrap:'wrap', gap:10}}>
           <h2 style={{fontSize:14, fontWeight:600, margin:0}}>Uren per week (2026)</h2>
-          <div style={{display:'flex', gap:14, fontSize:11, color:'#6b6960'}}>
-            <LegendItem color={COLOR_REGULAR} label="Regulier" />
-            <LegendItem color={COLOR_OVERTIME} label="Overuren" />
-            <LegendItem color={COLOR_SICK} label="Ziek" />
-            <LegendItem color={COLOR_LEAVE} label="Verlof" />
-            <LegendItem color={COLOR_PLANNED} label="Planning" stroke />
-            {contractH && <LegendItem color={COLOR_CONTRACT} label={`Contract ${contractH}u`} line />}
+          <div style={{display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
+            <div style={{display:'inline-flex', background:'#f5ebe0', borderRadius:6, padding:2}}>
+              <button onClick={() => setViewMode('recent')} style={{
+                padding:'5px 12px', border:'none', background: viewMode === 'recent' ? '#1a1a18' : 'transparent',
+                color: viewMode === 'recent' ? '#fff' : '#6b6960', borderRadius:4, fontSize:11, fontWeight:600,
+                cursor:'pointer', fontFamily:'inherit'
+              }}>Vanaf wk 13</button>
+              <button onClick={() => setViewMode('all')} style={{
+                padding:'5px 12px', border:'none', background: viewMode === 'all' ? '#1a1a18' : 'transparent',
+                color: viewMode === 'all' ? '#fff' : '#6b6960', borderRadius:4, fontSize:11, fontWeight:600,
+                cursor:'pointer', fontFamily:'inherit'
+              }}>Heel 2026</button>
+            </div>
+            <div style={{display:'flex', gap:14, fontSize:11, color:'#6b6960'}}>
+              <LegendItem color={COLOR_REGULAR} label="Regulier" />
+              <LegendItem color={COLOR_OVERTIME} label="Overuren" />
+              <LegendItem color={COLOR_SICK} label="Ziek" />
+              <LegendItem color={COLOR_LEAVE} label="Verlof" />
+              <LegendItem color={COLOR_PLANNED} label="Planning" stroke />
+              {contractH && <LegendItem color={COLOR_CONTRACT} label={`Contract ${contractH}u`} line />}
+            </div>
           </div>
         </div>
         {dataLoading ? (
