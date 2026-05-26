@@ -56,6 +56,47 @@ function nameKey(name) {
     .trim();
 }
 
+// Handmatige aliassen: alternatieve key → canonical key
+// Voor namen waarbij actuals en planning verschillende achternaam-volgorde gebruiken
+// of waar de parser per ongeluk extra woorden heeft meegelift
+const NAME_ALIASES = {
+  // Mensen met meerdere achternamen — Jeroen's lijst
+  'henk veen': 'henk van veen',
+  'mireya rojas': 'mireya meyer rojas',
+  'eliana pabon': 'eliana dangond pabon',
+  'ruthlyn martina': 'ruthlyn comenencia martina',
+  'sheila wawoe': 'sheila lacrum wawoe',
+  'coralisa verstijnen': 'coralisa windt de verstijnen',
+  'karla angarita': 'karla valencia angarita',
+  'reimy abreu': 'reimy ferero abreu',
+  // Volgorde-issues bij planning vs actuals
+  'van dienca arneman': 'dienca van arneman',
+  // Parser-artefacten in planning (eens parser is herwerkt zijn deze redundant)
+  'franciscus van building depot bonaire magazijn kessel': 'franciscus van kessel',
+  'john van den building depot bonaire store management berg': 'john van den berg',
+};
+
+// Toepassen alias op nameKey output
+function nameKeyAliased(name) {
+  const k = nameKey(name);
+  return NAME_ALIASES[k] || k;
+}
+
+// Voor display: gebruik canonical naam waar mogelijk
+const CANONICAL_DISPLAY = {
+  'henk van veen': 'Henk van Veen',
+  'mireya meyer rojas': 'Mireya Meyer Rojas',
+  'eliana dangond pabon': 'Eliana Dangond Pabon',
+  'ruthlyn comenencia martina': 'Ruthlyn Comenencia Martina',
+  'sheila lacrum wawoe': 'Sheila Lacrum Wawoe',
+  'coralisa windt de verstijnen': 'Coralisa Windt de - Verstijnen',
+  'karla valencia angarita': 'Karla Valencia - Angarita',
+  'reimy ferero abreu': 'Reimy Ferero Abreu',
+  'dienca van arneman': 'Dienca van Arneman',
+  'franciscus van kessel': 'Franciscus van Kessel',
+  'john van den berg': 'John van den Berg',
+};
+
 function matchEmployee(name, buEmployees) {
   const n = normalizeName(name).toLowerCase();
   const parts = n.split(/\s+/);
@@ -172,10 +213,11 @@ export default function UrenplanningOverviewPage() {
     const byKey = new Map(); // key → { display, rawNames: Set }
     filteredRowsBySub.forEach(r => {
       if (!r.employee_name || r.is_open) return;
-      const key = nameKey(r.employee_name);
+      const key = nameKeyAliased(r.employee_name);
       if (!key) return;
       if (!byKey.has(key)) {
-        byKey.set(key, { display: normalizeName(r.employee_name), rawNames: new Set() });
+        const displayCanonical = CANONICAL_DISPLAY[key] || normalizeName(r.employee_name);
+        byKey.set(key, { display: displayCanonical, rawNames: new Set() });
       }
       byKey.get(key).rawNames.add(r.employee_name);
     });
@@ -239,8 +281,8 @@ export default function UrenplanningOverviewPage() {
   // Filter op medewerker — match via nameKey
   const filteredRows = useMemo(() => {
     if (selectedEmployee === '__all__') return filteredRowsBySub;
-    const targetKey = nameKey(selectedEmployee);
-    return filteredRowsBySub.filter(r => nameKey(r.employee_name) === targetKey);
+    const targetKey = nameKeyAliased(selectedEmployee);
+    return filteredRowsBySub.filter(r => nameKeyAliased(r.employee_name) === targetKey);
   }, [filteredRowsBySub, selectedEmployee]);
 
   // Aggregaten per week (1..53)
@@ -298,12 +340,12 @@ export default function UrenplanningOverviewPage() {
   const empContractInfo = useMemo(() => {
     if (selectedEmployee === '__all__') return null;
     const buEmps = BU_EMPLOYEES[selectedBU] || [];
-    const targetKey = nameKey(selectedEmployee);
+    const targetKey = nameKeyAliased(selectedEmployee);
     const parts = targetKey.split(' ');
     if (parts.length < 2) return null;
     const first = parts[0], last = parts[parts.length - 1];
     for (const e of buEmps) {
-      const ek = nameKey(e.name);
+      const ek = nameKeyAliased(e.name);
       if (ek === targetKey) return e;
       const ep = ek.split(' ');
       if (ep[0] === first && ep[ep.length - 1] === last) return e;
