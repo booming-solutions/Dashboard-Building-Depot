@@ -56,6 +56,21 @@ function matchEmployee(name, buEmployees) {
   return null;
 }
 
+// Schoon sub_afdeling op: strip page-break-artefacten en eventuele namen die zijn meegelift
+function cleanSubAfdeling(sub) {
+  if (!sub) return null;
+  let s = String(sub).trim();
+  // Strip alles vanaf "Datum Start Eind Afdeling Opmerking" (page-break header)
+  const headerIdx = s.indexOf('Datum Start Eind');
+  if (headerIdx >= 0) s = s.substring(0, headerIdx).trim();
+  // Strip alles vanaf een mogelijk medewerkers-naam (Capitalized + komma)
+  const nameIdx = s.search(/\s+[A-Z][a-zA-Z\- ]*,\s*[A-Z]/);
+  if (nameIdx >= 0) s = s.substring(0, nameIdx).trim();
+  // Strip trailing zooi
+  s = s.replace(/\s+$/, '');
+  return s || null;
+}
+
 export default function UrenplanningOverviewPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -118,18 +133,21 @@ export default function UrenplanningOverviewPage() {
   // === DATA TRANSFORMATIES ===
 
   // Unieke subs voor selected BU (uit actuals en planning rijen)
+  // Sub_afdeling wordt geschoond voor weergave (planning PDFs hadden page-break artefacten)
   const subOptions = useMemo(() => {
     const subs = new Set();
     allRows.forEach(r => {
-      if (r.sub_afdeling) subs.add(r.sub_afdeling);
+      const cleaned = cleanSubAfdeling(r.sub_afdeling);
+      if (cleaned) subs.add(cleaned);
     });
     return ['__all__', ...Array.from(subs).sort()];
   }, [allRows]);
 
   // Filter rows op selected sub (planning + actuals samen)
+  // We vergelijken via cleanSubAfdeling zodat planning-artefacten ook matchen
   const filteredRowsBySub = useMemo(() => {
     if (selectedSub === '__all__') return allRows;
-    return allRows.filter(r => r.sub_afdeling === selectedSub);
+    return allRows.filter(r => cleanSubAfdeling(r.sub_afdeling) === selectedSub);
   }, [allRows, selectedSub]);
 
   // Unieke medewerkers in deze sub

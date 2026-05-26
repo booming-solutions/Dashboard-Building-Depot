@@ -131,11 +131,16 @@ function parseDyflexisPDF(text) {
       const [, datum, startTime, endTime, restRaw] = dm;
 
       // Parse rest: afdeling = "Building Depot > ..." of "Multimart ..." of "Repair Center ..."
-      // Opmerking = rest die niet bij afdeling-keten hoort
-      // Heuristiek: afdeling stopt bij de eerste woordovergang naar opmerking-tekst (geen ">")
-      // Voor onze mapping is alleen het BEGIN belangrijk (voor mapAfdeling), opmerking kan rest zijn
+      // Bij page-break kan er "Datum Start Eind Afdeling Opmerking" of een nieuwe naam zijn meegekomen
       let afdeling = restRaw.trim();
       let opmerking = '';
+
+      // Strip alles vanaf "Datum Start Eind Afdeling Opmerking" (page-break artefact)
+      const headerIdx = afdeling.indexOf('Datum Start Eind');
+      if (headerIdx >= 0) afdeling = afdeling.substring(0, headerIdx).trim();
+      // Strip alles vanaf een mogelijk medewerkers-naam ("Capitalized, Voornaam")
+      const nameMatch = afdeling.match(/\s+[A-Z][a-zA-Z\- ]*,\s*[A-Z]/);
+      if (nameMatch) afdeling = afdeling.substring(0, nameMatch.index).trim();
 
       const [h1, mn1] = startTime.split(':').map(Number);
       const [h2, mn2] = endTime.split(':').map(Number);
