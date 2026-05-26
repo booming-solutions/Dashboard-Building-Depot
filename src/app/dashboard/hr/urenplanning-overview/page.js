@@ -37,11 +37,23 @@ function getISOWeek(date) {
 function normalizeName(dyflexisName) {
   if (!dyflexisName) return '';
   if (dyflexisName === 'Open dienst') return 'Open dienst';
-  if (!dyflexisName.includes(',')) return dyflexisName.trim();
-  const parts = dyflexisName.split(',').map(s => s.trim());
+  // Collapse multiple whitespace to single spaces
+  let s = dyflexisName.replace(/\s+/g, ' ').trim();
+  if (!s.includes(',')) return s;
+  const parts = s.split(',').map(p => p.trim()).filter(Boolean);
   const last = parts[parts.length - 1];
   const rest = parts.slice(0, parts.length - 1).reverse().join(' ');
-  return `${last} ${rest}`;
+  return `${last} ${rest}`.replace(/\s+/g, ' ').trim();
+}
+
+// Een nog strakkere key voor groepering: lowercase, geen accenten, geen interpunctie
+function nameKey(name) {
+  return normalizeName(name)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip accents
+    .replace(/[^a-z0-9 ]/g, '')                       // strip interpunctie
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function matchEmployee(name, buEmployees) {
@@ -154,27 +166,81 @@ export default function UrenplanningOverviewPage() {
     return allRows.filter(r => cleanSubAfdeling(r.sub_afdeling) === selectedSub);
   }, [allRows, selectedSub]);
 
-  // Unieke medewerkers in deze sub (gegroepeerd op normalized naam zodat actual + planning samenvallen)
-  const employeeOptions = useMemo(() => {
-    const byNorm = new Map(); // normalized → first-seen raw name
+  // Unieke medewerkers in deze sub (gegroepeerd op nameKey zodat actual + planning samenvallen)
+  // We bewaren ook ALLE raw varianten per key zodat we conflicten kunnen tonen
+  const employeeOptionsData = useMemo(() => {
+    const byKey = new Map(); // key → { display, rawNames: Set }
     filteredRowsBySub.forEach(r => {
-      if (r.employee_name && !r.is_open) {
-        const norm = normalizeName(r.employee_name).toLowerCase().replace(/\s+/g, ' ').trim();
-        if (!byNorm.has(norm)) byNorm.set(norm, normalizeName(r.employee_name));
+      if (!r.employee_name || r.is_open) return;
+      const key = nameKey(r.employee_name);
+      if (!key) return;
+      if (!byKey.has(key)) {
+        byKey.set(key, { display: normalizeName(r.employee_name), rawNames: new Set() });
+      }
+      byKey.get(key).rawNames.add(r.employee_name);
+    });
+    // Detecteer potentiële mismatches: zelfde voornaam OF achternaam maar andere key
+    // Bouw 2 maps: voornaam → keys, achternaam → keys
+    const byFirst = new Map();
+    const byLast = new Map();
+    Array.from(byKey.keys()).forEach(k => {
+      const parts = k.split(' ');
+      if (parts.length < 2) return;
+      const first = parts[0], last = parts[parts.length - 1];
+      if (!byFirst.has(first)) byFirst.set(first, []);
+      byFirst.get(first).push(k);
+      if (!byLast.has(last)) byLast.set(last, []);
+      byLast.get(last).push(k);
+    });
+    const conflicts = []; // [{ key1, key2, reason }]
+    byFirst.forEach((keys, first) => {
+      if (keys.length > 1) {
+        // zelfde voornaam, verschillende achternaam — alleen tonen als achternaam-deel partial overlap
+        for (let i = 0; i < keys.length; i++) {
+          for (let j = i + 1; j < keys.length; j++) {
+            const a = keys[i], b = keys[j];
+            // Check of de andere woorden overlappen (bv één van naam-woorden hetzelfde)
+            const wordsA = new Set(a.split(' '));
+            const wordsB = new Set(b.split(' '));
+            const overlap = [...wordsA].filter(w => wordsB.has(w));
+            if (overlap.length >= 2) { // voornaam + 1 ander woord = vermoedelijk zelfde persoon
+              conflicts.push({ keys: [a, b], reason: `Voornaam '${first}' + overlap (${overlap.join(', ')})` });
+            }
+          }
+        }
       }
     });
-    const sorted = Array.from(byNorm.values()).sort();
-    return ['__all__', ...sorted];
+    byLast.forEach((keys, last) => {
+      if (keys.length > 1) {
+        for (let i = 0; i < keys.length; i++) {
+          for (let j = i + 1; j < keys.length; j++) {
+            const a = keys[i], b = keys[j];
+            const wordsA = new Set(a.split(' '));
+            const wordsB = new Set(b.split(' '));
+            const overlap = [...wordsA].filter(w => wordsB.has(w));
+            if (overlap.length >= 2 && !conflicts.find(c => 
+              (c.keys[0] === a && c.keys[1] === b) || (c.keys[0] === b && c.keys[1] === a))) {
+              conflicts.push({ keys: [a, b], reason: `Achternaam '${last}' + overlap (${overlap.join(', ')})` });
+            }
+          }
+        }
+      }
+    });
+    return { byKey, conflicts };
   }, [filteredRowsBySub]);
 
-  // Filter op medewerker — match via normalized naam (zodat zowel "Dangond Pabon, Eliana" als "Eliana Dangond Pabon" matchen)
+  const employeeOptions = useMemo(() => {
+    const sorted = Array.from(employeeOptionsData.byKey.values())
+      .map(v => v.display)
+      .sort();
+    return ['__all__', ...sorted];
+  }, [employeeOptionsData]);
+
+  // Filter op medewerker — match via nameKey
   const filteredRows = useMemo(() => {
     if (selectedEmployee === '__all__') return filteredRowsBySub;
-    const targetNorm = selectedEmployee.toLowerCase().replace(/\s+/g, ' ').trim();
-    return filteredRowsBySub.filter(r => {
-      const empNorm = normalizeName(r.employee_name).toLowerCase().replace(/\s+/g, ' ').trim();
-      return empNorm === targetNorm;
-    });
+    const targetKey = nameKey(selectedEmployee);
+    return filteredRowsBySub.filter(r => nameKey(r.employee_name) === targetKey);
   }, [filteredRowsBySub, selectedEmployee]);
 
   // Aggregaten per week (1..53)
@@ -229,16 +295,17 @@ export default function UrenplanningOverviewPage() {
   }, [weekData, viewMode]);
 
   // Contracturen voor selected employee
-  // selectedEmployee is nu al genormaliseerd ("Voornaam Achternaam"), dus direct matchen
   const empContractInfo = useMemo(() => {
     if (selectedEmployee === '__all__') return null;
     const buEmps = BU_EMPLOYEES[selectedBU] || [];
-    const targetNorm = selectedEmployee.toLowerCase().replace(/\s+/g, ' ').trim();
-    const parts = targetNorm.split(' ');
+    const targetKey = nameKey(selectedEmployee);
+    const parts = targetKey.split(' ');
     if (parts.length < 2) return null;
     const first = parts[0], last = parts[parts.length - 1];
     for (const e of buEmps) {
-      const ep = e.name.toLowerCase().split(/\s+/);
+      const ek = nameKey(e.name);
+      if (ek === targetKey) return e;
+      const ep = ek.split(' ');
       if (ep[0] === first && ep[ep.length - 1] === last) return e;
     }
     return null;
@@ -365,6 +432,29 @@ export default function UrenplanningOverviewPage() {
       {empContractInfo && (
         <div style={{background:'#f5ebe0', border:'1px solid rgba(0,0,0,0.08)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'#6b6960', marginBottom:14}}>
           Contract: <strong>{empContractInfo.contract}</strong> · Contracturen: <strong style={{fontFamily:"'JetBrains Mono',monospace"}}>{empContractInfo.contract_hours}u/wk</strong> · Sub-afdeling: <strong>{empContractInfo.sub}</strong>
+        </div>
+      )}
+
+      {/* Conflict-banner: mogelijke dubbele namen die NIET zijn samengevoegd */}
+      {employeeOptionsData.conflicts && employeeOptionsData.conflicts.length > 0 && (
+        <div style={{background:'#fff3cd', border:'1px solid #856404', borderRadius:8, padding:'12px 16px', fontSize:12, color:'#856404', marginBottom:14}}>
+          <div style={{fontWeight:600, marginBottom:6}}>⚠ Mogelijk dubbele namen — controleer of het dezelfde persoon is:</div>
+          <ul style={{margin:'4px 0 4px 18px', padding:0}}>
+            {employeeOptionsData.conflicts.slice(0, 10).map((c, i) => {
+              const display1 = employeeOptionsData.byKey.get(c.keys[0])?.display || c.keys[0];
+              const display2 = employeeOptionsData.byKey.get(c.keys[1])?.display || c.keys[1];
+              return (
+                <li key={i} style={{marginBottom:3}}>
+                  <strong>{display1}</strong> ↔ <strong>{display2}</strong>{' '}
+                  <span style={{color:'#9c978c', fontSize:11}}>({c.reason})</span>
+                </li>
+              );
+            })}
+            {employeeOptionsData.conflicts.length > 10 && (
+              <li style={{color:'#9c978c'}}>... en nog {employeeOptionsData.conflicts.length - 10} meer</li>
+            )}
+          </ul>
+          <div style={{marginTop:6, fontSize:11}}>Als het dezelfde persoon is, laat het me weten dan voeg ik ze samen in de mapping.</div>
         </div>
       )}
 
