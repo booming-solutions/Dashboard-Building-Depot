@@ -1,17 +1,36 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared.js
+   BESTAND: HealthDashboardShared_v6.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
-   VERSIE: v3.29 — gemigreerd naar enriched view + afdelingen
+   VERSIE: v3.28.23
 
-   WIJZIGINGEN T.O.V. v3.28.19:
-   - bumFilter prop is nu een AFDELINGS-CODE (BUILDING_MATERIALS etc),
-     niet meer een persoonsnaam (PASCAL etc)
-   - buying_data → buying_data_enriched (filter op effective_bum_group)
-   - r.dept_code → r.effective_dept_code (voor merges 31+32→30)
-   - r.bum → r.effective_bum_group
-   - Filter pills tonen afdelingsnamen via GROUP_LABEL lookup
-   - Title/subtitle tonen afdelingsnamen ipv codes
-   - BU_ORDER hardcoded weg → GROUP_ORDER met afdelings-codes
+   Wijzigingen t.o.v. v5:
+   - BUGFIX: BU-folder namen (HARDWARE, LIVING, etc) worden nu correct
+     gemapt naar BUM (JOHN, GIJS) zodat buying_data filter werkt
+     · APPLIANCES-HOUSEWARE → DANIEL
+     · BUILDING-MATERIALS → PASCAL
+     · HARDWARE → JOHN
+     · LIVING → GIJS
+     · SANITAIR-KEUKENS → HENK
+
+   Wijzigingen t.o.v. v4:
+   - BUGFIX: lead time werd uit kolom 'max_lead_time' gehaald, maar
+     die kolom is in Compass verkeerd gelabeld (was bedoeld als
+     doel-voorraad). De werkelijke transit-tijd van leverancier naar
+     magazijn staat in 'min_lead_time' (Eagle Vendor Code 3).
+     Gevolg: classificatie was te kritisch, te veel items als
+     understock. Nu realistisch.
+   - Interne variabele max_lt hernoemd naar lt_months (was misleidend)
+
+   Wijzigingen t.o.v. v3:
+   - NOS-filter toegevoegd
+     · Pill "Alle items / Alleen NOS" onder de afdeling-filter
+     · Filtert items, KPI's, stacked bars, dept-summary en tabel
+     · Excel-export bevat nu een NOS kolom
+   - Blauwe NOS-badge naast omschrijving in detail-tabel voor
+     items met nos = 'N' (Code D2 in Compass)
+
+   Wijzigingen t.o.v. v2:
+   - Excel-export overgeschakeld op gedeelde ExcelExportButton component
    ============================================================ */
 'use client';
 
@@ -25,16 +44,7 @@ var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractio
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : fmt(a)); };
 var fmtC = function(n) { return 'Cg ' + fmt(Math.round(n || 0)); };
 var fmtMoi = function(n) { return n >= 99 ? '∞' : n.toFixed(1); };
-
-// Afdelings-mapping voor weergave en sortering
-var GROUP_LABEL = {
-  BUILDING_MATERIALS:   'Building Materials',
-  SANITAIR_KEUKENS:     'Sanitair & Keukens',
-  HARDWARE:             'Hardware',
-  LIVING:               'Living',
-  APPLIANCES_HOUSEWARE: 'Appliances & Houseware',
-};
-var GROUP_ORDER = ['BUILDING_MATERIALS', 'SANITAIR_KEUKENS', 'HARDWARE', 'LIVING', 'APPLIANCES_HOUSEWARE'];
+var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
 
 function Pill({ label, active, onClick }) {
   return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
@@ -72,8 +82,26 @@ function RotationBadge({ category }) {
   return <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap" style={{ backgroundColor: c.bg, color: c.text }}>{c.label}</span>;
 }
 
-// bumFilter: null = all (totaal), "BUILDING_MATERIALS" = only Building Materials, etc.
+// bumFilter: null = all BUMs (totaal), "PASCAL" = only PASCAL, etc.
+// NEW v6: accepteert ook BU folder-namen (bv. 'HARDWARE') en mapt die naar de
+// daadwerkelijke BUM in buying_data ('JOHN'). De page.js van elke BU geeft
+// bumFilter door als folder-naam (uppercase), wij vertalen hier.
+var BU_TO_BUM = {
+  'APPLIANCES-HOUSEWARE': 'DANIEL',
+  'BUILDING-MATERIALS': 'PASCAL',
+  'HARDWARE': 'JOHN',
+  'LIVING': 'GIJS',
+  'SANITAIR-KEUKENS': 'HENK',
+};
+function resolveBum(filter) {
+  if (!filter) return null;
+  var up = String(filter).toUpperCase();
+  return BU_TO_BUM[up] || up;
+}
+
 export default function HealthDashboardShared({ bumFilter }) {
+  // Vertaal de doorgegeven prop (kan BU-folder-naam of directe BUM zijn) naar BUM
+  bumFilter = resolveBum(bumFilter);
   var _d = useState([]), data = _d[0], setData = _d[1];
   var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
   var _upd = useState(null), lastUpdate = _upd[0], setLastUpdate = _upd[1];
@@ -98,10 +126,8 @@ export default function HealthDashboardShared({ bumFilter }) {
     setLoading(true);
     var all = [], from = 0, step = 1000;
     while (true) {
-      // Gebruik enriched view → effective_dept_code/_name/_bum_group
-      var q = supabase.from('buying_data_enriched').select('*').range(from, from + step - 1);
-      // bumFilter is een afdelings-code (BUILDING_MATERIALS etc); vergelijk met effective_bum_group
-      if (bumFilter) q = q.eq('effective_bum_group', bumFilter);
+      var q = supabase.from('buying_data').select('*').range(from, from + step - 1);
+      if (bumFilter) q = q.eq('bum', bumFilter);
       var r = await q;
       if (!r.data || !r.data.length) break;
       all = all.concat(r.data);
@@ -133,11 +159,9 @@ export default function HealthDashboardShared({ bumFilter }) {
       if (!map[key]) {
         map[key] = {
           item: r.item_number, desc: r.item_description,
-          dept_code: r.effective_dept_code || r.dept_code,
-          dept_name: r.effective_dept_name || r.dept_name,
+          dept_code: r.dept_code, dept_name: r.dept_name,
           class_code: r.class_code, class_name: r.class_name,
-          bum: r.effective_bum_group || '',
-          vendor: r.vendor_name || '',
+          bum: r.bum || '', vendor: r.vendor_name || '',
           cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
           qoh: 0, inv_value: 0,
           // Lead time = transit-tijd van leverancier naar magazijn.
@@ -335,18 +359,12 @@ export default function HealthDashboardShared({ bumFilter }) {
     return t;
   }, [barItems]);
 
-  /* Afdelingen lijst */
+  /* BUM list */
   var bums = useMemo(function() {
     var s = {};
-    items.forEach(function(m) { if (m.bum && m.bum !== 'OVERIG' && m.bum !== 'OTHER') s[m.bum] = true; });
+    items.forEach(function(m) { if (m.bum && m.bum !== 'OTHER') s[m.bum] = true; });
     var l = Object.keys(s);
-    l.sort(function(a, b) {
-      var ai = GROUP_ORDER.indexOf(a), bi = GROUP_ORDER.indexOf(b);
-      if (ai !== -1 && bi !== -1) return ai - bi;
-      if (ai !== -1) return -1;
-      if (bi !== -1) return 1;
-      return a.localeCompare(b);
-    });
+    l.sort(function(a, b) { var ai = BU_ORDER.indexOf(a), bi = BU_ORDER.indexOf(b); if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b); });
     return l;
   }, [items]);
 
@@ -413,12 +431,12 @@ export default function HealthDashboardShared({ bumFilter }) {
         rows: sortedItems.map(function(m) {
           return {
             'Dept': m.dept_code,
-            'Departement': m.dept_name,
+            'Afdeling': m.dept_name,
             'Item': m.item,
             'Omschrijving': m.desc,
             'NOS': m.is_nos ? 'NOS' : '',
             'Vendor': m.vendor,
-            'Afdeling': GROUP_LABEL[m.bum] || m.bum || '',
+            'BUM': m.bum,
             'QOH': Math.round(m.qoh),
             'Voorraadwaarde (XCG)': Math.round(m.inv_value),
             'Voorraad-niveau': m.stock_cat === 'understock' ? 'Understock' : m.stock_cat === 'overstock' ? 'Overstock' : 'Gezond',
@@ -436,9 +454,8 @@ export default function HealthDashboardShared({ bumFilter }) {
   }
 
 
-  var displayName = bumFilter ? (GROUP_LABEL[bumFilter] || bumFilter) : '';
-  if (loading) return <LoadingLogo text={'Gezondheid laden' + (bumFilter ? ' (' + displayName + ')' : '') + '...'} />;
-  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">{"Geen data beschikbaar" + (bumFilter ? " voor " + displayName : "") + "."}</p></div>;
+  if (loading) return <LoadingLogo text={'Gezondheid laden' + (bumFilter ? ' (' + bumFilter + ')' : '') + '...'} />;
+  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">{"Geen data beschikbaar" + (bumFilter ? " voor " + bumFilter : "") + "."}</p></div>;
 
   var storeName = store === '1' ? 'Curaçao' : 'Bonaire';
   var updateLabel = lastUpdate ? 'Data t/m ' + (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
@@ -464,10 +481,10 @@ export default function HealthDashboardShared({ bumFilter }) {
 
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>{bumFilter ? 'Gezondheid — ' + displayName : 'Gezondheid Voorraden — Totaaloverzicht'}</h1>
-          <p className="text-[13px] text-[#6b5240]">{bumFilter ? 'Voorraad gezondheid voor ' + displayName + ' — ' + storeName : 'Alle afdelingen — ' + storeName}{updateLabel ? ' — ' + updateLabel : ''}</p>
+          <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>{bumFilter ? 'Gezondheid — ' + bumFilter : 'Gezondheid Voorraden — Totaaloverzicht'}</h1>
+          <p className="text-[13px] text-[#6b5240]">{bumFilter ? 'Voorraad gezondheid voor ' + bumFilter + ' — ' + storeName : 'Alle BUMs — ' + storeName}{updateLabel ? ' — ' + updateLabel : ''}</p>
         </div>
-        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{bumFilter ? displayName + ' · ' + storeName : storeName}</div>
+        <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{bumFilter ? bumFilter + ' · ' + storeName : storeName}</div>
       </div>
 
       {/* Filters */}
@@ -480,10 +497,10 @@ export default function HealthDashboardShared({ bumFilter }) {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Afdeling</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Manager</span>
           <div className="flex gap-1">
             <Pill label="Alle" active={selBum === 'all'} onClick={function() { setSelBum('all'); setSelDept('all'); setDetailDept(null); }} />
-            {bums.map(function(b) { return <Pill key={b} label={GROUP_LABEL[b] || b} active={selBum === b} onClick={function() { setSelBum(b); setSelDept('all'); setDetailDept(null); }} />; })}
+            {bums.map(function(b) { return <Pill key={b} label={b} active={selBum === b} onClick={function() { setSelBum(b); setSelDept('all'); setDetailDept(null); }} />; })}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -602,13 +619,8 @@ export default function HealthDashboardShared({ bumFilter }) {
           })}
         </div>
         <ExcelExportButton
-          filename={(function() {
-            var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;};
-            var label = bumFilter ? displayName : (selBum !== 'all' ? (GROUP_LABEL[selBum] || selBum) : 'alle');
-            var labelSafe = label.toLowerCase().replace(/[ &]/g, '_');
-            return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraadgezondheid_' + labelSafe + '_' + (store === '1' ? 'Curacao' : 'Bonaire');
-          })()}
-          reportTitle={'Gezondheid Voorraden — ' + (bumFilter ? displayName + ' — ' : '') + (store === '1' ? 'Curaçao' : 'Bonaire')}
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraadgezondheid_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : 'Bonaire'); })()}
+          reportTitle={'Gezondheid Voorraden — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : 'Bonaire')}
           sheets={buildExportSheets}
           className="px-4 py-1.5 mb-1 rounded-lg text-[12px] font-semibold border bg-white text-[#E84E1B] border-[#E84E1B] hover:bg-[#faf5f0] transition-colors"
         />

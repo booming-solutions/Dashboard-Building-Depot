@@ -5,6 +5,13 @@
    VERSIE: v3.28.23
 
    Wijzigingen t.o.v. v8:
+   - BUGFIX: BU-folder namen (HARDWARE, LIVING, etc) worden nu correct
+     gemapt naar BUM (JOHN, GIJS) zodat buying_data filter werkt
+     · APPLIANCES-HOUSEWARE → DANIEL
+     · BUILDING-MATERIALS → PASCAL
+     · HARDWARE → JOHN
+     · LIVING → GIJS
+     · SANITAIR-KEUKENS → HENK
    - NOS Voorraad-status grafiek: bij ingezoomd op BUM (bumFilter actief)
      toont nu per afdeling (dept_code) in plaats van per BUM
      · Label: "20 — DEPT NAME" formaat
@@ -410,7 +417,25 @@ function NosTrendChart({ allSnapshots, deptSnapshots, store, bumFilter }) {
 }
 
 // bumFilter: null = all BUMs (totaal), 'PASCAL' = only PASCAL, etc.
+// NEW v9: accepteert ook BU folder-namen (bv. 'HARDWARE') en mapt die naar de
+// daadwerkelijke BUM in buying_data ('JOHN'). De page.js van elke BU geeft
+// bumFilter door als folder-naam (uppercase), wij vertalen hier.
+var BU_TO_BUM = {
+  'APPLIANCES-HOUSEWARE': 'DANIEL',
+  'BUILDING-MATERIALS': 'PASCAL',
+  'HARDWARE': 'JOHN',
+  'LIVING': 'GIJS',
+  'SANITAIR-KEUKENS': 'HENK',
+};
+function resolveBum(filter) {
+  if (!filter) return null;
+  var up = String(filter).toUpperCase();
+  return BU_TO_BUM[up] || up;
+}
+
 export default function StockRiskShared({ bumFilter }) {
+  // Vertaal de doorgegeven prop (kan BU-folder-naam of directe BUM zijn) naar BUM
+  bumFilter = resolveBum(bumFilter);
   var _s = useState;
   var _d = _s([]), data = _d[0], setData = _d[1];
   var _lo = _s(true), loading = _lo[0], setLoading = _lo[1];
