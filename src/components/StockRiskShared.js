@@ -417,14 +417,17 @@ function NosTrendChart({ allSnapshots, deptSnapshots, store, bumFilter }) {
 }
 
 // bumFilter: null = all BUMs (totaal), 'PASCAL' = only PASCAL, etc.
-// NEW v9: accepteert ook BU folder-namen (bv. 'HARDWARE') en mapt die naar de
-// daadwerkelijke BUM in buying_data ('JOHN'). De page.js van elke BU geeft
-// bumFilter door als folder-naam (uppercase), wij vertalen hier.
+// NEW v9: accepteert ook BU folder-namen (bv. 'HARDWARE', 'BUILDING_MATERIALS')
+// en mapt die naar de daadwerkelijke BUM in buying_data ('JOHN', 'PASCAL').
+// Ondersteunt zowel underscore (BUILDING_MATERIALS) als dash (BUILDING-MATERIALS).
 var BU_TO_BUM = {
+  'APPLIANCES_HOUSEWARE': 'DANIEL',
   'APPLIANCES-HOUSEWARE': 'DANIEL',
+  'BUILDING_MATERIALS': 'PASCAL',
   'BUILDING-MATERIALS': 'PASCAL',
   'HARDWARE': 'JOHN',
   'LIVING': 'GIJS',
+  'SANITAIR_KEUKENS': 'HENK',
   'SANITAIR-KEUKENS': 'HENK',
 };
 function resolveBum(filter) {
