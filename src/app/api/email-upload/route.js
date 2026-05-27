@@ -1,7 +1,14 @@
 /* ============================================================
-   BESTAND: route_email_v21.js
+   BESTAND: route_email_v22.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v22:
+   - processNosSnapshot schrijft naast nos_coverage_snapshots óók
+     naar nieuwe tabel nos_coverage_snapshots_dept (per dept_code)
+   - Vereist nieuwe Supabase tabel (SQL elders aangeleverd)
+   - buying_data SELECT uitgebreid met dept_code, dept_name
+   - Per (bum, region, dept_code) wordt in/refilling/uncovered geteld
+   - Ook 'Total' rij per (bum, dept_code) als rollup CUR+BON
    WIJZIGING v21:
    - Nieuw file type 'po_deliveries' toegevoegd
      * Detectie via kolommen: PO Detail + Item Number + Date Expected
@@ -776,7 +783,7 @@ async function processNosSnapshot() {
   while (true) {
     var r = await getSupabase()
       .from('buying_data')
-      .select('item_number, store_number, bum, qoh, qty_on_order, nos, sales_m01, sales_m02, sales_m03, sales_m04, sales_m05, sales_m06, sales_m07, sales_m08, sales_m09, sales_m10, sales_m11, sales_m12')
+      .select('item_number, store_number, bum, dept_code, dept_name, qoh, qty_on_order, nos, sales_m01, sales_m02, sales_m03, sales_m04, sales_m05, sales_m06, sales_m07, sales_m08, sales_m09, sales_m10, sales_m11, sales_m12')
       .eq('nos', 'N')
       .range(from, from + step - 1);
     if (r.error) {
@@ -790,7 +797,8 @@ async function processNosSnapshot() {
   }
   console.log('NOS snapshot: loaded ' + all.length + ' NOS rows');
 
-  // Aggregate per (item, bum, region)
+  // Aggregate per (item, bum, region) — voor item-level counts (origineel)
+  // En per (item, bum, region, dept_code) — voor dept-level snapshots (nieuw)
   // region: numeric store -> Curacao, anders Bonaire
   var agg = {};
   all.forEach(function(rec) {
@@ -804,6 +812,8 @@ async function processNosSnapshot() {
         bum: bum,
         region: region,
         item_number: rec.item_number,
+        dept_code: String(rec.dept_code || '').trim(),
+        dept_name: String(rec.dept_name || '').trim(),
         qoh: 0,
         qoo: 0,
         sales_total: 0,
@@ -823,6 +833,10 @@ async function processNosSnapshot() {
   // Per BUM × region counts
   var perGroup = {};      // key = bum|region
   var perBumItems = {};   // key = bum|item -> { qoh, qoo } (combined Cur+Bon)
+  // NEW v22: dept-level aggregations
+  var perGroupDept = {};         // key = bum|region|dept_code -> counts
+  var perBumDeptItems = {};      // key = bum|dept_code|item -> { qoh, qoo } (combined Cur+Bon)
+  var deptNames = {};            // key = dept_code -> dept_name (laatste niet-lege wint)
 
   aggArr.forEach(function(x) {
     var gKey = x.bum + '|' + x.region;
@@ -839,6 +853,31 @@ async function processNosSnapshot() {
     if (!perBumItems[iKey]) perBumItems[iKey] = { bum: x.bum, qoh: 0, qoo: 0 };
     perBumItems[iKey].qoh += x.qoh;
     perBumItems[iKey].qoo += x.qoo;
+
+    // Dept-level: alleen meedoen als dept_code aanwezig is
+    if (x.dept_code) {
+      if (x.dept_name) deptNames[x.dept_code] = x.dept_name;
+
+      var gdKey = x.bum + '|' + x.region + '|' + x.dept_code;
+      if (!perGroupDept[gdKey]) {
+        perGroupDept[gdKey] = {
+          bum: x.bum, region: x.region, dept_code: x.dept_code,
+          total: 0, in_stock: 0, refilling: 0, uncovered: 0,
+        };
+      }
+      perGroupDept[gdKey].total += 1;
+      if (x.qoh > 0) perGroupDept[gdKey].in_stock += 1;
+      else if (x.qoh + x.qoo > 0) perGroupDept[gdKey].refilling += 1;
+      else perGroupDept[gdKey].uncovered += 1;
+
+      // Voor Total per BUM × dept (item-level combined Cur+Bon)
+      var idKey = x.bum + '|' + x.dept_code + '|' + x.item_number;
+      if (!perBumDeptItems[idKey]) {
+        perBumDeptItems[idKey] = { bum: x.bum, dept_code: x.dept_code, qoh: 0, qoo: 0 };
+      }
+      perBumDeptItems[idKey].qoh += x.qoh;
+      perBumDeptItems[idKey].qoo += x.qoo;
+    }
   });
 
   // Per BUM × Total
@@ -852,6 +891,22 @@ async function processNosSnapshot() {
     if (x.qoh > 0) perBumTotal[key].in_stock += 1;
     else if (x.qoh + x.qoo > 0) perBumTotal[key].refilling += 1;
     else perBumTotal[key].uncovered += 1;
+  });
+
+  // NEW v22: Per BUM × dept × Total
+  var perBumDeptTotal = {};
+  Object.values(perBumDeptItems).forEach(function(x) {
+    var key = x.bum + '|' + x.dept_code;
+    if (!perBumDeptTotal[key]) {
+      perBumDeptTotal[key] = {
+        bum: x.bum, region: 'Total', dept_code: x.dept_code,
+        total: 0, in_stock: 0, refilling: 0, uncovered: 0,
+      };
+    }
+    perBumDeptTotal[key].total += 1;
+    if (x.qoh > 0) perBumDeptTotal[key].in_stock += 1;
+    else if (x.qoh + x.qoo > 0) perBumDeptTotal[key].refilling += 1;
+    else perBumDeptTotal[key].uncovered += 1;
   });
 
   // Build snapshot rows
@@ -903,6 +958,55 @@ async function processNosSnapshot() {
     console.error('NOS snapshot insert error: ' + ins.error.message);
   } else {
     console.log('NOS snapshot: inserted ' + snapRows.length + ' rows');
+  }
+
+  // NEW v22: Schrijf óók dept-level snapshot naar nos_coverage_snapshots_dept
+  var deptRows = [];
+  Object.values(perGroupDept).forEach(function(g) {
+    deptRows.push({
+      snapshot_date: today,
+      bum: g.bum,
+      region: g.region,
+      dept_code: g.dept_code,
+      dept_name: deptNames[g.dept_code] || '',
+      total_nos_items: g.total,
+      in_stock: g.in_stock,
+      refilling: g.refilling,
+      uncovered: g.uncovered,
+    });
+  });
+  Object.values(perBumDeptTotal).forEach(function(g) {
+    deptRows.push({
+      snapshot_date: today,
+      bum: g.bum,
+      region: g.region, // 'Total'
+      dept_code: g.dept_code,
+      dept_name: deptNames[g.dept_code] || '',
+      total_nos_items: g.total,
+      in_stock: g.in_stock,
+      refilling: g.refilling,
+      uncovered: g.uncovered,
+    });
+  });
+
+  console.log('NOS dept snapshot: ' + deptRows.length + ' rows ready');
+
+  if (deptRows.length > 0) {
+    var delDept = await getSupabase()
+      .from('nos_coverage_snapshots_dept')
+      .delete({ count: 'exact' })
+      .eq('snapshot_date', today);
+    if (delDept.error) {
+      console.error('NOS dept snapshot delete error: ' + delDept.error.message);
+    } else {
+      console.log('NOS dept snapshot: deleted ' + (delDept.count || 0) + ' existing rows for ' + today);
+    }
+    var insDept = await getSupabase().from('nos_coverage_snapshots_dept').insert(deptRows);
+    if (insDept.error) {
+      console.error('NOS dept snapshot insert error: ' + insDept.error.message);
+    } else {
+      console.log('NOS dept snapshot: inserted ' + deptRows.length + ' rows');
+    }
   }
 }
 
