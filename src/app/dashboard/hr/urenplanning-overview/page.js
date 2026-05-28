@@ -432,6 +432,46 @@ export default function UrenplanningOverviewPage() {
     return out;
   }, [filteredRows]);
 
+  // Overuren-data per week (vast + flex apart) - werkt OP filteredRowsByEmp dus contract-toggle wordt gerespecteerd
+  // voor het vast-deel; flex altijd zichtbaar (er IS toch geen overuren-component voor flex meestal)
+  const overtimeData = useMemo(() => {
+    const out = {};
+    for (let w = 1; w <= 53; w++) {
+      out[w] = { week: w, vast: 0, flex: 0 };
+    }
+    filteredRowsByEmp.forEach(r => {
+      if (!r.is_actual) return;
+      const w = r.period_week;
+      if (!out[w]) return;
+      const ci = getContractInfo(r.employee_name);
+      const ot = parseFloat(r.overtime_total) || 0;
+      if (ci && ci.contract === 'Vast') out[w].vast += ot;
+      else out[w].flex += ot;
+    });
+    return out;
+  }, [filteredRowsByEmp, selectedBU]);
+
+  // Variabele (Flex/Onbekend) data per week — alleen hours_worked (regulier + overuren)
+  const variableData = useMemo(() => {
+    const out = {};
+    for (let w = 1; w <= 53; w++) {
+      out[w] = { week: w, regular: 0, overtime: 0, hours_worked: 0 };
+    }
+    filteredRowsByEmp.forEach(r => {
+      if (!r.is_actual) return;
+      const w = r.period_week;
+      if (!out[w]) return;
+      const ci = getContractInfo(r.employee_name);
+      if (ci && ci.contract === 'Vast') return; // skip vaste
+      const hw = parseFloat(r.hours_worked) || 0;
+      const ot = parseFloat(r.overtime_total) || 0;
+      out[w].hours_worked += hw;
+      out[w].overtime += ot;
+      out[w].regular += (hw - ot);
+    });
+    return out;
+  }, [filteredRowsByEmp, selectedBU]);
+
   // KPI's (respect viewMode: alleen weken >= STRUCTURE_START_WEEK in 'recent' mode)
   const kpis = useMemo(() => {
     let totalWork = 0, totalSick = 0, totalLeave = 0, totalOvertime = 0, totalHours = 0;
@@ -478,6 +518,8 @@ export default function UrenplanningOverviewPage() {
   // === RENDER HELPERS ===
   const COLOR_REGULAR = '#0056a3';
   const COLOR_OVERTIME = '#6e3bb8';   // paars
+  const COLOR_OVERTIME_VAST = '#4a1f8c';  // donkerpaars (Vast)
+  const COLOR_OVERTIME_FLEX = '#b284db';  // lichtpaars (Flex)
   const COLOR_SICK = '#a33225';       // rood
   const COLOR_LEAVE = '#9c978c';      // grijs
   const COLOR_PLANNED = '#cce5ff';    // licht blauw voor planning
@@ -494,6 +536,27 @@ export default function UrenplanningOverviewPage() {
     });
     return m * 1.15 || 50;
   }, [weekData, viewMode]);
+
+  // Max voor overuren-grafiek
+  const overtimeChartMax = useMemo(() => {
+    let m = 0;
+    Object.values(overtimeData).forEach(w => {
+      if (viewMode === 'recent' && w.week < STRUCTURE_START_WEEK) return;
+      const total = w.vast + w.flex;
+      m = Math.max(m, total);
+    });
+    return m * 1.15 || 20;
+  }, [overtimeData, viewMode]);
+
+  // Max voor variabele-grafiek
+  const variableChartMax = useMemo(() => {
+    let m = 0;
+    Object.values(variableData).forEach(w => {
+      if (viewMode === 'recent' && w.week < STRUCTURE_START_WEEK) return;
+      m = Math.max(m, w.hours_worked);
+    });
+    return m * 1.15 || 50;
+  }, [variableData, viewMode]);
 
   // Weeks om te tonen: 1 t/m max(actual_count, planned_count) week
   const lastWeek = useMemo(() => {
@@ -515,8 +578,8 @@ export default function UrenplanningOverviewPage() {
   const barGap = 4;
   const chartWidth = weeksToShow.length * (barWidth + barGap) + 60;
 
-  function yScale(v) {
-    return chartTop + (chartHeight - chartTop - chartBottom) * (1 - v / chartMax);
+  function yScale(v, max = chartMax) {
+    return chartTop + (chartHeight - chartTop - chartBottom) * (1 - v / max);
   }
 
   // Contract-uren lijn (alleen voor specifieke medewerker)
@@ -726,6 +789,105 @@ export default function UrenplanningOverviewPage() {
             </svg>
           </div>
         )}
+      </div>
+
+      {/* Grafiek 2: Overuren per week (stacked: Vast + Flex) */}
+      <div style={{...sectionStyle}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14, flexWrap:'wrap', gap:10}}>
+          <h2 style={{fontSize:14, fontWeight:600, margin:0}}>Overuren per week</h2>
+          <div style={{display:'flex', gap:14, fontSize:11, color:'#6b6960'}}>
+            <LegendItem color={COLOR_OVERTIME_VAST} label="Vast" />
+            <LegendItem color={COLOR_OVERTIME_FLEX} label="Flex / Onbekend" />
+          </div>
+        </div>
+        <div style={{overflowX:'auto', paddingBottom:8}}>
+          <svg width={chartWidth} height={chartHeight} style={{display:'block', minWidth:'100%'}}>
+            {/* Y-as gridlines */}
+            {[0, 0.25, 0.5, 0.75, 1].map(fr => {
+              const y = yScale(overtimeChartMax * fr, overtimeChartMax);
+              return (
+                <g key={fr}>
+                  <line x1={40} y1={y} x2={chartWidth} y2={y} stroke="rgba(0,0,0,0.06)" strokeDasharray={fr === 0 ? '' : '2 3'} />
+                  <text x={36} y={y + 3} textAnchor="end" fontSize="9" fill="#9c978c" fontFamily="'JetBrains Mono',monospace">
+                    {(overtimeChartMax * fr).toFixed(0)}
+                  </text>
+                </g>
+              );
+            })}
+            {weeksToShow.map((w, i) => {
+              const x = 45 + i * (barWidth + barGap);
+              const d = overtimeData[w];
+              let yCursor = chartHeight - chartBottom;
+              const segments = [];
+              if (d.vast > 0) {
+                const segH = (chartHeight - chartTop - chartBottom) * (d.vast / overtimeChartMax);
+                segments.push(<rect key="v" x={x} y={yCursor - segH} width={barWidth} height={segH} fill={COLOR_OVERTIME_VAST}><title>{`Wk ${w} · Vast: ${d.vast.toFixed(1)}u`}</title></rect>);
+                yCursor -= segH;
+              }
+              if (d.flex > 0) {
+                const segH = (chartHeight - chartTop - chartBottom) * (d.flex / overtimeChartMax);
+                segments.push(<rect key="f" x={x} y={yCursor - segH} width={barWidth} height={segH} fill={COLOR_OVERTIME_FLEX}><title>{`Wk ${w} · Flex: ${d.flex.toFixed(1)}u`}</title></rect>);
+                yCursor -= segH;
+              }
+              return (
+                <g key={w}>
+                  {segments}
+                  <text x={x + barWidth/2} y={chartHeight - chartBottom + 12} textAnchor="middle" fontSize="9" fill="#9c978c" fontFamily="'JetBrains Mono',monospace">{w}</text>
+                </g>
+              );
+            })}
+            <text x={chartWidth/2} y={chartHeight - 4} textAnchor="middle" fontSize="9" fill="#9c978c">Weeknummer</text>
+          </svg>
+        </div>
+      </div>
+
+      {/* Grafiek 3: Variabele uren per week (alleen Flex/Onbekend, regulier + overuren) */}
+      <div style={{...sectionStyle}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14, flexWrap:'wrap', gap:10}}>
+          <h2 style={{fontSize:14, fontWeight:600, margin:0}}>Variabele uren per week <span style={{fontSize:11, fontWeight:400, color:'#9c978c'}}>(alleen Flex / Onbekend contract)</span></h2>
+          <div style={{display:'flex', gap:14, fontSize:11, color:'#6b6960'}}>
+            <LegendItem color={COLOR_REGULAR} label="Regulier" />
+            <LegendItem color={COLOR_OVERTIME} label="Overuren" />
+          </div>
+        </div>
+        <div style={{overflowX:'auto', paddingBottom:8}}>
+          <svg width={chartWidth} height={chartHeight} style={{display:'block', minWidth:'100%'}}>
+            {[0, 0.25, 0.5, 0.75, 1].map(fr => {
+              const y = yScale(variableChartMax * fr, variableChartMax);
+              return (
+                <g key={fr}>
+                  <line x1={40} y1={y} x2={chartWidth} y2={y} stroke="rgba(0,0,0,0.06)" strokeDasharray={fr === 0 ? '' : '2 3'} />
+                  <text x={36} y={y + 3} textAnchor="end" fontSize="9" fill="#9c978c" fontFamily="'JetBrains Mono',monospace">
+                    {(variableChartMax * fr).toFixed(0)}
+                  </text>
+                </g>
+              );
+            })}
+            {weeksToShow.map((w, i) => {
+              const x = 45 + i * (barWidth + barGap);
+              const d = variableData[w];
+              let yCursor = chartHeight - chartBottom;
+              const segments = [];
+              if (d.regular > 0) {
+                const segH = (chartHeight - chartTop - chartBottom) * (d.regular / variableChartMax);
+                segments.push(<rect key="r" x={x} y={yCursor - segH} width={barWidth} height={segH} fill={COLOR_REGULAR}><title>{`Wk ${w} · Regulier: ${d.regular.toFixed(1)}u`}</title></rect>);
+                yCursor -= segH;
+              }
+              if (d.overtime > 0) {
+                const segH = (chartHeight - chartTop - chartBottom) * (d.overtime / variableChartMax);
+                segments.push(<rect key="o" x={x} y={yCursor - segH} width={barWidth} height={segH} fill={COLOR_OVERTIME}><title>{`Wk ${w} · Overuren: ${d.overtime.toFixed(1)}u`}</title></rect>);
+                yCursor -= segH;
+              }
+              return (
+                <g key={w}>
+                  {segments}
+                  <text x={x + barWidth/2} y={chartHeight - chartBottom + 12} textAnchor="middle" fontSize="9" fill="#9c978c" fontFamily="'JetBrains Mono',monospace">{w}</text>
+                </g>
+              );
+            })}
+            <text x={chartWidth/2} y={chartHeight - 4} textAnchor="middle" fontSize="9" fill="#9c978c">Weeknummer</text>
+          </svg>
+        </div>
       </div>
 
       {/* Tabel met week-details */}
