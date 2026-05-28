@@ -190,6 +190,9 @@ export default function UrenplanningOverviewPage() {
   // Contract filter: 'all' = alle medewerkers, 'vast' = alleen Vast contract
   const [contractFilter, setContractFilter] = useState('all');
 
+  // Planning completeness: welke weken zijn uitgeklapt
+  const [expandedWeeks, setExpandedWeeks] = useState({}); // {weekNum: true/false}
+
   // Data
   const [allRows, setAllRows] = useState([]); // alle 2026 records voor selected BU
 
@@ -573,6 +576,105 @@ export default function UrenplanningOverviewPage() {
     return m * 1.15 || 50;
   }, [variableData, viewMode]);
 
+  // ============================================================
+  // Planning completeness (komende 6 weken)
+  // ============================================================
+  const planningWeeks = useMemo(() => {
+    const monday = new Date();
+    // Pak maandag van huidige week
+    const dow = monday.getUTCDay() || 7;
+    monday.setUTCDate(monday.getUTCDate() - dow + 1);
+    monday.setUTCHours(0, 0, 0, 0);
+    const result = [];
+    for (let offset = 0; offset < 6; offset++) {
+      const d = new Date(monday);
+      d.setUTCDate(monday.getUTCDate() + offset * 7);
+      const iso = getISOWeek(d);
+      result.push({ year: iso.year, week: iso.week, monday: d });
+    }
+    return result;
+  }, []);
+
+  // Per week per medewerker geplande uren
+  // We gebruiken filteredRowsBySub zodat sub-filter werkt, maar IGNORE de contract-filter
+  // omdat we Vast/Flex apart willen tonen
+  const planningCompletenessData = useMemo(() => {
+    // Map: weekKey ('year-week') → { plannedTotal, plannedFlex, contractTotal, employees: Map<empKey, {name, contract, contractHours, plannedHours, isVast}> }
+    const out = {};
+    const buEmps = BU_EMPLOYEES[selectedBU] || [];
+
+    // Bepaal welke medewerkers in deze sub vallen (volgens C16)
+    const empsInScope = buEmps.filter(e => {
+      if (selectedSub === '__all__') return true;
+      return normalizeSub(e.sub, selectedBU) === selectedSub;
+    });
+
+    for (const pw of planningWeeks) {
+      const key = `${pw.year}-${pw.week}`;
+      const empMap = new Map();
+      // Init alle medewerkers in scope (vaste) zodat ook 0-uur planning zichtbaar is
+      for (const e of empsInScope) {
+        const k = nameKeyAliased(e.name);
+        empMap.set(k, {
+          name: e.name,
+          contract: e.contract,
+          contractHours: e.contract_hours,
+          plannedHours: 0,
+          sub: e.sub,
+          isVast: e.contract === 'Vast',
+        });
+      }
+      out[key] = {
+        year: pw.year, week: pw.week, monday: pw.monday,
+        plannedTotalVast: 0, plannedTotalFlex: 0, contractSum: 0,
+        empMap,
+      };
+    }
+
+    // Loop over alle filteredRowsBySub (planning rijen)
+    filteredRowsBySub.forEach(r => {
+      if (r.is_actual) return;
+      if (r.is_open) return;
+      const key = `${r.period_year}-${r.period_week}`;
+      const w = out[key];
+      if (!w) return;
+      const ci = getContractInfo(r.employee_name);
+      const empKey = nameKeyAliased(r.employee_name);
+      const netto = parseFloat(r.netto_hours) || 0;
+      // Voeg toe aan empMap
+      if (!w.empMap.has(empKey)) {
+        // medewerker niet in C16 — toch tonen (Flex / nieuw)
+        w.empMap.set(empKey, {
+          name: r.employee_name,
+          contract: ci ? ci.contract : 'Onbekend',
+          contractHours: ci ? ci.contract_hours : null,
+          plannedHours: 0,
+          sub: ci ? ci.sub : (r.sub_afdeling || ''),
+          isVast: ci ? ci.contract === 'Vast' : false,
+        });
+      }
+      const emp = w.empMap.get(empKey);
+      emp.plannedHours += netto;
+      // Totalen
+      if (emp.isVast) w.plannedTotalVast += netto;
+      else w.plannedTotalFlex += netto;
+    });
+
+    // Bereken contractSum per week (= som contracturen vaste mensen in scope)
+    Object.values(out).forEach(w => {
+      w.contractSum = 0;
+      w.empMap.forEach(emp => {
+        if (emp.isVast && emp.contractHours) w.contractSum += emp.contractHours;
+      });
+    });
+
+    return out;
+  }, [filteredRowsBySub, selectedSub, selectedBU, planningWeeks]);
+
+  function toggleWeekExpanded(weekKey) {
+    setExpandedWeeks(prev => ({ ...prev, [weekKey]: !prev[weekKey] }));
+  }
+
   // Weeks om te tonen: 1 t/m max(actual_count, planned_count) week
   const lastWeek = useMemo(() => {
     let last = 0;
@@ -696,6 +798,14 @@ export default function UrenplanningOverviewPage() {
           <div style={{marginTop:6, fontSize:11}}>Als het dezelfde persoon is, laat het me weten dan voeg ik ze samen in de mapping.</div>
         </div>
       )}
+
+      {/* Planning completeness — komende 6 weken */}
+      <PlanningCompletenessSection
+        planningWeeks={planningWeeks}
+        data={planningCompletenessData}
+        expandedWeeks={expandedWeeks}
+        onToggle={toggleWeekExpanded}
+      />
 
       {/* Hoofdgrafiek: stacked bar regulier + overwerk + ziek + verlof + planning */}
       <div style={{...sectionStyle}}>
@@ -967,6 +1077,113 @@ function KPIBlock({label, value, sub, color}) {
       <div style={{fontSize:10, fontWeight:600, textTransform:'uppercase', color:'#9c978c', letterSpacing:'.4px'}}>{label}</div>
       <div style={{fontSize:20, fontWeight:700, color, fontFamily:"'JetBrains Mono',monospace", marginTop:4}}>{value}</div>
       <div style={{fontSize:10.5, color:'#9c978c', marginTop:2}}>{sub}</div>
+    </div>
+  );
+}
+
+function PlanningCompletenessSection({planningWeeks, data, expandedWeeks, onToggle}) {
+  return (
+    <div style={{background:'#fff', borderRadius:14, padding:20, marginBottom:14, boxShadow:'0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)'}}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:12, flexWrap:'wrap', gap:8}}>
+        <h2 style={{fontSize:14, fontWeight:600, margin:0}}>Planning completeness</h2>
+        <span style={{fontSize:11, color:'#9c978c'}}>Komende 6 weken · % = geplande uren (Vast) / som contracturen</span>
+      </div>
+      <div style={{display:'flex', flexDirection:'column', gap:6}}>
+        {planningWeeks.map(pw => {
+          const key = `${pw.year}-${pw.week}`;
+          const wd = data[key];
+          if (!wd) return null;
+          const hasPlanning = wd.plannedTotalVast > 0 || wd.plannedTotalFlex > 0;
+          const pct = wd.contractSum > 0 ? (wd.plannedTotalVast / wd.contractSum * 100) : 0;
+          // Kleur op basis van %: <30 rood, 30-80 geel, 80-110 groen, >110 paars (overplanned)
+          let barColor = '#a33225', label = 'Bijna leeg';
+          if (pct >= 110) { barColor = '#6e3bb8'; label = 'Overplanning'; }
+          else if (pct >= 80) { barColor = '#2d6b3f'; label = 'Compleet'; }
+          else if (pct >= 30) { barColor = '#856404'; label = 'Onvolledig'; }
+          if (!hasPlanning) { barColor = '#d4d4d0'; label = 'Niet ingepland'; }
+          const isExpanded = !!expandedWeeks[key];
+          const dateStr = `${pw.monday.getUTCDate()}-${pw.monday.getUTCMonth()+1}`;
+
+          // Medewerkers gesorteerd: vaste eerst (geplande% asc om "lege" bovenaan te zien), dan flex
+          const empList = Array.from(wd.empMap.values());
+          empList.sort((a, b) => {
+            if (a.isVast !== b.isVast) return a.isVast ? -1 : 1;
+            if (a.isVast) {
+              const ap = a.contractHours > 0 ? a.plannedHours / a.contractHours : 0;
+              const bp = b.contractHours > 0 ? b.plannedHours / b.contractHours : 0;
+              return ap - bp; // laagst eerst (= meest onvolledige bovenaan)
+            }
+            return b.plannedHours - a.plannedHours;
+          });
+
+          return (
+            <div key={key} style={{background: hasPlanning ? '#fafaf6' : '#f0f0eb', borderRadius:8, padding:'10px 14px', border:'1px solid rgba(0,0,0,0.06)', opacity: hasPlanning ? 1 : 0.7}}>
+              <div style={{display:'flex', alignItems:'center', gap:14, cursor:'pointer'}} onClick={() => onToggle(key)}>
+                <div style={{minWidth:120, fontSize:12}}>
+                  <strong>Wk {pw.week}</strong> <span style={{color:'#9c978c'}}>({dateStr})</span>
+                </div>
+                <div style={{flex:1, position:'relative', height:18, background:'rgba(0,0,0,0.06)', borderRadius:4, overflow:'hidden'}}>
+                  <div style={{position:'absolute', left:0, top:0, height:'100%', width:`${Math.min(pct, 110)}%`, background: barColor, transition:'width .25s ease'}}></div>
+                </div>
+                <div style={{minWidth:160, fontSize:12, fontFamily:"'JetBrains Mono',monospace", textAlign:'right'}}>
+                  <strong style={{color: barColor}}>{pct.toFixed(0)}%</strong>{' '}
+                  <span style={{color:'#9c978c', fontSize:11}}>{wd.plannedTotalVast.toFixed(0)}u / {wd.contractSum.toFixed(0)}u</span>
+                </div>
+                <div style={{minWidth:120, fontSize:11, color: barColor, fontWeight:500, textAlign:'right'}}>
+                  {label}
+                </div>
+                <div style={{fontSize:14, color:'#9c978c', minWidth:14}}>
+                  {isExpanded ? '−' : '+'}
+                </div>
+              </div>
+              {wd.plannedTotalFlex > 0 && (
+                <div style={{marginLeft:120 + 14, marginTop:4, fontSize:10.5, color:'#9c978c'}}>
+                  + <span style={{fontFamily:"'JetBrains Mono',monospace"}}>{wd.plannedTotalFlex.toFixed(0)}u</span> Flex / Onbekend gepland
+                </div>
+              )}
+              {isExpanded && (
+                <div style={{marginTop:10, paddingTop:10, borderTop:'1px solid rgba(0,0,0,0.08)'}}>
+                  <table style={{width:'100%', fontSize:11.5, borderCollapse:'collapse'}}>
+                    <thead>
+                      <tr>
+                        <th style={{textAlign:'left', padding:'4px 8px', fontSize:9.5, color:'#9c978c', fontWeight:600, textTransform:'uppercase', letterSpacing:'.4px'}}>Medewerker</th>
+                        <th style={{textAlign:'center', padding:'4px 8px', fontSize:9.5, color:'#9c978c', fontWeight:600, textTransform:'uppercase', letterSpacing:'.4px'}}>Contract</th>
+                        <th style={{textAlign:'right', padding:'4px 8px', fontSize:9.5, color:'#9c978c', fontWeight:600, textTransform:'uppercase', letterSpacing:'.4px'}}>Contract uren</th>
+                        <th style={{textAlign:'right', padding:'4px 8px', fontSize:9.5, color:'#9c978c', fontWeight:600, textTransform:'uppercase', letterSpacing:'.4px'}}>Gepland</th>
+                        <th style={{textAlign:'right', padding:'4px 8px', fontSize:9.5, color:'#9c978c', fontWeight:600, textTransform:'uppercase', letterSpacing:'.4px'}}>%</th>
+                        <th style={{textAlign:'center', padding:'4px 8px', fontSize:9.5, color:'#9c978c', fontWeight:600, textTransform:'uppercase', letterSpacing:'.4px'}}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {empList.map((emp, i) => {
+                        const empPct = emp.isVast && emp.contractHours > 0 ? (emp.plannedHours / emp.contractHours * 100) : null;
+                        const statusIcon = !emp.isVast ? '·' : (empPct >= 100 ? '✓' : empPct >= 80 ? '◐' : (empPct === 0 ? '✗' : '◑'));
+                        const statusColor = !emp.isVast ? '#9c978c' : (empPct >= 100 ? '#2d6b3f' : empPct >= 80 ? '#856404' : (empPct === 0 ? '#a33225' : '#856404'));
+                        const contractTag = emp.contract === 'Vast' ? {bg:'#e0e7d4', col:'#3a5a2c', label:'vast'} : emp.contract === 'Flexibel' ? {bg:'#ffe5d6', col:'#a33225', label:'flex'} : {bg:'#e8e8e8', col:'#666', label:'?'};
+                        return (
+                          <tr key={i}>
+                            <td style={{padding:'4px 8px', borderBottom:'1px solid rgba(0,0,0,0.05)', fontSize:11.5}}>{normalizeName(emp.name)}</td>
+                            <td style={{padding:'4px 8px', borderBottom:'1px solid rgba(0,0,0,0.05)', textAlign:'center'}}>
+                              <span style={{display:'inline-block', fontSize:9, padding:'1px 5px', borderRadius:3, fontWeight:600, background:contractTag.bg, color:contractTag.col}}>{contractTag.label}</span>
+                            </td>
+                            <td style={{padding:'4px 8px', borderBottom:'1px solid rgba(0,0,0,0.05)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11, color:'#9c978c'}}>{emp.isVast && emp.contractHours ? emp.contractHours : '-'}</td>
+                            <td style={{padding:'4px 8px', borderBottom:'1px solid rgba(0,0,0,0.05)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11, fontWeight: emp.plannedHours > 0 ? 600 : 400}}>{emp.plannedHours > 0 ? emp.plannedHours.toFixed(1) : '-'}</td>
+                            <td style={{padding:'4px 8px', borderBottom:'1px solid rgba(0,0,0,0.05)', textAlign:'right', fontFamily:"'JetBrains Mono',monospace", fontSize:11, color: statusColor, fontWeight:600}}>{empPct !== null ? empPct.toFixed(0) + '%' : '-'}</td>
+                            <td style={{padding:'4px 8px', borderBottom:'1px solid rgba(0,0,0,0.05)', textAlign:'center', color: statusColor, fontWeight:700, fontSize:13}}>{statusIcon}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{marginTop:10, fontSize:11, color:'#9c978c', lineHeight:1.5}}>
+        <strong>Legenda:</strong> ✓ = ≥100% gepland · ◑ = ≥80% · ◐ ◑ = onvolledig · ✗ = niets gepland · · = Flex/onbekend. Grijs vlak = nog niets ingepland in die week.
+      </div>
     </div>
   );
 }
