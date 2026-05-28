@@ -195,49 +195,94 @@ export async function POST(request) {
     const csvRecords = parseCSV(text);
     console.log(`Dyflexis-actuals: ${csvRecords.length} CSV rows`);
 
-    // Filter: alleen rijen met Employee ingevuld
-    const empRecords = csvRecords.filter(r => r.Employee && r.Employee.trim() !== '');
+    // Filter: alleen rijen met Employee ingevuld, skip 'Totals' samenvattingsregel
+    const empRecords = csvRecords.filter(r =>
+      r.Employee && r.Employee.trim() !== '' && r.Employee.trim() !== 'Totals'
+    );
     console.log(`Dyflexis-actuals: ${empRecords.length} employee rows`);
+
+    // GROEPEER per medewerker — een medewerker heeft vaak MEERDERE rijen:
+    //  - werk-rij(en) met dept ingevuld (Hours worked)
+    //  - een rij met lege dept met verlof/ziekte/TVT
+    // We sommeren ALLE uren-kolommen en pakken de eerste niet-lege dept als BU-bron.
+    const byEmployee = new Map();
+    for (const r of empRecords) {
+      const empName = (r.Employee || '').trim();
+      if (!byEmployee.has(empName)) {
+        byEmployee.set(empName, { rows: [], dept: null, location: null, empNumber: null });
+      }
+      const g = byEmployee.get(empName);
+      g.rows.push(r);
+      const dept = (r.Departments || '').trim();
+      if (dept && dept !== 'nan' && !g.dept) {
+        g.dept = dept;
+        g.location = (r.Location || '').trim();
+      }
+      if (!g.empNumber && (r['Employee number'] || '').trim()) {
+        g.empNumber = (r['Employee number'] || '').trim();
+      }
+    }
+    console.log(`Dyflexis-actuals: ${byEmployee.size} unieke medewerkers`);
 
     const records = [];
     let ignored = 0;
-    let skippedNan = 0;
+    let noDept = 0;
 
-    for (const r of empRecords) {
-      const empName = (r.Employee || '').trim();
-      const dept = (r.Departments || '').trim();
-      const location = (r.Location || '').trim();
+    for (const [empName, g] of byEmployee) {
+      // Bepaal BU. Als geen dept-rij: probeer override (mensen volledig op verlof die week)
+      let dept = g.dept;
+      let location = g.location;
+      let bu = null;
+      if (dept) {
+        bu = mapBU(empName, dept, location);
+      } else {
+        // Geen werk-rij — alleen verlof/ziek. Probeer override op naam.
+        bu = EMPLOYEE_OVERRIDES[empName] || null;
+        dept = '(alleen verlof/ziek)';
+      }
+      if (!bu) {
+        if (!g.dept) noDept++;
+        else ignored++;
+        continue;
+      }
 
-      // Skip lege dept rijen (eerste 'totaal' regel per medewerker)
-      if (!dept || dept === 'nan') { skippedNan++; continue; }
+      const subAfd = g.dept ? extractSubAfdeling(g.dept) : null;
 
-      const bu = mapBU(empName, dept, location);
-      if (!bu) { ignored++; continue; }
-
-      const subAfd = extractSubAfdeling(dept);
-
-      // Verlof aggregaten
-      const leaveTotal = num(r['Holiday hours']) + num(r['Paid leave']) +
-        num(r['Maternity leave']) + num(r['Special leave']) +
-        num(r['Unpaid leave']) + num(r['Public holiday']);
-      // Ziekte
-      const sickTotal = num(r['Ziekte loonderving 80%']) + num(r['Ziekte zonder loonderving']);
-      // Overwerk
-      const overtimePaid = num(r['Overwerk 150% Uitb']);
-      const overtimeTvt = num(r['Overwerk 150% TVT']) +
-        num(r['Overwerk 200% TVT']) + num(r['Overwerk 100% TVT']);
-      const overtimeTotal = overtimePaid + overtimeTvt + num(r['Roostervrije dag 200%']);
+      // Sommeer over ALLE rijen van deze medewerker
+      let hours_worked = 0, total_hours = 0, leaveTotal = 0, sickTotal = 0;
+      let overtimePaid = 0, overtimeTvt = 0, overtimeExtra = 0, tvtOpname = 0, noShow = 0, totalCost = 0;
+      let sickPctMax = 0;
+      for (const r of g.rows) {
+        hours_worked += num(r['Hours worked']);
+        total_hours += num(r['Total hours']);
+        leaveTotal += num(r['Holiday hours']) + num(r['Paid leave']) +
+          num(r['Maternity leave']) + num(r['Special leave']) +
+          num(r['Unpaid leave']) + num(r['Public holiday']);
+        sickTotal += num(r['Ziekte loonderving 80%']) + num(r['Ziekte zonder loonderving']) +
+          num(r['Ziekte Bedrijfsongeval 100%']);
+        overtimePaid += num(r['Overwerk 150% Uitb']) + num(r['Overuren uitbetalen']);
+        overtimeTvt += num(r['Overwerk 150% TVT']) + num(r['Overwerk 200% TVT']) + num(r['Overwerk 100% TVT']);
+        overtimeExtra += num(r['Roostervrije dag 200%']);
+        tvtOpname += num(r['TVT Opname']);
+        noShow += num(r['No Show']);
+        totalCost += num(r['Total cost']);
+        const sp = num(r['Sick percentage']);
+        if (sp > sickPctMax) sickPctMax = sp;
+      }
+      const overtimeTotal = overtimePaid + overtimeTvt + overtimeExtra;
+      // Ziekte % zelf berekenen indien total_hours > 0 (betrouwbaarder dan CSV-kolom over meerdere rijen)
+      const sickPct = total_hours > 0 ? (sickTotal / total_hours * 100) : sickPctMax;
 
       records.push({
         bu,
-        afdeling_raw: dept,
+        afdeling_raw: g.dept || null,
         sub_afdeling: subAfd,
         period_year: parseInt(year),
         period_week: parseInt(week),
         day_of_week: null,
         day_date: null,
         employee_name: empName,
-        employee_number: (r['Employee number'] || '').trim() || null,
+        employee_number: g.empNumber || null,
         is_open: false,
         is_actual: true,
         contract_type: null,
@@ -247,22 +292,23 @@ export async function POST(request) {
         bruto_hours: null,
         netto_hours: null,
         opmerking: null,
-        hours_worked: num(r['Hours worked']),
-        total_hours: num(r['Total hours']),
-        leave_total: leaveTotal,
-        sick_total: sickTotal,
-        overtime_total: overtimeTotal,
-        overtime_paid: overtimePaid,
-        overtime_tvt: overtimeTvt,
-        tvt_opname: num(r['TVT Opname']),
-        no_show: num(r['No Show']),
-        total_cost: num(r['Total cost']),
-        sick_percentage: num(r['Sick percentage']),
+        hours_worked: Math.round(hours_worked * 100) / 100,
+        total_hours: Math.round(total_hours * 100) / 100,
+        leave_total: Math.round(leaveTotal * 100) / 100,
+        sick_total: Math.round(sickTotal * 100) / 100,
+        overtime_total: Math.round(overtimeTotal * 100) / 100,
+        overtime_paid: Math.round(overtimePaid * 100) / 100,
+        overtime_tvt: Math.round(overtimeTvt * 100) / 100,
+        tvt_opname: Math.round(tvtOpname * 100) / 100,
+        no_show: Math.round(noShow * 100) / 100,
+        total_cost: Math.round(totalCost * 100) / 100,
+        sick_percentage: Math.round(sickPct * 100) / 100,
         source_file: filename || `actuals_wk${week}_${year}.csv`,
       });
     }
 
-    console.log(`Dyflexis-actuals: ${records.length} mapped, ${ignored} ignored, ${skippedNan} skipped (empty dept)`);
+    console.log(`Dyflexis-actuals: ${records.length} mapped, ${ignored} ignored (BU), ${noDept} skipped (geen dept+geen override)`);
+    const skippedNan = noDept;
 
     if (records.length === 0) {
       return new Response(JSON.stringify({
