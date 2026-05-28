@@ -98,6 +98,7 @@ const CANONICAL_DISPLAY = {
 };
 
 // Standaard sub-afdelingen per BU - exacte namen uit Dyflexis (zoals zichtbaar in week 13+ actuals)
+// Deze worden bovenaan getoond in de dropdown; afwijkende subs komen onder een scheidingslijn
 const STANDARD_SUBS = {
   'BU Living': ['Living Management', 'Living Operations'],
   'BU Hardware': ['Hardware Management', 'Hardware Operations'],
@@ -105,9 +106,9 @@ const STANDARD_SUBS = {
   'BU Appliance/Houseware': ['A/H Management', 'A/H Operations'],
   'BU Building Materials': ['Building Materials Management', 'Building Materials Operations'],
   'Smart Finance': ['Smart Finance'],
-  'Logistiek': ['Brievengat 02', 'Brievengat 05', 'Tussenmagazijn', 'Transit', 'Drive Thru', 'Logistics coordinator', 'Supervisors Logistiek'],
-  'Store Support': ['Customer Service', 'Kassa', 'Bewaking', 'Schoonmaak', 'Facilitair'],
-  'BU Kantoor': ['HR', 'IT', 'Administratie', 'Marketing', 'Inventory Controller'],
+  'Logistiek': ['Brievengat 02', 'Brievengat 05', 'Transit', 'Tussenmagazijn', 'Drive Thru'],
+  'Store Support': ['Bewaking', 'Customer Service', 'Facilitair', 'Kassa', 'Schoonmaak'],
+  'BU Kantoor': ['Administratie', 'HR', 'IT', 'Inventory Controller', 'Marketing'],
 };
 
 // Sub-alias mappings — varianten naar standaard naam (case-insensitief match)
@@ -240,14 +241,28 @@ export default function UrenplanningOverviewPage() {
 
   // Unieke subs voor selected BU (uit actuals en planning rijen)
   // Sub_afdeling wordt geschoond + genormaliseerd voor weergave
+  // De dropdown krijgt: __all__ + STANDARD subs (in vaste volgorde) + ---- + andere subs alfabetisch
   const subOptions = useMemo(() => {
-    const subs = new Set();
+    const found = new Set();
     allRows.forEach(r => {
       const cleaned = cleanSubAfdeling(r.sub_afdeling);
       const norm = normalizeSub(cleaned, selectedBU);
-      if (norm) subs.add(norm);
+      if (norm) found.add(norm);
     });
-    return ['__all__', ...Array.from(subs).sort()];
+    const standard = STANDARD_SUBS[selectedBU] || [];
+    // Standaard subs die ook daadwerkelijk voorkomen in de data (in standaard-volgorde)
+    const standardPresent = standard.filter(s => found.has(s));
+    // Andere subs (niet in standaard) alfabetisch
+    const otherSubs = Array.from(found)
+      .filter(s => !standard.includes(s))
+      .sort();
+    // Bouw lijst: __all__, standaard, optioneel scheider, andere
+    const result = ['__all__', ...standardPresent];
+    if (otherSubs.length > 0 && standardPresent.length > 0) {
+      result.push('__sep__');
+    }
+    result.push(...otherSubs);
+    return result;
   }, [allRows, selectedBU]);
 
   // Filter rows op selected sub (planning + actuals samen)
@@ -619,7 +634,10 @@ export default function UrenplanningOverviewPage() {
         <div>
           <label style={{display:'block', fontSize:10.5, fontWeight:600, textTransform:'uppercase', color:'#9c978c', letterSpacing:'.4px', marginBottom:6}}>Sub-afdeling</label>
           <select value={selectedSub} onChange={e => setSelectedSub(e.target.value)} style={{padding:'8px 12px', border:'1.5px solid rgba(0,0,0,0.14)', borderRadius:6, fontFamily:'inherit', fontSize:13, minWidth:220}}>
-            {subOptions.map(s => <option key={s} value={s}>{s === '__all__' ? '— Hele BU —' : s}</option>)}
+            {subOptions.map(s => {
+              if (s === '__sep__') return <option key={s} value="__sep__" disabled>──────────────</option>;
+              return <option key={s} value={s}>{s === '__all__' ? '— Hele BU —' : s}</option>;
+            })}
           </select>
         </div>
         <div>
