@@ -97,6 +97,52 @@ const CANONICAL_DISPLAY = {
   'john van den berg': 'John van den Berg',
 };
 
+// Standaard sub-afdelingen per BU - exacte namen uit Dyflexis (zoals zichtbaar in week 13+ actuals)
+const STANDARD_SUBS = {
+  'BU Living': ['Living Management', 'Living Operations'],
+  'BU Hardware': ['Hardware Management', 'Hardware Operations'],
+  'BU Sanitair/Keuken': ['S/K Management', 'S/K Operations'],
+  'BU Appliance/Houseware': ['A/H Management', 'A/H Operations'],
+  'BU Building Materials': ['Building Materials Management', 'Building Materials Operations'],
+  'Smart Finance': ['Smart Finance'],
+  'Logistiek': ['Brievengat 02', 'Brievengat 05', 'Tussenmagazijn', 'Transit', 'Drive Thru', 'Logistics coordinator', 'Supervisors Logistiek'],
+  'Store Support': ['Customer Service', 'Kassa', 'Bewaking', 'Schoonmaak', 'Facilitair'],
+  'BU Kantoor': ['HR', 'IT', 'Administratie', 'Marketing', 'Inventory Controller'],
+};
+
+// Sub-alias mappings — varianten naar standaard naam (case-insensitief match)
+const SUB_ALIASES = {
+  'store support schoonmaak': 'Schoonmaak',
+  'store support -bewaking': 'Bewaking',
+  'store support kassa': 'Kassa',
+  'store support customer service': 'Customer Service',
+  'b2b': 'Building Materials Operations',
+};
+
+// Normaliseer sub-afdeling: pas alias toe, of probeer prefix-match met standaard subs van BU
+function normalizeSub(rawSub, bu) {
+  if (!rawSub) return null;
+  const s = String(rawSub).trim();
+  if (!s) return null;
+  const sLow = s.toLowerCase();
+
+  // Strip "archived" variantsj
+  if (sLow.includes('archived')) return s; // laat archived intact als historisch
+
+  // Direct alias match
+  if (SUB_ALIASES[sLow]) return SUB_ALIASES[sLow];
+
+  // Standard subs voor deze BU: probeer prefix-match
+  const standardSubs = STANDARD_SUBS[bu] || [];
+  for (const std of standardSubs) {
+    if (sLow === std.toLowerCase()) return std;
+    if (sLow.startsWith(std.toLowerCase() + ' ')) return std; // "Hardware Management Verlof" -> "Hardware Management"
+    if (sLow.startsWith(std.toLowerCase())) return std;       // catches "Hardware ManagementVerlof"
+  }
+  // Niets gematcht — return zoals het is (Smart Finance, etc)
+  return s;
+}
+
 function matchEmployee(name, buEmployees) {
   const n = normalizeName(name).toLowerCase();
   const parts = n.split(/\s+/);
@@ -139,6 +185,9 @@ export default function UrenplanningOverviewPage() {
   // View mode: 'recent' = vanaf week 13 (nieuwe BU-structuur), 'all' = heel 2026
   const [viewMode, setViewMode] = useState('recent');
   const STRUCTURE_START_WEEK = 13;
+
+  // Contract filter: 'all' = alle medewerkers, 'vast' = alleen Vast contract
+  const [contractFilter, setContractFilter] = useState('all');
 
   // Data
   const [allRows, setAllRows] = useState([]); // alle 2026 records voor selected BU
@@ -190,22 +239,23 @@ export default function UrenplanningOverviewPage() {
   // === DATA TRANSFORMATIES ===
 
   // Unieke subs voor selected BU (uit actuals en planning rijen)
-  // Sub_afdeling wordt geschoond voor weergave (planning PDFs hadden page-break artefacten)
+  // Sub_afdeling wordt geschoond + genormaliseerd voor weergave
   const subOptions = useMemo(() => {
     const subs = new Set();
     allRows.forEach(r => {
       const cleaned = cleanSubAfdeling(r.sub_afdeling);
-      if (cleaned) subs.add(cleaned);
+      const norm = normalizeSub(cleaned, selectedBU);
+      if (norm) subs.add(norm);
     });
     return ['__all__', ...Array.from(subs).sort()];
-  }, [allRows]);
+  }, [allRows, selectedBU]);
 
   // Filter rows op selected sub (planning + actuals samen)
-  // We vergelijken via cleanSubAfdeling zodat planning-artefacten ook matchen
+  // We vergelijken via normalizeSub(cleanSubAfdeling) zodat alle varianten matchen
   const filteredRowsBySub = useMemo(() => {
     if (selectedSub === '__all__') return allRows;
-    return allRows.filter(r => cleanSubAfdeling(r.sub_afdeling) === selectedSub);
-  }, [allRows, selectedSub]);
+    return allRows.filter(r => normalizeSub(cleanSubAfdeling(r.sub_afdeling), selectedBU) === selectedSub);
+  }, [allRows, selectedSub, selectedBU]);
 
   // Unieke medewerkers in deze sub (gegroepeerd op nameKey zodat actual + planning samenvallen)
   // We bewaren ook ALLE raw varianten per key zodat we conflicten kunnen tonen
@@ -279,11 +329,76 @@ export default function UrenplanningOverviewPage() {
   }, [employeeOptionsData]);
 
   // Filter op medewerker — match via nameKey
-  const filteredRows = useMemo(() => {
+  const filteredRowsByEmp = useMemo(() => {
     if (selectedEmployee === '__all__') return filteredRowsBySub;
     const targetKey = nameKeyAliased(selectedEmployee);
     return filteredRowsBySub.filter(r => nameKeyAliased(r.employee_name) === targetKey);
   }, [filteredRowsBySub, selectedEmployee]);
+
+  // Helper: bepaal contractinfo voor een medewerker uit BU_EMPLOYEES
+  function getContractInfo(empName) {
+    const buEmps = BU_EMPLOYEES[selectedBU] || [];
+    const k = nameKeyAliased(empName);
+    if (!k) return null;
+    const parts = k.split(' ');
+    const first = parts[0], last = parts[parts.length - 1];
+    for (const e of buEmps) {
+      const ek = nameKeyAliased(e.name);
+      if (ek === k) return e;
+      const ep = ek.split(' ');
+      if (ep[0] === first && ep[ep.length - 1] === last) return e;
+    }
+    return null;
+  }
+
+  // Pas contract-filter toe (alleen vast = filter rijen op medewerkers met Vast contract)
+  const filteredRows = useMemo(() => {
+    if (contractFilter === 'all') return filteredRowsByEmp;
+    // Vast filter: alleen rijen van medewerkers met contract='Vast'
+    return filteredRowsByEmp.filter(r => {
+      const ci = getContractInfo(r.employee_name);
+      return ci && ci.contract === 'Vast';
+    });
+  }, [filteredRowsByEmp, contractFilter, selectedBU]);
+
+  // Som van contracturen van alle UNIEKE Vaste medewerkers in huidige selectie
+  // (voor de groep-contracturen lijn in de grafiek)
+  const groupContractHours = useMemo(() => {
+    const buEmps = BU_EMPLOYEES[selectedBU] || [];
+    if (buEmps.length === 0) return null;
+    // Uniek per nameKey (zodat actual+planning duplicaten elkaar niet dubbeltellen)
+    const uniqueEmps = new Set();
+    filteredRowsByEmp.forEach(r => {
+      const ci = getContractInfo(r.employee_name);
+      if (ci && ci.contract === 'Vast') {
+        // Filter ook op sub-afdeling als die in BU_EMPLOYEES staat (matching met huidige sub-filter)
+        if (selectedSub === '__all__') {
+          uniqueEmps.add(nameKeyAliased(r.employee_name));
+        } else {
+          // Match op sub: zit de medewerker in de geselecteerde sub volgens C16?
+          if (ci.sub && normalizeSub(ci.sub, selectedBU) === selectedSub) {
+            uniqueEmps.add(nameKeyAliased(r.employee_name));
+          }
+        }
+      }
+    });
+    // Pak per unieke nameKey de contracturen
+    let total = 0;
+    for (const k of uniqueEmps) {
+      const parts = k.split(' ');
+      const first = parts[0], last = parts[parts.length - 1];
+      for (const e of buEmps) {
+        const ek = nameKeyAliased(e.name);
+        if (ek === k || (ek.split(' ')[0] === first && ek.split(' ').slice(-1)[0] === last)) {
+          if (e.contract === 'Vast' && e.contract_hours) {
+            total += e.contract_hours;
+          }
+          break;
+        }
+      }
+    }
+    return total > 0 ? total : null;
+  }, [filteredRowsByEmp, selectedBU, selectedSub]);
 
   // Aggregaten per week (1..53)
   const weekData = useMemo(() => {
@@ -459,6 +574,7 @@ export default function UrenplanningOverviewPage() {
             {viewMode === 'recent' 
               ? '* vanaf week 13 (start nieuwe BU-structuur)' 
               : '* heel 2026 (let op: weken 1-12 hebben oude BU-structuur)'}
+            {contractFilter === 'vast' && ' · alleen Vast contract'}
           </span>
         </h2>
       </div>
@@ -506,6 +622,18 @@ export default function UrenplanningOverviewPage() {
           <h2 style={{fontSize:14, fontWeight:600, margin:0}}>Uren per week (2026)</h2>
           <div style={{display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
             <div style={{display:'inline-flex', background:'#f5ebe0', borderRadius:6, padding:2}}>
+              <button onClick={() => setContractFilter('all')} style={{
+                padding:'5px 12px', border:'none', background: contractFilter === 'all' ? '#1a1a18' : 'transparent',
+                color: contractFilter === 'all' ? '#fff' : '#6b6960', borderRadius:4, fontSize:11, fontWeight:600,
+                cursor:'pointer', fontFamily:'inherit'
+              }}>Alle medewerkers</button>
+              <button onClick={() => setContractFilter('vast')} style={{
+                padding:'5px 12px', border:'none', background: contractFilter === 'vast' ? '#1a1a18' : 'transparent',
+                color: contractFilter === 'vast' ? '#fff' : '#6b6960', borderRadius:4, fontSize:11, fontWeight:600,
+                cursor:'pointer', fontFamily:'inherit'
+              }}>Alleen Vast</button>
+            </div>
+            <div style={{display:'inline-flex', background:'#f5ebe0', borderRadius:6, padding:2}}>
               <button onClick={() => setViewMode('recent')} style={{
                 padding:'5px 12px', border:'none', background: viewMode === 'recent' ? '#1a1a18' : 'transparent',
                 color: viewMode === 'recent' ? '#fff' : '#6b6960', borderRadius:4, fontSize:11, fontWeight:600,
@@ -524,6 +652,7 @@ export default function UrenplanningOverviewPage() {
               <LegendItem color={COLOR_LEAVE} label="Verlof" />
               <LegendItem color={COLOR_PLANNED} label="Planning" stroke />
               {contractH && <LegendItem color={COLOR_CONTRACT} label={`Contract ${contractH}u`} line />}
+              {!contractH && groupContractHours && contractFilter === 'vast' && <LegendItem color={COLOR_CONTRACT} label={`Contract Vast ${groupContractHours}u`} line />}
             </div>
           </div>
         </div>
@@ -544,9 +673,12 @@ export default function UrenplanningOverviewPage() {
                   </g>
                 );
               })}
-              {/* Contract uren lijn */}
+              {/* Contract uren lijn (per persoon OF groep-som bij Vast filter) */}
               {contractH && (
                 <line x1={40} y1={yScale(contractH)} x2={chartWidth} y2={yScale(contractH)} stroke={COLOR_CONTRACT} strokeWidth="1.5" strokeDasharray="5 3" />
+              )}
+              {!contractH && groupContractHours && contractFilter === 'vast' && groupContractHours <= chartMax && (
+                <line x1={40} y1={yScale(groupContractHours)} x2={chartWidth} y2={yScale(groupContractHours)} stroke={COLOR_CONTRACT} strokeWidth="1.5" strokeDasharray="5 3" />
               )}
               {/* Bars per week */}
               {weeksToShow.map((w, i) => {
