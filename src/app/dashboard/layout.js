@@ -233,7 +233,6 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
-    '/dashboard/hr/urenplanning': 'hr_urenplanning',
     '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
   };
 
