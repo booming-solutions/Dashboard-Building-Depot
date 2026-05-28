@@ -895,11 +895,11 @@ export default function UrenplanningOverviewPage() {
                     yCursor -= segH;
                   }
                 });
-                // Planning bar (alleen toekomst, naast de actual stacked bar)
-                if (d.planned > 0 && fut) {
+                // Planning bar (altijd tonen als er planning is — naast de actual stacked bar)
+                if (d.planned > 0) {
                   const planH = (chartHeight - chartTop - chartBottom) * (d.planned / chartMax);
                   segments.push(
-                    <rect key="plan" x={x} y={(chartHeight - chartBottom) - planH} width={barWidth} height={planH} fill={COLOR_PLANNED} stroke="#0056a3" strokeWidth="0.8" strokeDasharray="2 2">
+                    <rect key="plan" x={x} y={(chartHeight - chartBottom) - planH} width={barWidth} height={planH} fill={COLOR_PLANNED} stroke="#0056a3" strokeWidth="0.8" strokeDasharray="2 2" opacity="0.65">
                       <title>{`Wk ${w} · Planning: ${d.planned.toFixed(1)}u`}</title>
                     </rect>
                   );
