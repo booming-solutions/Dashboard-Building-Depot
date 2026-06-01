@@ -1,10 +1,9 @@
 // =============================================================================
 //  StatementsDashboard.jsx
-//  Bestemming (App Router):  app/finance/statements/page.js  ->  rename naar page.js
-//        of als component:   components/finance/StatementsDashboard.jsx
-//  Data:   statements-data.json  ->  zelfde map als deze component
-//          (dus app/finance/statements/statements-data.json)
-//          (of /public en pas de import aan)
+//  Bestemming (App Router):  src/app/dashboard/finance/statements/page.jsx
+//  Route:    /dashboard/finance/statements   (matcht de sidebar-link)
+//  Data:     statements-data.json  ->  src/data/statements-data.json
+//            (geïmporteerd via @/data/statements-data.json — locatie los van de route)
 //
 //  Building Depot — P&L / Balans / Kasstroom dashboard
 //  Bron: GL-exports 2022–2026 + mapping (ruwe GL, v1). Bedragen in × 1.000 XCG.
@@ -13,7 +12,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import DATA from './statements-data.json';
+import DATA from '@/data/statements-data.json';
 
 /* ----------------------------- data helpers ------------------------------ */
 const META = DATA.meta;
