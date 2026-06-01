@@ -3,6 +3,11 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN V27.11:
+   - Nieuwe "Finance" dropdown toegevoegd (Financiële Overzichten:
+     W&V / Balans / Kasstroom) -> route /dashboard/finance/statements
+   - REPORT_MAP uitgebreid met finance_statements
+
    WIJZIGINGEN V27.10:
    - Admin menu uitgebreid: Dyflexis Planning + Dyflexis Actuals
    - Versie naar V27.10
@@ -21,7 +26,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.10';
+const APP_VERSION = 'V27.11';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -234,6 +239,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
     '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
+    '/dashboard/finance/statements': 'finance_statements',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -270,6 +276,9 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/urenplanning', label: 'Urenplanning', badge: '(concept)', visible: isAdmin || isManager },
     { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
   ];
+  const financeItemsAll = [
+    { href: '/dashboard/finance/statements', label: 'Overzichten' },
+  ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
@@ -277,6 +286,7 @@ export default function DashboardLayout({ children }) {
     if (typeof item.visible !== 'undefined') return item.visible;
     return hasReport(REPORT_MAP[item.href]);
   });
+  const financeItems = financeItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
@@ -302,6 +312,7 @@ export default function DashboardLayout({ children }) {
           <div className="space-y-1">
             {/* Overzicht, Rapportages en Bestanden zijn verborgen */}
             {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {financeItems.length > 0 && <NavDropdown icon="🧾" label="Finance" items={financeItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>
