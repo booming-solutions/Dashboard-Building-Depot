@@ -1,26 +1,19 @@
 /* ============================================================
-   BESTAND: layout.js (v2)
+   BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (overschrijft de bestaande layout.js, hernoemen naar layout.js)
-
-   WIJZIGINGEN V27.12:
-   - AP (Accounts Payable) toegevoegd onder Finance menu
-   - REPORT_MAP uitgebreid met finance_ap
-   - Route: /dashboard/finance/ap
-
-   WIJZIGINGEN V27.11:
-   - Nieuwe "Finance" dropdown toegevoegd (Financiële Overzichten:
-     W&V / Balans / Kasstroom) -> route /dashboard/finance/statements
-   - REPORT_MAP uitgebreid met finance_statements
-
-   WIJZIGINGEN V27.10:
-   - Admin menu uitgebreid: Dyflexis Planning + Dyflexis Actuals
-   - Versie naar V27.10
+   (overschrijft de bestaande layout.js)
 
    WIJZIGINGEN T.O.V. V27.06:
    - BUM-rol opgeheven, BUMs zijn nu 'manager'
    - isBum check vervangen door isManager
    - Urenplanning zichtbaar voor admin + manager
+   - Versie aangepast naar V27.07
+
+   WIJZIGINGEN T.O.V. V27.05:
+   - Urenplanning toegevoegd aan HR-menu (zichtbaar voor BUMs + admin)
+   - Urenplanning Overzicht toegevoegd aan HR-menu (admin only)
+   - isBum check toegevoegd voor role='bum' users
+   - Versie aangepast naar V27.06
    ============================================================ */
 'use client';
 
@@ -31,7 +24,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.12';
+const APP_VERSION = 'V27.10';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -241,11 +234,11 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
     '/dashboard/inventory/price-changes': 'inventory_price_changes',
+    '/dashboard/inventory/nos-check': 'inventory_nos_check',
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
+    '/dashboard/hr/urenplanning': 'hr_urenplanning',
     '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
-    '/dashboard/finance/statements': 'finance_statements',
-    '/dashboard/finance/ap': 'finance_ap',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -267,6 +260,7 @@ export default function DashboardLayout({ children }) {
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
     { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
+    { href: '/dashboard/inventory/nos-check', label: 'NOS Check' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
       { href: '/dashboard/inventory/health/appliances-houseware', label: 'Appliances & Houseware' },
@@ -282,10 +276,6 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/urenplanning', label: 'Urenplanning', badge: '(concept)', visible: isAdmin || isManager },
     { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
   ];
-  const financeItemsAll = [
-    { href: '/dashboard/finance/statements', label: 'Overzichten' },
-    { href: '/dashboard/finance/ap', label: 'Accounts Payable', badge: '(concept)' },
-  ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
@@ -293,13 +283,10 @@ export default function DashboardLayout({ children }) {
     if (typeof item.visible !== 'undefined') return item.visible;
     return hasReport(REPORT_MAP[item.href]);
   });
-  const financeItems = financeItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
-    { href: '/dashboard/admin/dyflexis-import', label: 'Dyflexis Planning', icon: '📅' },
-    { href: '/dashboard/admin/dyflexis-actuals', label: 'Dyflexis Actuals', icon: '📊' },
     { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
 
@@ -319,7 +306,6 @@ export default function DashboardLayout({ children }) {
           <div className="space-y-1">
             {/* Overzicht, Rapportages en Bestanden zijn verborgen */}
             {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {financeItems.length > 0 && <NavDropdown icon="🧾" label="Finance" items={financeItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>
