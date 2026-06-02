@@ -221,8 +221,17 @@ export default function SalesDashboard(){
     let lyS=sum(lyArr,'net_sales'),lyG=sum(lyArr,'gross_margin');
     let bS=sum(budArr.filter(b=>b.budget_type===salesType),'amount'),bG=sum(budArr.filter(b=>b.budget_type===marginType),'amount');
     if(dayFrac.month){
+      // Lopende maand: prorate naar dag-fractie (trek het deel na vandaag eraf)
       lyArr.filter(r=>needsProrate(r.month)).forEach(r=>{lyS-=parseFloat(r.net_sales)*(1-dayFrac.frac);lyG-=parseFloat(r.gross_margin)*(1-dayFrac.frac)});
       budArr.filter(b=>needsProrate(parseInt(b.month.split('-')[1]))).forEach(b=>{if(b.budget_type===salesType)bS-=parseFloat(b.amount)*(1-dayFrac.frac);if(b.budget_type===marginType)bG-=parseFloat(b.amount)*(1-dayFrac.frac)});
+      // Toekomstige maanden (na lopende maand) in huidige jaar: volledig aftrekken (geen actuals dus geen pace-vergelijking)
+      // LY: zelfde logica voor consistente vergelijking
+      const isCurrentYear=dayFrac.year===currentYear;
+      const isPriorYear=dayFrac.year===priorYear+1;  // priorYear is currentYear-1, dus current month/year applies to LY too
+      if(isCurrentYear){
+        budArr.filter(b=>{const[by,bm]=b.month.split('-').map(Number);return by===currentYear&&bm>dayFrac.month}).forEach(b=>{if(b.budget_type===salesType)bS-=parseFloat(b.amount);if(b.budget_type===marginType)bG-=parseFloat(b.amount)});
+        lyArr.filter(r=>r.year===priorYear&&r.month>dayFrac.month).forEach(r=>{lyS-=parseFloat(r.net_sales);lyG-=parseFloat(r.gross_margin)});
+      }
     }
     return{lyS,lyG,bS,bG};
   }
@@ -365,7 +374,14 @@ export default function SalesDashboard(){
       const lk=`${r.dept_code}-${r.bum}`;let lS=lyA[lk]?.s||0,lG=lyA[lk]?.g||0;
       if(dayFrac.month){priorFiltered.filter(p=>(p.effective_dept_code||p.dept_code)===r.dept_code&&p.effective_bum_group===r.bum&&needsProrate(p.month)).forEach(p=>{lS-=parseFloat(p.net_sales)*(1-dayFrac.frac);lG-=parseFloat(p.gross_margin)*(1-dayFrac.frac)})}
       let bd={...bA[r.dept_code]||{s:0,g:0}};
-      if(dayFrac.month){budgetFiltered.filter(b=>b.dept_code===r.dept_code&&needsProrate(parseInt(b.month.split('-')[1]))).forEach(b=>{if(b.budget_type===salesType)bd.s-=parseFloat(b.amount)*(1-dayFrac.frac);if(b.budget_type===marginType)bd.g-=parseFloat(b.amount)*(1-dayFrac.frac)})}
+      if(dayFrac.month){
+        // Lopende maand: prorate
+        budgetFiltered.filter(b=>b.dept_code===r.dept_code&&needsProrate(parseInt(b.month.split('-')[1]))).forEach(b=>{if(b.budget_type===salesType)bd.s-=parseFloat(b.amount)*(1-dayFrac.frac);if(b.budget_type===marginType)bd.g-=parseFloat(b.amount)*(1-dayFrac.frac)});
+        // Toekomstige maanden (na lopende maand) in huidige jaar: volledig eraf
+        budgetFiltered.filter(b=>{if(b.dept_code!==r.dept_code)return false;const[by,bm]=b.month.split('-').map(Number);return by===currentYear&&bm>dayFrac.month}).forEach(b=>{if(b.budget_type===salesType)bd.s-=parseFloat(b.amount);if(b.budget_type===marginType)bd.g-=parseFloat(b.amount)});
+        // LY toekomst-maanden eraf trekken
+        priorFiltered.filter(p=>(p.effective_dept_code||p.dept_code)===r.dept_code&&p.effective_bum_group===r.bum&&p.year===priorYear&&p.month>dayFrac.month).forEach(p=>{lS-=parseFloat(p.net_sales);lG-=parseFloat(p.gross_margin)});
+      }
       return{...r,dept_code_num:parseInt(r.dept_code)||999,ly:conv(lS),varPct:lS?((r.net_sales-lS)/Math.abs(lS)*100):0,gmPct:r.net_sales?r.gross_margin/r.net_sales*100:0,net_sales_conv:conv(r.net_sales),gm_conv:conv(r.gross_margin),budMargin:conv(bd.g),budGmPct:bd.s?bd.g/bd.s*100:0};
     }).filter(r=>!search||r.dept.toLowerCase().includes(search.toLowerCase())||(r.bumLabel||'').toLowerCase().includes(search.toLowerCase()))
     .sort((a,b)=>{
