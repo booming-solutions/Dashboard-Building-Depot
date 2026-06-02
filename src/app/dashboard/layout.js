@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: layout.js
+   BESTAND: layout.js (v2)
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (overschrijft de bestaande layout.js)
+   (overschrijft de bestaande layout.js, hernoemen naar layout.js)
+
+   WIJZIGINGEN V27.12:
+   - AP (Accounts Payable) toegevoegd onder Finance menu
+   - REPORT_MAP uitgebreid met finance_ap
+   - Route: /dashboard/finance/ap
 
    WIJZIGINGEN V27.11:
    - Nieuwe "Finance" dropdown toegevoegd (Financiële Overzichten:
@@ -26,7 +31,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.11';
+const APP_VERSION = 'V27.12';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -240,6 +245,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/hr/urentarget': 'hr_urentarget',
     '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
     '/dashboard/finance/statements': 'finance_statements',
+    '/dashboard/finance/ap': 'finance_ap',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -278,6 +284,7 @@ export default function DashboardLayout({ children }) {
   ];
   const financeItemsAll = [
     { href: '/dashboard/finance/statements', label: 'Overzichten' },
+    { href: '/dashboard/finance/ap', label: 'Accounts Payable', badge: '(concept)' },
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
