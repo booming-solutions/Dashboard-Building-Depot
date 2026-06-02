@@ -4,14 +4,7 @@
    (vervang het bestaande page.js bestand)
    
    WIJZIGING t.o.v. v6:
-   - Drie nieuwe HR rapporten toegevoegd aan REPORTS lijst:
-     - Urentarget (hr_urentarget)
-     - Urenplanning (hr_urenplanning)
-     - Urenplanning Overzicht (hr_urenplanning_overview)
-   - Hiermee kun je per gebruiker / rol toegang tot deze rapporten beheren
-   
-   WIJZIGING t.o.v. v5:
-   - Nieuw rapport 'Stock Risk Alert' toegevoegd aan REPORTS lijst
+   - Gebruikerslijst sorteert nu alfabetisch op naam (was op datum)
    ============================================================ */
 'use client';
 
@@ -28,9 +21,6 @@ var REPORTS = [
   { id: 'inventory_stockrisk', label: 'Stock Risk Alert', group: 'Voorraad', icon: '🚨' },
   { id: 'inventory_health', label: 'Gezondheid Voorraden', group: 'Voorraad', icon: '🏥' },
   { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
-  { id: 'hr_urentarget', label: 'Urentarget', group: 'HR', icon: '⏱️' },
-  { id: 'hr_urenplanning', label: 'Urenplanning', group: 'HR', icon: '📅' },
-  { id: 'hr_urenplanning_overview', label: 'Urenplanning Overzicht', group: 'HR', icon: '📋' },
 ];
 
 export default function AdminUsersPage() {
@@ -101,7 +91,7 @@ export default function AdminUsersPage() {
       var p = await supabase.from('profiles').select('*').eq('id', u.data.user.id).single();
       if (p.data) setProfile(p.data);
     }
-    var pr = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    var pr = await supabase.from('profiles').select('*').order('full_name', { ascending: true });
     if (pr.data) setUsers(pr.data);
     var co = await supabase.from('companies').select('*').order('name');
     if (co.data) { setCompanies(co.data); if (co.data.length && !newCompanyId) setNewCompanyId(co.data[0].id); }

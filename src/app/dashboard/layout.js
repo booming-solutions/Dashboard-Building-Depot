@@ -287,6 +287,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
     { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
+    { href: '/dashboard/admin/dept-config', label: 'Afdelingen', icon: '🏷️' },
     { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
 
