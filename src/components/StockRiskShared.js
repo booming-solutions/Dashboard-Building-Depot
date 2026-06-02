@@ -581,8 +581,10 @@ export default function StockRiskShared({ bumFilter }) {
       if (!map[key]) {
         map[key] = {
           item: r.item_number, desc: r.item_description,
-          dept_code: r.dept_code, dept_name: r.dept_name,
-          bum: r.bum || '', vendor: r.vendor_name || 'ONBEKEND',
+          dept_code: r.effective_dept_code || r.dept_code,
+          dept_name: r.effective_dept_name || r.dept_name,
+          bum: r.effective_bum_group || '',
+          vendor: r.vendor_name || 'ONBEKEND',
           nos: r.nos === 'N',
           // Lead time = transit-tijd van leverancier naar magazijn.
           // Compass labelt dit als 'Min Lead Time' (Eagle Vendor Code 3).

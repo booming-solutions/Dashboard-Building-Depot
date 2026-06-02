@@ -162,9 +162,11 @@ export default function HealthDashboardShared({ bumFilter }) {
       if (!map[key]) {
         map[key] = {
           item: r.item_number, desc: r.item_description,
-          dept_code: r.dept_code, dept_name: r.dept_name,
+          dept_code: r.effective_dept_code || r.dept_code,
+          dept_name: r.effective_dept_name || r.dept_name,
           class_code: r.class_code, class_name: r.class_name,
-          bum: r.bum || '', vendor: r.vendor_name || '',
+          bum: r.effective_bum_group || '',
+          vendor: r.vendor_name || '',
           cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
           qoh: 0, inv_value: 0,
           // Lead time = transit-tijd van leverancier naar magazijn.

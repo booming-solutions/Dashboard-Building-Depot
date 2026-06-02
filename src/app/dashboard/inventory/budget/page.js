@@ -124,6 +124,9 @@ export default function InventoryDashboard() {
     //  - Repliceerde rijen in inventory_data (1 budget waarde × N snapshots) maar 1x meetellen
     //  - Bij merge (31+32 → 30) worden de budgets van de originele depts wel opgeteld
     var budgetSeen = {};  // key: 'effectiveCode|originalCode' → true als al verwerkt
+    // BumByDept: track per effective_dept_code de meest recente (inventory_date, bum) zodat we
+    // de actuele afdelings-toewijzing krijgen, niet de toewijzing van de eerste rij die toevallig binnenkomt.
+    var bumByDept = {};  // eCode → { date: ..., bum: ... }
     data.forEach(function(r) {
       if (storeFilter !== 'all' && r.store_number !== storeFilter) return;
       // Gebruik effective_dept_code zodat merges (31+32→30) automatisch worden samengevoegd
@@ -137,6 +140,12 @@ export default function InventoryDashboard() {
       if (!map[key]) {
         map[key] = { deptCode: eCode, deptName: eName, bum: eBum, budget: 0, history: {} };
       }
+      // Update bum-toewijzing op basis van meest recente inventory_date
+      // (voor depts met een time-overgang zoals 71/75 die in 2026 zijn verplaatst)
+      var dt = r.inventory_date;
+      if (!bumByDept[key] || dt > bumByDept[key].date) {
+        bumByDept[key] = { date: dt, bum: eBum, name: eName };
+      }
       // Budget: only CUR has budget. Per origineel dept_code maar 1x meetellen.
       // Bij merge (31+32→30) tel je 31's budget + 32's budget bij elkaar (eenmalig elk).
       if (!isBon) {
@@ -147,9 +156,16 @@ export default function InventoryDashboard() {
         }
       }
 
-      var dt = r.inventory_date;
       if (!map[key].history[dt]) map[key].history[dt] = 0;
       map[key].history[dt] += (parseFloat(r.inventory_value) || 0) * valMultiplier;
+    });
+
+    // Werk bum en name bij op basis van meest recente inventory_date
+    Object.keys(map).forEach(function(k) {
+      if (bumByDept[k]) {
+        map[k].bum = bumByDept[k].bum;
+        map[k].deptName = bumByDept[k].name;
+      }
     });
 
     var list = Object.values(map);
