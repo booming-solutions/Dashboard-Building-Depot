@@ -27,7 +27,7 @@ function Pill({label,active,onClick}){
   return <button className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ${active?"bg-[#E84E1B] text-white border-[#E84E1B]":"bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]"}`} onClick={onClick}>{label}</button>;
 }
 
-function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget}){
+function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget,budgetExtra}){
   return(
     <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 relative overflow-hidden shadow-sm">
       <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#E84E1B]"/>
@@ -35,7 +35,7 @@ function KPI({label,value,ly,budget,budgetLabel,varLy,varBudget}){
       <p className="text-[36px] font-semibold text-[#1a0a04] mt-1 font-mono tracking-tight leading-tight">{value}</p>
       {ly!==undefined&&<p className="text-[13px] text-[#6b5240] font-mono mt-1">LY: {ly}</p>}
       {varLy!==undefined&&<span className={`inline-block px-2 py-0.5 rounded text-[12px] font-semibold font-mono mt-1 ${varLy>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{varLy>=0?'+':''}{fmtP(varLy)}</span>}
-      {budget!==undefined&&<p className="text-[13px] text-[#6b5240] font-mono mt-1">{budgetLabel}: {budget}</p>}
+      {budget!==undefined&&<p className="text-[13px] text-[#6b5240] font-mono mt-1">{budgetLabel}: {budget}{budgetExtra?<span className="text-[11px] text-[#a08a74] ml-1">({budgetExtra})</span>:null}</p>}
       {varBudget!==undefined&&<span className={`inline-block px-2 py-0.5 rounded text-[12px] font-semibold font-mono mt-1 ${varBudget>=0?'bg-green-50 text-green-600':'bg-red-50 text-red-600'}`}>{varBudget>=0?'+':''}{fmtP(varBudget)}</span>}
     </div>
   );
@@ -240,6 +240,26 @@ export default function SalesDashboard(){
   const adj=proAdj(priorFiltered,budgetFiltered);
   const lyS=adj.lyS,lyG=adj.lyG,lyGP=lyS?lyG/lyS*100:0;
   const bS=adj.bS,bG=adj.bG,bGP=bS?bG/bS*100:0;
+
+  // Full-Month target voor de Netto Omzet KPI.
+  // Alleen tonen wanneer:
+  //  - Selectie is een specifieke maand (geen Alle/YTD/meerdere maanden)
+  //  - Die maand is de lopende maand (= dayFrac.month)
+  // Geeft volledige maand-budget voor de geselecteerde maand (zonder prorate).
+  const fmTarget=useMemo(()=>{
+    if(!dayFrac.month||dayFrac.year!==currentYear)return null;
+    if(!selectedMonths||selectedMonths.length!==1)return null;
+    if(selectedMonths[0]!==dayFrac.month)return null;
+    const targetType=budgetMode==='target'?'target_sales':'cgf_sales';
+    const monthStr=`${currentYear}-${String(dayFrac.month).padStart(2,'0')}`;
+    return budgetData.filter(b=>{
+      if(store!=='all'&&b.store_number!==store)return false;
+      if(dept!=='all'&&b.dept_code!==dept)return false;
+      if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
+      if(b.month!==monthStr)return false;
+      return b.budget_type===targetType;
+    }).reduce((s,b)=>s+parseFloat(b.amount||0),0);
+  },[budgetData,store,dept,bum,deptBumMap,currentYear,budgetMode,selectedMonths,dayFrac]);
 
   // Format voor budget pill — minder decimalen voor grote ronde bedragen
   const fmtBudgetPill=n=>{
@@ -469,9 +489,6 @@ export default function SalesDashboard(){
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-        <KPI label="Netto Omzet" value={fmtMC(tS)} ly={fmtMC(lyS)} varLy={pctChg(tS,lyS)} budget={fmtMC(bS)} budgetLabel={budgetLabel} varBudget={pctChg(tS,bS)}/>
-        <KPI label="Bruto Marge" value={fmtMC(tG)} ly={fmtMC(lyG)} varLy={pctChg(tG,lyG)} budget={fmtMC(bG)} budgetLabel={budgetLabel} varBudget={pctChg(tG,bG)}/>
-        <KPI label="Bruto Marge %" value={fmtP(tGP)} ly={fmtP(lyGP)} varLy={tGP-lyGP} budget={fmtP(bGP)} budgetLabel={budgetLabel} varBudget={tGP-bGP}/>
         {dailyPulse&&<KPI
           label={`Verkopen ${dailyPulse.d} ${MN[dailyPulse.m-1]}`}
           value={fmtMC(dailyPulse.tySales)}
@@ -481,6 +498,9 @@ export default function SalesDashboard(){
           budgetLabel={budgetLabel}
           varBudget={pctChg(dailyPulse.tySales,dailyPulse.dayBudget)}
         />}
+        <KPI label="Netto Omzet" value={fmtMC(tS)} ly={fmtMC(lyS)} varLy={pctChg(tS,lyS)} budget={fmtMC(bS)} budgetLabel={budgetLabel} varBudget={pctChg(tS,bS)} budgetExtra={fmTarget?`FM: ${fmtMC(fmTarget)}`:null}/>
+        <KPI label="Bruto Marge" value={fmtMC(tG)} ly={fmtMC(lyG)} varLy={pctChg(tG,lyG)} budget={fmtMC(bG)} budgetLabel={budgetLabel} varBudget={pctChg(tG,bG)}/>
+        <KPI label="Bruto Marge %" value={fmtP(tGP)} ly={fmtP(lyGP)} varLy={tGP-lyGP} budget={fmtP(bGP)} budgetLabel={budgetLabel} varBudget={tGP-bGP}/>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
