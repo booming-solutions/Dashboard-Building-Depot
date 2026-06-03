@@ -1,12 +1,15 @@
 /* ============================================================
-   BESTAND: ap_page_v3.js
+   BESTAND: ap_page_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v2, hernoemen naar page.js)
+   (overschrijft v3, hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v2:
-   - Snelkoppelingen naar sub-pagina's toegevoegd (alleen Data Upload werkt nu)
-   - Andere kaarten tonen "binnenkort"-state met grijze achtergrond
-   - Database health-cards iets compacter
+   WIJZIGINGEN T.O.V. v3:
+   - Stats filteren nu op effective role: AP Clerks zien alleen
+     hun eigen toegewezen facturen, admin/cfo/approver zien alles
+   - Nieuwe stat-card "Auto-match kandidaten" — telt vendors waar
+     openstaande balances tegen elkaar wegvallen (compensaties)
+   - Label "Openstaand" wordt "Mijn openstaande" voor AP Clerks
+   - Snelkoppeling naar Auto-match werklijst (placeholder)
    ============================================================ */
 'use client';
 
@@ -18,41 +21,79 @@ import Link from 'next/link';
 export default function APDashboard() {
   const {
     actualName, actualRole,
-    effectiveName, effectiveRole, effectiveBums,
+    effectiveName, effectiveRole, effectiveBums, effectiveProfileId,
     isPlayingRole
   } = useApRole();
 
-  const [vendorCount, setVendorCount] = useState(null);
-  const [invoiceCount, setInvoiceCount] = useState(null);
-  const [openInvoiceCount, setOpenInvoiceCount] = useState(null);
-  const [totalOpen, setTotalOpen] = useState(null);
+  const [stats, setStats] = useState({
+    vendors: null,
+    invoices: null,
+    openInvoices: null,
+    totalOpen: null,
+    autoMatchVendors: null,
+    autoMatchInvoices: null,
+  });
 
   useEffect(() => {
     async function loadStats() {
       const supabase = createClient();
-      const { count: vc } = await supabase.from('ap_vendors').select('*', { count: 'exact', head: true });
-      setVendorCount(vc);
+      const isClerk = effectiveRole === 'ap_clerk';
 
-      const { count: ic } = await supabase.from('ap_invoices').select('*', { count: 'exact', head: true });
-      setInvoiceCount(ic);
+      // Vendor master count (statisch, niet rol-afhankelijk in v1)
+      const { count: vc } = await supabase
+        .from('ap_vendors')
+        .select('*', { count: 'exact', head: true });
 
-      const { count: oc } = await supabase
+      // Totaal facturen — voor admin/cfo/approver: alles. Voor clerk: alleen toegewezen
+      let totalQuery = supabase.from('ap_invoices').select('*', { count: 'exact', head: true });
+      if (isClerk) totalQuery = totalQuery.eq('assigned_ap_clerk', effectiveProfileId);
+      const { count: ic } = await totalQuery;
+
+      // Open facturen detail (voor som + auto-match analyse)
+      let openQuery = supabase
         .from('ap_invoices')
-        .select('*', { count: 'exact', head: true })
+        .select('vendor_id, balance, assigned_ap_clerk')
         .not('status', 'in', '(paid,disappeared_from_export)');
-      setOpenInvoiceCount(oc);
+      if (isClerk) openQuery = openQuery.eq('assigned_ap_clerk', effectiveProfileId);
+      const { data: openRows } = await openQuery;
 
-      const { data: openRows } = await supabase
-        .from('ap_invoices')
-        .select('balance')
-        .not('status', 'in', '(paid,disappeared_from_export)');
+      const openInvoices = openRows ? openRows.length : 0;
+      const totalOpen = openRows
+        ? openRows.reduce((s, r) => s + parseFloat(r.balance || 0), 0)
+        : 0;
+
+      // Auto-match: vendors waar som van openstaande facturen ≈ 0 én >1 factuur
+      let autoMatchVendors = 0;
+      let autoMatchInvoices = 0;
       if (openRows) {
-        const total = openRows.reduce((s, r) => s + parseFloat(r.balance || 0), 0);
-        setTotalOpen(total);
+        const vendorGroups = {};
+        for (const r of openRows) {
+          if (!vendorGroups[r.vendor_id]) vendorGroups[r.vendor_id] = [];
+          vendorGroups[r.vendor_id].push(parseFloat(r.balance || 0));
+        }
+        for (const [vid, amounts] of Object.entries(vendorGroups)) {
+          if (amounts.length < 2) continue;
+          const sum = amounts.reduce((a, b) => a + b, 0);
+          if (Math.abs(sum) < 0.01) {
+            autoMatchVendors++;
+            autoMatchInvoices += amounts.length;
+          }
+        }
       }
+
+      setStats({
+        vendors: vc,
+        invoices: ic,
+        openInvoices,
+        totalOpen,
+        autoMatchVendors,
+        autoMatchInvoices,
+      });
     }
     loadStats();
-  }, []);
+  }, [effectiveProfileId, effectiveRole]);
+
+  const isClerk = effectiveRole === 'ap_clerk';
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -91,20 +132,50 @@ export default function APDashboard() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — labels passen aan op rol */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <StatCard label="Vendors" value={vendorCount} sublabel="in master" />
-        <StatCard label="Totaal facturen" value={invoiceCount} sublabel="historisch" />
-        <StatCard label="Openstaand" value={openInvoiceCount} sublabel="actief in werkstroom" />
         <StatCard
-          label="Openstaand bedrag"
-          value={totalOpen === null ? null : `XCG ${fmtMoney(totalOpen)}`}
+          label="Vendor master"
+          value={stats.vendors}
+          sublabel="totaal in master"
+        />
+        <StatCard
+          label={isClerk ? "Mijn facturen" : "Totaal facturen"}
+          value={stats.invoices}
+          sublabel={isClerk ? "toegewezen aan mij" : "historisch"}
+        />
+        <StatCard
+          label={isClerk ? "Mijn openstaande" : "Openstaand"}
+          value={stats.openInvoices}
+          sublabel="actief in werkstroom"
+        />
+        <StatCard
+          label={isClerk ? "Mijn openstaand bedrag" : "Openstaand bedrag"}
+          value={stats.totalOpen === null ? null : `XCG ${fmtMoney(stats.totalOpen)}`}
           sublabel="te betalen"
           isText
         />
       </div>
 
-      {/* Snelkoppelingen naar sub-pagina's */}
+      {/* Auto-match callout — alleen tonen als er kandidaten zijn */}
+      {stats.autoMatchVendors !== null && stats.autoMatchVendors > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4 flex items-center gap-4">
+          <div className="w-11 h-11 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
+            <span className="text-xl">⚖️</span>
+          </div>
+          <div className="flex-1">
+            <p className="text-[14px] font-bold text-emerald-900">
+              {stats.autoMatchVendors} {stats.autoMatchVendors === 1 ? 'vendor' : 'vendors'} met auto-match kandidaten
+            </p>
+            <p className="text-[12px] text-emerald-700">
+              {stats.autoMatchInvoices} facturen waarvan de openstaande saldi tegen elkaar wegvallen — geen bank-betaling nodig
+            </p>
+          </div>
+          <span className="text-[11px] text-emerald-700 italic">werklijst volgt</span>
+        </div>
+      )}
+
+      {/* Snelkoppelingen */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm mb-4">
         <h3 className="text-[14px] font-bold text-[#1B3A5C] mb-3">Snelkoppelingen</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -117,8 +188,13 @@ export default function APDashboard() {
           />
           <ActionCard icon="📄" label="Openstaande AP" desc="Filterbaar overzicht" />
           <ActionCard icon="✅" label="Werkstroom" desc="Selectie → Goedkeuring → Bank" />
+          <ActionCard
+            icon="⚖️"
+            label="Auto-match"
+            desc="Compensaties zonder bank-betaling"
+            badge={stats.autoMatchVendors > 0 ? `${stats.autoMatchVendors}` : null}
+          />
           <ActionCard icon="🏦" label="Bank-bestanden" desc="MCB FEP + RBC export" />
-          <ActionCard icon="🔄" label="Afletteren" desc="Verdwenen + voltooide batches" />
           <ActionCard icon="📋" label="Audit log" desc="Volledig actie-spoor" />
         </div>
       </div>
@@ -126,7 +202,7 @@ export default function APDashboard() {
       <div className="bg-[#1B3A5C]/5 rounded-xl border border-[#1B3A5C]/10 p-4">
         <p className="text-[12px] text-[#1B3A5C]/70">
           <strong>Status:</strong> Data Upload werkt — Compass CSV's kunnen worden ingelezen.
-          De andere modules worden stap voor stap toegevoegd.
+          De werkstroom-pagina's worden stap voor stap toegevoegd.
         </p>
       </div>
     </div>
@@ -145,7 +221,7 @@ function StatCard({ label, value, sublabel, isText }) {
   );
 }
 
-function ActionCard({ href, icon, label, desc, available }) {
+function ActionCard({ href, icon, label, desc, available, badge }) {
   if (available && href) {
     return (
       <Link
@@ -162,13 +238,18 @@ function ActionCard({ href, icon, label, desc, available }) {
     );
   }
   return (
-    <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100 opacity-60">
+    <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100 opacity-60 relative">
       <span className="text-lg flex-shrink-0">{icon}</span>
       <div className="flex-1">
         <p className="text-[13px] font-semibold text-[#1B3A5C]/60">{label}</p>
         <p className="text-[11px] text-[#1B3A5C]/40">{desc}</p>
       </div>
-      <span className="text-[10px] text-[#1B3A5C]/40 italic">binnenkort</span>
+      {badge && (
+        <span className="absolute top-2 right-2 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+          {badge}
+        </span>
+      )}
+      {!badge && <span className="text-[10px] text-[#1B3A5C]/40 italic">binnenkort</span>}
     </div>
   );
 }
