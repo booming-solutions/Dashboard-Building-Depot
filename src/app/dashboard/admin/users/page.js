@@ -1,10 +1,15 @@
 /* ============================================================
-   BESTAND: page_admin_v7.js
+   BESTAND: page_admin_v8.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGING t.o.v. v6:
-   - Gebruikerslijst sorteert nu alfabetisch op naam (was op datum)
+   WIJZIGING t.o.v. v7:
+   - Alle ontbrekende rapporten toegevoegd aan REPORTS lijst:
+     * Rapportages (reports)
+     * Bestanden (files)
+     * Uren Planning (hr_urenplanning)
+     * Uren Planning Overzicht (hr_urenplanning_overview)
+     * Uren Target (hr_urentarget)
    ============================================================ */
 'use client';
 
@@ -21,6 +26,11 @@ var REPORTS = [
   { id: 'inventory_stockrisk', label: 'Stock Risk Alert', group: 'Voorraad', icon: '🚨' },
   { id: 'inventory_health', label: 'Gezondheid Voorraden', group: 'Voorraad', icon: '🏥' },
   { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
+  { id: 'hr_urenplanning', label: 'Uren Planning', group: 'HR', icon: '🗓️' },
+  { id: 'hr_urenplanning_overview', label: 'Uren Planning Overzicht', group: 'HR', icon: '📋' },
+  { id: 'hr_urentarget', label: 'Uren Target', group: 'HR', icon: '🎯' },
+  { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },
+  { id: 'files', label: 'Bestanden', group: 'Algemeen', icon: '📁' },
 ];
 
 export default function AdminUsersPage() {
