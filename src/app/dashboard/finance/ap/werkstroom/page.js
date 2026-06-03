@@ -1,7 +1,10 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v3.js
+   BESTAND: ap_werkstroom_page_v3_1.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v2, hernoemen naar page.js)
+
+   PATCH t.o.v. v3 origineel: rejection-fetch verplaatst NA grouped declaration
+   (TDZ fout opgelost — gebruikten grouped voor declaratie)
 
    WIJZIGINGEN T.O.V. v2:
    - FIX: canApprove wordt nu lokaal berekend uit effectiveRole.
@@ -134,7 +137,15 @@ export default function WerkstroomPage() {
       }
       setUserNames(userNameMap);
 
-      // Rejection comments ophalen — meest recente per factuur
+      // Eerst groeperen per status
+      const grouped = {};
+      for (const s of statuses) grouped[s] = [];
+      for (const r of allRows) {
+        if (grouped[r.status]) grouped[r.status].push(r);
+      }
+      setByStatus(grouped);
+
+      // Daarna rejection comments ophalen voor de openstaande facturen
       const openInvoiceIds = (grouped['open'] || []).map(r => r.id);
       if (openInvoiceIds.length > 0) {
         const rejs = await fetchAllPaginated(() =>
@@ -145,7 +156,6 @@ export default function WerkstroomPage() {
             .in('invoice_id', openInvoiceIds)
             .order('created_at', { ascending: false })
         );
-        // Per invoice: meest recente
         const byInv = {};
         for (const r of rejs) {
           if (!byInv[r.invoice_id]) byInv[r.invoice_id] = r;
@@ -154,13 +164,6 @@ export default function WerkstroomPage() {
       } else {
         setRejections({});
       }
-
-      const grouped = {};
-      for (const s of statuses) grouped[s] = [];
-      for (const r of allRows) {
-        if (grouped[r.status]) grouped[r.status].push(r);
-      }
-      setByStatus(grouped);
     } catch (e) {
       setError(e.message || 'Onbekende fout');
     } finally {
