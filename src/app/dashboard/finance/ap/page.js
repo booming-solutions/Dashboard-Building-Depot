@@ -1,14 +1,13 @@
 /* ============================================================
-   BESTAND: ap_page_v7.js
+   BESTAND: ap_page_v8.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v6, hernoemen naar page.js)
+   (overschrijft v7, hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v6:
-   - Eagle Sync tegel is nu klikbaar met badge-aantal
-   - Nieuwe callout (amber) bovenaan voor AP Clerks die paren op
-     hun Eagle Sync werklijst hebben staan — direct zichtbaar bij
-     inloggen zodat ze weten dat er werk in Eagle gedaan moet worden
-   - Telling 'eaglePending' wordt opgehaald (count-only, geen data)
+   WIJZIGINGEN T.O.V. v7:
+   - Werkstroom tegel werkend (href naar /werkstroom)
+   - Voor AP Clerks: nieuwe callout als ze 'selected_by_ap' rijen
+     hebben — herinnering dat ze nog moeten indienen bij goedkeurder
+   - Telling 'selectedPending' (count selected_by_ap, gefilterd op clerk)
    ============================================================ */
 'use client';
 
@@ -49,6 +48,7 @@ export default function APDashboard() {
     autoMatchVendors: null,
     autoMatchInvoices: null,
     eaglePending: null,
+    selectedPending: null,
   });
 
   useEffect(() => {
@@ -117,6 +117,14 @@ export default function APDashboard() {
       if (isClerk) eagleQuery = eagleQuery.eq('assigned_ap_clerk', effectiveProfileId);
       const { count: ep } = await eagleQuery;
 
+      // 'Klaar voor indiening' telling — selected_by_ap rijen (gefilterd op clerk)
+      let selQuery = supabase
+        .from('ap_invoices')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'selected_by_ap');
+      if (isClerk) selQuery = selQuery.eq('assigned_ap_clerk', effectiveProfileId);
+      const { count: sp } = await selQuery;
+
       setStats({
         vendors: vc,
         invoices: ic,
@@ -125,6 +133,7 @@ export default function APDashboard() {
         autoMatchVendors,
         autoMatchInvoices,
         eaglePending: ep || 0,
+        selectedPending: sp || 0,
       });
     }
     loadStats();
@@ -194,6 +203,27 @@ export default function APDashboard() {
         />
       </div>
 
+      {/* Indienen herinnering — alleen voor AP Clerks met klaargezette selectie */}
+      {isClerk && stats.selectedPending !== null && stats.selectedPending > 0 && (
+        <Link
+          href="/dashboard/finance/ap/werkstroom"
+          className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 flex items-center gap-4 hover:bg-blue-100 transition-all group"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-100 flex items-center justify-center flex-shrink-0">
+            <span className="text-xl">📤</span>
+          </div>
+          <div className="flex-1">
+            <p className="text-[14px] font-bold text-blue-900">
+              {stats.selectedPending} {stats.selectedPending === 1 ? 'factuur klaar' : 'facturen klaar'} voor indiening
+            </p>
+            <p className="text-[12px] text-blue-800">
+              Je hebt deze facturen geselecteerd maar nog niet ingediend bij de goedkeurder.
+            </p>
+          </div>
+          <span className="text-blue-700 group-hover:text-blue-900">Naar werkstroom →</span>
+        </Link>
+      )}
+
       {/* Eagle Sync callout — heeft prioriteit: dit is werk dat in Eagle nog gedaan moet worden */}
       {stats.eaglePending !== null && stats.eaglePending > 0 && (
         <Link
@@ -246,8 +276,13 @@ export default function APDashboard() {
             desc="Compass CSV inlezen"
             available
           />
-          <ActionCard icon="📄" label="Openstaande AP" desc="Filterbaar overzicht" />
-          <ActionCard icon="✅" label="Werkstroom" desc="Selectie → Goedkeuring → Bank" />
+          <ActionCard
+            href="/dashboard/finance/ap/werkstroom"
+            icon="✅"
+            label="Werkstroom"
+            desc="Selectie → Goedkeuring → Bank"
+            available
+          />
           <ActionCard
             href="/dashboard/finance/ap/auto-match"
             icon="⚖️"
