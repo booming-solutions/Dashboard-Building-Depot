@@ -1,25 +1,18 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v4.js
+   BESTAND: ap_werkstroom_page_v5.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
-   (overschrijft v2, hernoemen naar page.js)
+   (overschrijft v4, hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v3:
-   - Rejection opslag verhuisd van ap_comments naar 3 kolommen
-     direct op ap_invoices: rejection_reason / rejected_at / rejected_by.
-     Reden: atomic update + geen aparte RLS issues.
-   - Geen aparte fetch meer voor rejection-comments — de info
-     staat direct in elke invoice-rij.
-   - Bij select/submit/approve/unselect: rejection-velden worden
-     gewist (frisse start).
-
-   WIJZIGINGEN T.O.V. v2:
-   - FIX: canApprove wordt nu lokaal berekend uit effectiveRole.
-     Werkt onafhankelijk van layout.js versie — admin, cfo en
-     ap_approver krijgen nu allemaal de goedkeur/afwijs knoppen.
-   - Afwijs-indicator op rijen: rood pijltje + tooltip met reden,
-     wie en wanneer. Verschijnt op tab "Openstaand" voor facturen
-     die eerder zijn afgewezen.
-   - Comments worden mee opgehaald uit ap_comments (kind='rejection')
+   GROTE WIJZIGINGEN T.O.V. v4:
+   - WERKSTROOM CORRECTIE:
+     · Tab "In batch" verwijderd, "Bij bank" toegevoegd (status='at_bank')
+     · AP Clerk actie op "Goedgekeurd": "Markeer verzonden naar bank"
+     · CFO/Admin actie op "Bij bank": "Bevestig betaald"
+   - PERFORMANCE:
+     · Per-tab fetching: alleen rijen voor actieve tab geladen
+     · Tab-counts via 5 parallelle COUNT queries (Promise.all)
+     · Optimistic updates: UI past direct aan na actie
+     · Caching: switchen tussen tabs is instant na eerste load
    ============================================================ */
 'use client';
 
@@ -48,16 +41,8 @@ const STATUS_TABS = [
   { key: 'selected_by_ap',  label: 'Klaar voor indiening',  color: 'blue' },
   { key: 'approver_review', label: 'Bij goedkeurder',       color: 'amber' },
   { key: 'approved',        label: 'Goedgekeurd',           color: 'emerald' },
-  { key: 'in_batch',        label: 'In batch',              color: 'purple' },
+  { key: 'at_bank',         label: 'Bij bank',              color: 'purple' },
 ];
-
-const TAB_COLOR = {
-  gray:    'bg-gray-100 text-gray-700 border-gray-200',
-  blue:    'bg-blue-100 text-blue-700 border-blue-200',
-  amber:   'bg-amber-100 text-amber-700 border-amber-200',
-  emerald: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  purple:  'bg-purple-100 text-purple-700 border-purple-200',
-};
 
 const TAB_BADGE = {
   gray:    'bg-gray-200 text-gray-700',
@@ -78,8 +63,6 @@ function fmtDate(iso) {
 function fmtNum(n) {
   return new Intl.NumberFormat('nl-NL').format(n);
 }
-
-// Bepaal of een factuur 'overdue' is
 function daysUntilDue(dueDate) {
   if (!dueDate) return null;
   const today = new Date();
@@ -89,17 +72,24 @@ function daysUntilDue(dueDate) {
   return Math.round((due - today) / (1000 * 60 * 60 * 24));
 }
 
+const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by';
+
 export default function WerkstroomPage() {
   const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
-  // Lokaal berekend (niet afhankelijk van context) zodat het altijd werkt
+
+  // Lokaal berekende capabilities — geen context-afhankelijkheid
   const canApprove = ['admin', 'cfo', 'ap_approver'].includes(effectiveRole);
+  const canSendToBank = ['admin', 'ap_clerk'].includes(effectiveRole);
+  const canMarkPaid = ['admin', 'cfo'].includes(effectiveRole);
 
   const [tab, setTab] = useState('open');
-  const [byStatus, setByStatus] = useState({});
+  const [tabCounts, setTabCounts] = useState({});
+  const [tabRows, setTabRows] = useState({});  // {status: [rows]}
   const [userNames, setUserNames] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [loadingCounts, setLoadingCounts] = useState(true);
+  const [loadingTab, setLoadingTab] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -109,61 +99,92 @@ export default function WerkstroomPage() {
   const [sortBy, setSortBy] = useState('due_date');
   const [sortDesc, setSortDesc] = useState(false);
 
-  const loadInvoices = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // Counts laden (parallel)
+  const loadCounts = useCallback(async () => {
+    setLoadingCounts(true);
     try {
-      const statuses = STATUS_TABS.map(t => t.key);
-      const allRows = await fetchAllPaginated(() => {
+      const queries = STATUS_TABS.map(t => {
         let q = supabase
           .from('ap_invoices')
-          .select('id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by')
-          .in('status', statuses);
+          .select('*', { count: 'exact', head: true })
+          .eq('status', t.key);
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
       });
+      const results = await Promise.all(queries);
+      const counts = {};
+      STATUS_TABS.forEach((t, i) => {
+        counts[t.key] = results[i].count || 0;
+      });
+      setTabCounts(counts);
+    } catch (e) {
+      console.error('loadCounts error:', e);
+    } finally {
+      setLoadingCounts(false);
+    }
+  }, [supabase, effectiveProfileId, isClerk]);
 
-      // Profielen ophalen voor naam-resolution (selected_by / submitted_by / approved_by)
+  // Rijen voor één status laden
+  const loadTabRows = useCallback(async (statusKey) => {
+    setLoadingTab(true);
+    try {
+      const rows = await fetchAllPaginated(() => {
+        let q = supabase
+          .from('ap_invoices')
+          .select(SELECT_COLS)
+          .eq('status', statusKey);
+        if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
+        return q;
+      });
+      setTabRows(prev => ({ ...prev, [statusKey]: rows }));
+
+      // Profile-namen voor selected_by/submitted_by/approved_by/rejected_by
       const userIds = new Set();
-      for (const r of allRows) {
+      for (const r of rows) {
         if (r.selected_by) userIds.add(r.selected_by);
         if (r.submitted_by) userIds.add(r.submitted_by);
         if (r.approved_by) userIds.add(r.approved_by);
+        if (r.rejected_by) userIds.add(r.rejected_by);
       }
-      let userNameMap = {};
       if (userIds.size > 0) {
         const { data: profs } = await supabase
           .from('profiles')
           .select('id, full_name')
           .in('id', Array.from(userIds));
         if (profs) {
-          for (const p of profs) userNameMap[p.id] = p.full_name;
+          setUserNames(prev => {
+            const next = { ...prev };
+            for (const p of profs) next[p.id] = p.full_name;
+            return next;
+          });
         }
       }
-      setUserNames(userNameMap);
-
-      // Eerst groeperen per status
-      const grouped = {};
-      for (const s of statuses) grouped[s] = [];
-      for (const r of allRows) {
-        if (grouped[r.status]) grouped[r.status].push(r);
-      }
-      setByStatus(grouped);
-
-      // Geen aparte rejection-fetch meer — info staat direct op invoice
     } catch (e) {
-      setError(e.message || 'Onbekende fout');
+      setError(e.message || 'Onbekende fout bij laden');
     } finally {
-      setLoading(false);
+      setLoadingTab(false);
     }
   }, [supabase, effectiveProfileId, isClerk]);
 
-  useEffect(() => { loadInvoices(); }, [loadInvoices]);
-  useEffect(() => { setSelectedIds(new Set()); }, [tab]);
+  // Initial + bij role-switch: counts + huidige tab
+  useEffect(() => {
+    setTabRows({});  // Cache wissen bij role-switch
+    loadCounts();
+    loadTabRows(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveProfileId, isClerk]);
 
-  // Filter + sort huidige tab
+  // Tab-switch: rijen laden als nog niet gecached
+  useEffect(() => {
+    setSelectedIds(new Set());
+    if (!tabRows[tab]) {
+      loadTabRows(tab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   const currentInvoices = useMemo(() => {
-    const rows = byStatus[tab] || [];
+    const rows = tabRows[tab] || [];
     let filtered = rows;
     if (vendorFilter.trim()) {
       const q = vendorFilter.trim().toLowerCase();
@@ -185,7 +206,7 @@ export default function WerkstroomPage() {
       }
       return sortDesc ? -cmp : cmp;
     });
-  }, [byStatus, tab, vendorFilter, sortBy, sortDesc]);
+  }, [tabRows, tab, vendorFilter, sortBy, sortDesc]);
 
   function toggleSelect(id) {
     const next = new Set(selectedIds);
@@ -193,13 +214,8 @@ export default function WerkstroomPage() {
     else next.add(id);
     setSelectedIds(next);
   }
-
-  function selectAll() {
-    setSelectedIds(new Set(currentInvoices.map(i => i.id)));
-  }
-  function deselectAll() {
-    setSelectedIds(new Set());
-  }
+  function selectAll() { setSelectedIds(new Set(currentInvoices.map(i => i.id))); }
+  function deselectAll() { setSelectedIds(new Set()); }
 
   async function doAction(actionKey, extra = {}) {
     setBusy(true);
@@ -210,15 +226,8 @@ export default function WerkstroomPage() {
 
       const now = new Date().toISOString();
       let newStatus, auditAction;
-      // Extra velden afhankelijk van actie
       const extraFields = {};
-
-      // Alle positieve acties wissen eventuele eerdere afwijzing
-      const clearRejection = {
-        rejection_reason: null,
-        rejected_at: null,
-        rejected_by: null,
-      };
+      const clearRejection = { rejection_reason: null, rejected_at: null, rejected_by: null };
 
       if (actionKey === 'select') {
         newStatus = 'selected_by_ap';
@@ -244,24 +253,44 @@ export default function WerkstroomPage() {
         extraFields.approved_by = actualProfile.id;
         Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'reject') {
-        if (!extra.reason || !extra.reason.trim()) {
-          throw new Error('Afwijs-reden is verplicht');
-        }
+        if (!extra.reason || !extra.reason.trim()) throw new Error('Afwijs-reden is verplicht');
         newStatus = 'open';
         auditAction = 'rejected';
-        // Reset workflow timestamps
         extraFields.selected_at = null;
         extraFields.selected_by = null;
         extraFields.submitted_at = null;
         extraFields.submitted_by = null;
-        // Sla rejection op direct in ap_invoices
         extraFields.rejection_reason = extra.reason;
         extraFields.rejected_at = now;
         extraFields.rejected_by = actualProfile.id;
+      } else if (actionKey === 'send_to_bank') {
+        newStatus = 'at_bank';
+        auditAction = 'sent_to_bank';
+      } else if (actionKey === 'mark_paid') {
+        newStatus = 'paid';
+        auditAction = 'marked_paid';
+        extraFields.paid_at = now;
+        extraFields.paid_by = actualProfile.id;
       } else {
         throw new Error('Onbekende actie: ' + actionKey);
       }
 
+      // Optimistic update: rijen verwijderen uit huidige tab + counts aanpassen
+      setTabRows(prev => {
+        const next = { ...prev };
+        if (next[tab]) next[tab] = next[tab].filter(r => !ids.includes(r.id));
+        return next;
+      });
+      setTabCounts(prev => {
+        const next = { ...prev };
+        next[tab] = Math.max(0, (next[tab] || 0) - ids.length);
+        if (next[newStatus] !== undefined) next[newStatus] = (next[newStatus] || 0) + ids.length;
+        return next;
+      });
+      setSelectedIds(new Set());
+      setShowRejectModal(false);
+
+      // Async: DB update
       const { error: updErr } = await supabase
         .from('ap_invoices')
         .update({
@@ -273,7 +302,7 @@ export default function WerkstroomPage() {
         .in('id', ids);
       if (updErr) throw updErr;
 
-      // Audit per factuur
+      // Audit log per factuur
       const auditRows = ids.map(id => ({
         action: auditAction,
         entity_type: 'invoice',
@@ -290,37 +319,39 @@ export default function WerkstroomPage() {
       }));
       if (auditRows.length > 0) await supabase.from('ap_audit_log').insert(auditRows);
 
-      setSelectedIds(new Set());
-      setShowRejectModal(false);
-      await loadInvoices();
+      // Verfris de bestemmingstab indien deze al geladen was
+      if (tabRows[newStatus]) {
+        await loadTabRows(newStatus);
+      }
     } catch (e) {
       setError(e.message || 'Fout bij actie');
+      // Bij fout: refresh alles om consistentie te herstellen
+      await loadCounts();
+      await loadTabRows(tab);
     } finally {
       setBusy(false);
     }
   }
 
-  // Stats
-  const tabCounts = useMemo(() => {
-    const m = {};
-    for (const t of STATUS_TABS) m[t.key] = (byStatus[t.key] || []).length;
-    return m;
-  }, [byStatus]);
-
   const selectedCount = selectedIds.size;
-  const selectedTotal = useMemo(() => {
-    return currentInvoices
-      .filter(i => selectedIds.has(i.id))
-      .reduce((s, i) => s + parseFloat(i.balance || 0), 0);
-  }, [currentInvoices, selectedIds]);
+  const selectedTotal = useMemo(() =>
+    currentInvoices.filter(i => selectedIds.has(i.id))
+      .reduce((s, i) => s + parseFloat(i.balance || 0), 0),
+    [currentInvoices, selectedIds]);
 
   const currentTotal = useMemo(() =>
     currentInvoices.reduce((s, i) => s + parseFloat(i.balance || 0), 0),
     [currentInvoices]);
 
+  async function refresh() {
+    setTabRows({});
+    await loadCounts();
+    await loadTabRows(tab);
+  }
+
   return (
     <div className="max-w-7xl mx-auto">
-      <Header />
+      <Header onRefresh={refresh} />
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
@@ -338,23 +369,21 @@ export default function WerkstroomPage() {
               key={t.key}
               onClick={() => setTab(t.key)}
               className={`px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2 ${
-                active
-                  ? 'bg-[#1B3A5C] text-white'
-                  : 'bg-white border border-gray-200 text-[#1B3A5C]/70 hover:text-[#1B3A5C] hover:border-[#1B3A5C]/30'
+                active ? 'bg-[#1B3A5C] text-white' : 'bg-white border border-gray-200 text-[#1B3A5C]/70 hover:text-[#1B3A5C] hover:border-[#1B3A5C]/30'
               }`}
             >
               {t.label}
               <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.5rem] text-center ${
                 active ? 'bg-white/20' : TAB_BADGE[t.color]
               }`}>
-                {fmtNum(count)}
+                {loadingCounts ? '…' : fmtNum(count)}
               </span>
             </button>
           );
         })}
       </div>
 
-      {/* Filter & sort bar */}
+      {/* Filter & sort */}
       <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap">
         <input
           type="text"
@@ -363,27 +392,17 @@ export default function WerkstroomPage() {
           placeholder="Zoek op vendor, factuur, voucher..."
           className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] focus:outline-none focus:border-[#1B3A5C]"
         />
-
         <div className="flex items-center gap-1.5 text-[12px] text-[#1B3A5C]/60">
           <span>Sorteer op:</span>
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value)}
-            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer"
-          >
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer">
             <option value="due_date">Vervaldatum</option>
             <option value="amount">Bedrag</option>
             <option value="vendor">Vendor</option>
           </select>
-          <button
-            onClick={() => setSortDesc(!sortDesc)}
-            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] hover:bg-gray-50"
-            title={sortDesc ? 'Aflopend' : 'Oplopend'}
-          >
+          <button onClick={() => setSortDesc(!sortDesc)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] hover:bg-gray-50" title={sortDesc ? 'Aflopend' : 'Oplopend'}>
             {sortDesc ? '↓' : '↑'}
           </button>
         </div>
-
         <div className="text-[11px] text-[#1B3A5C]/50 ml-auto">
           {fmtNum(currentInvoices.length)} regels · XCG {fmtMoney(currentTotal)}
         </div>
@@ -395,6 +414,8 @@ export default function WerkstroomPage() {
           tab={tab}
           isClerk={isClerk}
           canApprove={canApprove}
+          canSendToBank={canSendToBank}
+          canMarkPaid={canMarkPaid}
           count={selectedCount}
           total={selectedTotal}
           busy={busy}
@@ -404,7 +425,6 @@ export default function WerkstroomPage() {
         />
       )}
 
-      {/* Reject modal */}
       {showRejectModal && (
         <RejectModal
           count={selectedCount}
@@ -416,7 +436,7 @@ export default function WerkstroomPage() {
       )}
 
       {/* Tabel */}
-      {loading ? (
+      {loadingTab ? (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center shadow-sm">
           <div className="inline-block w-8 h-8 border-4 border-[#1B3A5C]/20 border-t-[#1B3A5C] rounded-full animate-spin mb-3" />
           <p className="text-[14px] text-[#1B3A5C]">Laden...</p>
@@ -439,92 +459,93 @@ export default function WerkstroomPage() {
   );
 }
 
-function Header() {
+function Header({ onRefresh }) {
   return (
-    <div className="mb-4">
-      <div className="flex items-center gap-2 text-[12px] text-[#1B3A5C]/40 mb-2">
-        <Link href="/dashboard/finance/ap" className="hover:text-[#1B3A5C]">Accounts Payable</Link>
-        <span>›</span>
-        <span>Werkstroom</span>
+    <div className="mb-4 flex items-end justify-between flex-wrap gap-2">
+      <div>
+        <div className="flex items-center gap-2 text-[12px] text-[#1B3A5C]/40 mb-2">
+          <Link href="/dashboard/finance/ap" className="hover:text-[#1B3A5C]">Accounts Payable</Link>
+          <span>›</span>
+          <span>Werkstroom</span>
+        </div>
+        <h1 className="text-[28px] font-bold text-[#1B3A5C]" style={{ fontFamily: 'Playfair Display, Georgia, serif' }}>
+          Werkstroom
+        </h1>
+        <p className="text-[14px] text-[#1B3A5C]/60 mt-1">
+          Selecteren → indienen → goedkeuren → naar bank → betaald
+        </p>
       </div>
-      <h1 className="text-[28px] font-bold text-[#1B3A5C]" style={{ fontFamily: 'Playfair Display, Georgia, serif' }}>
-        Werkstroom
-      </h1>
-      <p className="text-[14px] text-[#1B3A5C]/60 mt-1">
-        Selecteren → indienen → goedkeuren → batch → bank → betaald
-      </p>
+      <button
+        onClick={onRefresh}
+        className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-[12px] text-[#1B3A5C]/70 hover:text-[#1B3A5C] hover:bg-gray-50 transition-all"
+      >
+        ↻ Verversen
+      </button>
     </div>
   );
 }
 
-function BulkBar({ tab, isClerk, canApprove, count, total, busy, onAction, onDeselect, onRejectClick }) {
+function BulkBar({ tab, isClerk, canApprove, canSendToBank, canMarkPaid, count, total, busy, onAction, onDeselect, onRejectClick }) {
   return (
     <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
       <span className="text-[13px] font-semibold">
         {fmtNum(count)} geselecteerd · XCG {fmtMoney(total)}
       </span>
-      <button
-        onClick={onDeselect}
-        className="text-[12px] text-white/70 hover:text-white underline"
-      >
+      <button onClick={onDeselect} className="text-[12px] text-white/70 hover:text-white underline">
         deselecteer alles
       </button>
 
       <div className="ml-auto flex items-center gap-2 flex-wrap">
         {tab === 'open' && isClerk && (
-          <button
-            onClick={() => onAction('select')}
-            disabled={busy}
-            className="px-3 py-1.5 rounded-lg bg-white text-[#1B3A5C] text-[12px] font-semibold hover:bg-gray-100 transition-all disabled:opacity-50"
-          >
+          <button onClick={() => onAction('select')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white text-[#1B3A5C] text-[12px] font-semibold hover:bg-gray-100 transition-all disabled:opacity-50">
             {busy ? 'Bezig...' : '→ Selecteer voor indiening'}
           </button>
         )}
         {tab === 'selected_by_ap' && isClerk && (
           <>
-            <button
-              onClick={() => onAction('unselect')}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
-            >
+            <button onClick={() => onAction('unselect')} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
               ← Terug naar openstaand
             </button>
-            <button
-              onClick={() => onAction('submit')}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
-            >
+            <button onClick={() => onAction('submit')} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50">
               {busy ? 'Bezig...' : '✓ Dien in bij goedkeurder'}
             </button>
           </>
         )}
         {tab === 'approver_review' && canApprove && (
           <>
-            <button
-              onClick={onRejectClick}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700 transition-all disabled:opacity-50"
-            >
+            <button onClick={onRejectClick} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700 transition-all disabled:opacity-50">
               ✗ Wijs af
             </button>
-            <button
-              onClick={() => onAction('approve')}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
-            >
+            <button onClick={() => onAction('approve')} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50">
               {busy ? 'Bezig...' : '✓ Keur goed'}
             </button>
           </>
         )}
-        {tab === 'approver_review' && !canApprove && (
-          <span className="text-[11px] text-white/60 italic">
-            Goedkeuren kan alleen door goedkeurders/CFO/admin
-          </span>
+        {tab === 'approved' && canSendToBank && (
+          <button onClick={() => onAction('send_to_bank')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-purple-500 text-white text-[12px] font-semibold hover:bg-purple-600 transition-all disabled:opacity-50">
+            {busy ? 'Bezig...' : '→ Markeer verzonden naar bank'}
+          </button>
         )}
-        {(tab === 'approved' || tab === 'in_batch') && (
-          <span className="text-[11px] text-white/60 italic">
-            Batch-acties voor CFO komen in volgende update
-          </span>
+        {tab === 'at_bank' && canMarkPaid && (
+          <button onClick={() => onAction('mark_paid')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50">
+            {busy ? 'Bezig...' : '✓ Bevestig betaald'}
+          </button>
+        )}
+        {tab === 'approver_review' && !canApprove && (
+          <span className="text-[11px] text-white/60 italic">Goedkeuren kan alleen door goedkeurders/CFO/admin</span>
+        )}
+        {tab === 'approved' && !canSendToBank && (
+          <span className="text-[11px] text-white/60 italic">Naar bank versturen: AP Clerk of admin</span>
+        )}
+        {tab === 'at_bank' && !canMarkPaid && (
+          <span className="text-[11px] text-white/60 italic">Betaling bevestigen: CFO of admin</span>
         )}
       </div>
     </div>
@@ -543,30 +564,18 @@ function RejectModal({ count, total, busy, onConfirm, onCancel }) {
           Totaal XCG {fmtMoney(total)} · gaan terug naar status &quot;Openstaand&quot; voor de AP Clerk.
         </p>
         <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Reden voor afwijzing</label>
-        <textarea
-          value={reason}
-          onChange={e => setReason(e.target.value)}
-          placeholder="Bijv. ontbrekende informatie, dubbele factuur, verkeerd bedrag, eerst credit memo verwerken..."
-          rows={4}
+        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={4}
+          placeholder="Bijv. ontbrekende informatie, dubbele factuur, verkeerd bedrag..."
           className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] resize-none"
-          autoFocus
-        />
+          autoFocus />
         <p className="text-[11px] text-[#1B3A5C]/40 mt-1">
-          Deze reden wordt opgeslagen bij elke factuur en is zichtbaar voor de AP Clerk.
+          Reden wordt opgeslagen bij de factuur en getoond aan de AP Clerk.
         </p>
         <div className="flex justify-end gap-2 mt-4">
-          <button
-            onClick={onCancel}
-            disabled={busy}
-            className="px-4 py-2 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[13px] font-semibold hover:bg-gray-200 disabled:opacity-50"
-          >
+          <button onClick={onCancel} disabled={busy} className="px-4 py-2 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[13px] font-semibold hover:bg-gray-200 disabled:opacity-50">
             Annuleren
           </button>
-          <button
-            onClick={() => onConfirm(reason)}
-            disabled={!reason.trim() || busy}
-            className="px-4 py-2 rounded-lg bg-rose-600 text-white text-[13px] font-semibold hover:bg-rose-700 disabled:opacity-50"
-          >
+          <button onClick={() => onConfirm(reason)} disabled={!reason.trim() || busy} className="px-4 py-2 rounded-lg bg-rose-600 text-white text-[13px] font-semibold hover:bg-rose-700 disabled:opacity-50">
             {busy ? 'Bezig...' : 'Afwijzen met reden'}
           </button>
         </div>
@@ -581,16 +590,10 @@ function EmptyState({ tab, hasFilter, isClerk }) {
     <div className="bg-white rounded-xl border border-gray-200 p-12 text-center shadow-sm">
       <span className="text-5xl block mb-3">📭</span>
       <p className="text-[15px] font-semibold text-[#1B3A5C] mb-1">
-        {hasFilter
-          ? 'Geen resultaten met deze filter'
-          : `Niets in "${tabLabel}"`}
+        {hasFilter ? 'Geen resultaten met deze filter' : `Niets in "${tabLabel}"`}
       </p>
       <p className="text-[13px] text-[#1B3A5C]/60">
-        {hasFilter
-          ? 'Pas de zoekterm aan om meer te zien.'
-          : isClerk
-            ? 'Er staat momenteel niets in deze status voor jou.'
-            : 'Er staat momenteel niets in deze status.'}
+        {hasFilter ? 'Pas de zoekterm aan.' : isClerk ? 'Er staat niets in deze status voor jou.' : 'Er staat niets in deze status.'}
       </p>
     </div>
   );
@@ -598,9 +601,8 @@ function EmptyState({ tab, hasFilter, isClerk }) {
 
 function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames }) {
   const showSubmitter = tab === 'approver_review';
-  const showApprover = tab === 'approved' || tab === 'in_batch';
+  const showApprover = tab === 'approved' || tab === 'at_bank';
   const showRejectionIndicator = tab === 'open';
-
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
@@ -608,12 +610,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
               <th className="w-10 p-3">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={() => allSelected ? onDeselectAll() : onSelectAll()}
-                  className="cursor-pointer"
-                />
+                <input type="checkbox" checked={allSelected} onChange={() => allSelected ? onDeselectAll() : onSelectAll()} className="cursor-pointer" />
               </th>
               <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Vendor</th>
               <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Factuur</th>
@@ -627,16 +624,9 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
           </thead>
           <tbody>
             {invoices.map(inv => (
-              <InvoiceRow
-                key={inv.id}
-                inv={inv}
-                selected={selectedIds.has(inv.id)}
-                onToggle={() => onToggle(inv.id)}
-                showSubmitter={showSubmitter}
-                showApprover={showApprover}
-                userNames={userNames}
-                showRejection={showRejectionIndicator}
-              />
+              <InvoiceRow key={inv.id} inv={inv} selected={selectedIds.has(inv.id)} onToggle={() => onToggle(inv.id)}
+                showSubmitter={showSubmitter} showApprover={showApprover} userNames={userNames}
+                showRejection={showRejectionIndicator} />
             ))}
           </tbody>
         </table>
@@ -646,43 +636,30 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
 }
 
 function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection }) {
-  const rejection = showRejection && inv.rejection_reason ? {
-    body: inv.rejection_reason,
-    created_at: inv.rejected_at,
-    user_name: userNames[inv.rejected_by] || null,
-  } : null;
   const bal = parseFloat(inv.balance);
   const isCredit = bal < 0;
   const daysUntil = daysUntilDue(inv.due_date);
   const isOverdue = daysUntil !== null && daysUntil < 0;
   const isUrgent = daysUntil !== null && daysUntil >= 0 && daysUntil <= 7;
-
-  const typeColor =
-    inv.type === 'CREDIT MEMO' ? 'bg-rose-50 text-rose-700' :
-    inv.type === 'DEBIT MEMO'  ? 'bg-amber-50 text-amber-700' :
-    'bg-gray-50 text-gray-600';
+  const rejection = showRejection && inv.rejection_reason ? {
+    body: inv.rejection_reason,
+    created_at: inv.rejected_at,
+    user_name: userNames[inv.rejected_by] || null,
+  } : null;
+  const typeColor = inv.type === 'CREDIT MEMO' ? 'bg-rose-50 text-rose-700' :
+    inv.type === 'DEBIT MEMO' ? 'bg-amber-50 text-amber-700' : 'bg-gray-50 text-gray-600';
 
   return (
-    <tr
-      onClick={onToggle}
-      className={`border-b border-gray-100 cursor-pointer transition-all ${selected ? 'bg-blue-50/60' : 'hover:bg-gray-50/60'}`}
-    >
+    <tr onClick={onToggle} className={`border-b border-gray-100 cursor-pointer transition-all ${selected ? 'bg-blue-50/60' : 'hover:bg-gray-50/60'}`}>
       <td className="p-3" onClick={e => e.stopPropagation()}>
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onToggle}
-          className="cursor-pointer"
-        />
+        <input type="checkbox" checked={selected} onChange={onToggle} className="cursor-pointer" />
       </td>
       <td className="p-3">
         <div className="flex items-center gap-1.5">
           <div className="font-semibold text-[#1B3A5C]">{inv.vendor_name}</div>
           {rejection && (
-            <span
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 cursor-help"
-              title={`Afgewezen door ${rejection.user_name || 'onbekend'} op ${new Date(rejection.created_at).toLocaleDateString('nl-NL')}: ${rejection.body}`}
-            >
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 cursor-help"
+              title={`Afgewezen door ${rejection.user_name || 'onbekend'} op ${rejection.created_at ? new Date(rejection.created_at).toLocaleDateString('nl-NL') : '?'}: ${rejection.body}`}>
               ❗ Afgewezen
             </span>
           )}
@@ -694,42 +671,20 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
           </div>
         )}
       </td>
-      <td className="p-3">
-        <div className="font-mono text-[#1B3A5C]">{inv.invoice_number}</div>
-      </td>
+      <td className="p-3"><div className="font-mono text-[#1B3A5C]">{inv.invoice_number}</div></td>
       <td className="p-3 font-mono text-[#1B3A5C]/60">{inv.voucher}</td>
+      <td className="p-3"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${typeColor}`}>{inv.type}</span></td>
+      <td className={`p-3 text-right font-mono font-semibold ${isCredit ? 'text-rose-700' : 'text-[#1B3A5C]'}`}>{fmtMoney(bal)}</td>
       <td className="p-3">
-        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${typeColor}`}>
-          {inv.type}
-        </span>
-      </td>
-      <td className={`p-3 text-right font-mono font-semibold ${isCredit ? 'text-rose-700' : 'text-[#1B3A5C]'}`}>
-        {fmtMoney(bal)}
-      </td>
-      <td className="p-3">
-        <div className={`${isOverdue ? 'text-rose-700 font-semibold' : isUrgent ? 'text-amber-700 font-semibold' : 'text-[#1B3A5C]/70'}`}>
-          {fmtDate(inv.due_date)}
-        </div>
+        <div className={`${isOverdue ? 'text-rose-700 font-semibold' : isUrgent ? 'text-amber-700 font-semibold' : 'text-[#1B3A5C]/70'}`}>{fmtDate(inv.due_date)}</div>
         {daysUntil !== null && (
           <div className={`text-[10px] ${isOverdue ? 'text-rose-600' : isUrgent ? 'text-amber-600' : 'text-[#1B3A5C]/40'}`}>
-            {isOverdue
-              ? `${Math.abs(daysUntil)} dagen verlopen`
-              : daysUntil === 0
-                ? 'vervalt vandaag'
-                : `over ${daysUntil} dagen`}
+            {isOverdue ? `${Math.abs(daysUntil)} dagen verlopen` : daysUntil === 0 ? 'vervalt vandaag' : `over ${daysUntil} dagen`}
           </div>
         )}
       </td>
-      {showSubmitter && (
-        <td className="p-3 text-[#1B3A5C]/70">
-          {inv.submitted_by ? (userNames[inv.submitted_by] || '—') : '—'}
-        </td>
-      )}
-      {showApprover && (
-        <td className="p-3 text-[#1B3A5C]/70">
-          {inv.approved_by ? (userNames[inv.approved_by] || '—') : '—'}
-        </td>
-      )}
+      {showSubmitter && <td className="p-3 text-[#1B3A5C]/70">{inv.submitted_by ? (userNames[inv.submitted_by] || '—') : '—'}</td>}
+      {showApprover && <td className="p-3 text-[#1B3A5C]/70">{inv.approved_by ? (userNames[inv.approved_by] || '—') : '—'}</td>}
     </tr>
   );
 }
