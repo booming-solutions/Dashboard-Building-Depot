@@ -1,20 +1,19 @@
 /* ============================================================
-   BESTAND: ap_upload_page_v2.js
+   BESTAND: ap_upload_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/upload/page.js
-   (overschrijft v1, hernoemen naar page.js bij upload)
+   (overschrijft v2, hernoemen naar page.js bij upload)
 
-   WIJZIGINGEN T.O.V. v1:
-   - Diff/import gebruikt nu VOUCHER als unieke key i.p.v.
-     (vendor_id, invoice_number).
-   - Eagle blijkt voucher als natuurlijke unique key te hebben,
-     niet de invoice_number combinatie. 11 duplicaat-groepen in
-     echte export ontdekt (credits, debet-correcties, Excel-bugs).
-   - Requires DB constraint fix via ap_constraint_fix_v1.sql
+   WIJZIGINGEN T.O.V. v2:
+   - Detecteert nu Eagle-sync van auto_matched facturen:
+     als een voucher in status='auto_matched' niet meer in de
+     nieuwe Compass-export staat, betekent dat Eagle de aflettering
+     heeft verwerkt. Status wordt 'paid' met audit 'eagle_synced'.
+   - Nieuwe stat-card in review: Eagle-synced
 
    Data Upload pagina voor AP:
    - Compass/Eagle CSV inlezen
    - Parsen met Type-anker fix voor duizend-separator bug
-   - Vergelijken met DB: nieuwe / bestaande / verdwenen facturen
+   - Vergelijken met DB: nieuwe / bestaande / verdwenen / eagle-synced
    - Auto-toewijzing AP Clerk via vendor → BUM
    - Nieuwe vendors automatisch toevoegen aan ap_vendors
    - Bevestig → uitvoering + audit logging
@@ -171,15 +170,21 @@ function parseCompassCSV(text) {
 // =====================================================================
 async function computeDiff(supabase, parsedInvoices) {
   // Voucher is Eagle's natuurlijke unieke key
+  // Haal alle actieve én auto_matched rijen op (auto_matched moet ook gechecked
+  // worden of Eagle ze inmiddels heeft afgewerkt)
   const { data: existing, error } = await supabase
     .from('ap_invoices')
     .select('id, vendor_id, invoice_number, voucher, balance, status, assigned_ap_clerk')
     .not('status', 'in', '(paid,disappeared_from_export)');
   if (error) throw new Error(`Kan bestaande facturen niet laden: ${error.message}`);
 
-  // Map op voucher
+  // Splitsen: actieve werkstroom-rijen vs auto_matched rijen
+  const activeRows = existing.filter(r => r.status !== 'auto_matched');
+  const autoMatchedRows = existing.filter(r => r.status === 'auto_matched');
+
+  // Map op voucher voor actieve rijen
   const existingMap = new Map();
-  for (const inv of existing) {
+  for (const inv of activeRows) {
     if (inv.voucher) existingMap.set(inv.voucher, inv);
   }
   const parsedVouchers = new Set(parsedInvoices.map(p => p.voucher).filter(v => v));
@@ -206,8 +211,15 @@ async function computeDiff(supabase, parsedInvoices) {
     }
   }
 
-  // Disappeared: in DB maar niet in nieuwe CSV
-  const disappearedInvoices = existing.filter(inv =>
+  // Eagle-synced: auto_matched rijen die niet meer in CSV staan
+  // = Eagle heeft de aflettering ook doorgevoerd → status wordt 'paid'
+  const eagleSyncedInvoices = autoMatchedRows.filter(inv =>
+    inv.voucher && !parsedVouchers.has(inv.voucher)
+  );
+
+  // Disappeared: actieve rijen in DB maar niet in nieuwe CSV
+  // (auto_matched rijen vallen hier expliciet NIET onder)
+  const disappearedInvoices = activeRows.filter(inv =>
     inv.voucher && !parsedVouchers.has(inv.voucher)
   );
 
@@ -227,7 +239,7 @@ async function computeDiff(supabase, parsedInvoices) {
     }
   }
 
-  return { newInvoices, updatedInvoices, unchanged, disappearedInvoices, newVendors, skipped };
+  return { newInvoices, updatedInvoices, unchanged, disappearedInvoices, newVendors, skipped, eagleSyncedInvoices };
 }
 
 // =====================================================================
@@ -274,6 +286,7 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
         unchanged_count: diff.unchanged.length,
         disappeared_count: diff.disappearedInvoices.length,
         new_vendors_count: diff.newVendors.length,
+        eagle_synced_count: (diff.eagleSyncedInvoices || []).length,
       },
     })
     .select()
@@ -335,6 +348,41 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
       })
       .in('id', ids);
     if (error) errors.push(`Disappeared update: ${error.message}`);
+  }
+
+  // Eagle-synced: auto_matched rijen die nu uit Eagle weg zijn → status 'paid'
+  if (diff.eagleSyncedInvoices && diff.eagleSyncedInvoices.length > 0) {
+    const ids = diff.eagleSyncedInvoices.map(d => d.id);
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('ap_invoices')
+      .update({
+        status: 'paid',
+        paid_at: now,
+        last_status_change: now,
+        last_status_change_by: currentUser.id,
+      })
+      .in('id', ids);
+    if (error) errors.push(`Eagle-sync update: ${error.message}`);
+
+    // Audit log per Eagle-synced rij
+    const auditRows = diff.eagleSyncedInvoices.map(inv => ({
+      action: 'eagle_synced',
+      entity_type: 'invoice',
+      entity_id: inv.id,
+      user_id: currentUser.id,
+      user_name: currentUser.full_name,
+      user_role: currentUser.role,
+      details: {
+        voucher: inv.voucher,
+        previous_status: 'auto_matched',
+        new_status: 'paid',
+        detected_via_upload: filename,
+      },
+    }));
+    if (auditRows.length > 0) {
+      await supabase.from('ap_audit_log').insert(auditRows);
+    }
   }
 
   await supabase.from('ap_audit_log').insert({
@@ -556,6 +604,7 @@ function ReviewStage({ parsed, diff, filename, onConfirm, onCancel }) {
   const unchangedCount = diff.unchanged.length;
   const disappearedCount = diff.disappearedInvoices.length;
   const newVendorsCount = diff.newVendors.length;
+  const eagleSyncedCount = (diff.eagleSyncedInvoices || []).length;
 
   return (
     <div className="space-y-4">
@@ -577,6 +626,18 @@ function ReviewStage({ parsed, diff, filename, onConfirm, onCancel }) {
         <DiffCard label="Ongewijzigd" count={unchangedCount} color="gray" />
         <DiffCard label="Verdwenen" count={disappearedCount} color="amber" sublabel="bevestigen als betaald" />
       </div>
+
+      {diff.eagleSyncedInvoices && diff.eagleSyncedInvoices.length > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <p className="text-[13px] font-semibold text-emerald-900 mb-1">
+            ✓ {diff.eagleSyncedInvoices.length} auto-matched {diff.eagleSyncedInvoices.length === 1 ? 'factuur' : 'facturen'} zijn nu in Eagle afgeletterd
+          </p>
+          <p className="text-[12px] text-emerald-800">
+            Deze stonden in de portal op &quot;auto_matched&quot; en zijn niet meer in deze export aanwezig.
+            Ze worden bij bevestiging automatisch op status &quot;Betaald&quot; gezet.
+          </p>
+        </div>
+      )}
 
       {newVendorsCount > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
@@ -642,7 +703,7 @@ function ReviewStage({ parsed, diff, filename, onConfirm, onCancel }) {
           onClick={onConfirm}
           className="px-6 py-2.5 rounded-lg bg-[#1B3A5C] text-white text-[13px] font-semibold hover:bg-[#152e4a] transition-all shadow-sm"
         >
-          Bevestig import ({fmtNumber(newCount + updatedCount + disappearedCount)} wijzigingen)
+          Bevestig import ({fmtNumber(newCount + updatedCount + disappearedCount + eagleSyncedCount)} wijzigingen)
         </button>
       </div>
     </div>
@@ -682,6 +743,9 @@ function DoneStage({ result, diff, filename, onReset }) {
           {fmtNumber(diff.newInvoices.length)} nieuwe facturen toegevoegd ·
           {' '}{fmtNumber(diff.updatedInvoices.length)} bijgewerkt ·
           {' '}{fmtNumber(diff.disappearedInvoices.length)} verdwenen
+          {diff.eagleSyncedInvoices && diff.eagleSyncedInvoices.length > 0 && (
+            <> · {fmtNumber(diff.eagleSyncedInvoices.length)} Eagle-synced</>
+          )}
           {diff.newVendors.length > 0 && <> · {fmtNumber(diff.newVendors.length)} nieuwe vendors</>}
         </p>
         {hasErrors && (

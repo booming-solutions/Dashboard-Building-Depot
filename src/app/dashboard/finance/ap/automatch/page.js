@@ -1,16 +1,16 @@
 /* ============================================================
-   BESTAND: ap_automatch_page_v1.js
+   BESTAND: ap_automatch_page_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/auto-match/page.js
-   (nieuwe file, hernoemen naar page.js bij upload)
+   (overschrijft v1, hernoemen naar page.js bij upload)
 
-   Folder "auto-match" wordt automatisch aangemaakt onder
-   src/app/dashboard/finance/ap/
-
-   Auto-match werklijst:
-   - Detecteert paren binnen één vendor waar +X en -X elkaar opheffen
-   - Geen bank-betaling nodig — beide facturen direct status 'paid'
-   - Per paar bevestigen of "alles voor deze vendor" bulkactie
-   - Filtert op rol: AP Clerk ziet alleen eigen toegewezen vendors
+   WIJZIGINGEN T.O.V. v1:
+   - Status update: 'paid' → 'auto_matched' (tussenstatus)
+     Reden: portal en Eagle lopen niet synchroon. Auto-match in
+     portal is een aankondiging — pas als Eagle de aflettering
+     ook heeft doorgevoerd is het echt 'paid'. Detectie gebeurt
+     bij volgende Compass-upload (zie ap_upload_page_v3.js).
+   - Tekst aangepast: "Afgehandeld in portal" ipv "Afgehandeld"
+   - Verwijst naar Eagle Sync werklijst voor wat nog moet
    ============================================================ */
 'use client';
 
@@ -140,9 +140,7 @@ export default function AutoMatchPage() {
       const { data: updated, error: updErr } = await supabase
         .from('ap_invoices')
         .update({
-          status: 'paid',
-          paid_at: now,
-          paid_by: actualProfile.id,
+          status: 'auto_matched',
           last_status_change: now,
           last_status_change_by: actualProfile.id,
         })
@@ -272,10 +270,15 @@ function IntroCard({ isClerk, effectiveName }) {
     <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4 flex items-start gap-3">
       <span className="text-xl flex-shrink-0">⚖️</span>
       <div className="text-[12px] text-emerald-900">
-        <p className="font-semibold mb-1">Wat detecteert deze werklijst?</p>
+        <p className="font-semibold mb-1">Hoe werkt het?</p>
         <p className="leading-relaxed">
-          Paren binnen één vendor waarbij een positieve en negatieve openstaande factuur exact tegen
-          elkaar wegvallen. Bevestig het paar → beide krijgen status &quot;Betaald&quot; (zonder bank-betaling).
+          Paren binnen één vendor waarbij +X en −X elkaar opheffen. Bevestig hier het paar in de
+          portal → daarna nog wegboeken in Eagle. Bij de volgende Compass-upload wordt automatisch
+          gedetecteerd dat de afhandeling rond is.{' '}
+          <Link href="/dashboard/finance/ap/eagle-sync" className="font-semibold underline hover:no-underline">
+            Eagle Sync werklijst
+          </Link>{' '}
+          toont wat nog moet worden doorgevoerd in Eagle.
           {isClerk && <> Je ziet alleen je eigen toegewezen vendors ({effectiveName}).</>}
         </p>
       </div>
@@ -360,7 +363,7 @@ function VendorCard({ vendor, vIdx, busyPair, donePair, onConfirmPair, onConfirm
         )}
         {allDone && (
           <span className="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-800 text-[12px] font-semibold">
-            ✓ Alle paren afgehandeld
+            ✓ In portal afgeletterd
           </span>
         )}
       </div>
@@ -392,7 +395,7 @@ function PairRow({ pair, done, busy, onConfirm }) {
       </div>
       <div className="flex-shrink-0">
         {done ? (
-          <span className="text-[12px] text-emerald-700 font-semibold">✓ Afgehandeld</span>
+          <span className="text-[12px] text-emerald-700 font-semibold">✓ In portal afgeletterd</span>
         ) : (
           <button
             onClick={onConfirm}
