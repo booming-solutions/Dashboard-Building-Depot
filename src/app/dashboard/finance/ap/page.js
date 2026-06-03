@@ -1,15 +1,15 @@
 /* ============================================================
-   BESTAND: ap_page_v4.js
+   BESTAND: ap_page_v5.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v3, hernoemen naar page.js)
+   (overschrijft v4, hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v3:
-   - Stats filteren nu op effective role: AP Clerks zien alleen
-     hun eigen toegewezen facturen, admin/cfo/approver zien alles
-   - Nieuwe stat-card "Auto-match kandidaten" — telt vendors waar
-     openstaande balances tegen elkaar wegvallen (compensaties)
-   - Label "Openstaand" wordt "Mijn openstaande" voor AP Clerks
-   - Snelkoppeling naar Auto-match werklijst (placeholder)
+   WIJZIGINGEN T.O.V. v4:
+   - FIX: Supabase PostgREST geeft standaard max 1000 rijen per
+     query terug. Bij 3299 facturen kreeg de som-berekening dus
+     maar een derde van de data, waardoor het openstaand bedrag
+     veel te laag werd getoond.
+   - Nieuwe fetchAllPaginated helper haalt alle rijen op in
+     batches van 1000 (totaal 4 calls voor 3299 facturen).
    ============================================================ */
 'use client';
 
@@ -17,6 +17,23 @@ import { useApRole } from './layout';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import Link from 'next/link';
+
+// Pagineer een Supabase query om de PostgREST 1000-rijen default te omzeilen.
+// queryBuilder is een functie die elke iteratie een nieuwe query opbouwt.
+async function fetchAllPaginated(queryBuilder, batchSize = 1000) {
+  let allRows = [];
+  let from = 0;
+  while (true) {
+    const q = queryBuilder().range(from, from + batchSize - 1);
+    const { data, error } = await q;
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    allRows = allRows.concat(data);
+    if (data.length < batchSize) break;
+    from += batchSize;
+  }
+  return allRows;
+}
 
 export default function APDashboard() {
   const {
@@ -49,35 +66,33 @@ export default function APDashboard() {
       if (isClerk) totalQuery = totalQuery.eq('assigned_ap_clerk', effectiveProfileId);
       const { count: ic } = await totalQuery;
 
-      // Open facturen detail (voor som + auto-match analyse)
-      let openQuery = supabase
-        .from('ap_invoices')
-        .select('vendor_id, balance, assigned_ap_clerk')
-        .not('status', 'in', '(paid,disappeared_from_export)');
-      if (isClerk) openQuery = openQuery.eq('assigned_ap_clerk', effectiveProfileId);
-      const { data: openRows } = await openQuery;
+      // Open facturen detail (voor som + auto-match analyse) - met pagination
+      const openRows = await fetchAllPaginated(() => {
+        let q = supabase
+          .from('ap_invoices')
+          .select('vendor_id, balance, assigned_ap_clerk')
+          .not('status', 'in', '(paid,disappeared_from_export)');
+        if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
+        return q;
+      });
 
-      const openInvoices = openRows ? openRows.length : 0;
-      const totalOpen = openRows
-        ? openRows.reduce((s, r) => s + parseFloat(r.balance || 0), 0)
-        : 0;
+      const openInvoices = openRows.length;
+      const totalOpen = openRows.reduce((s, r) => s + parseFloat(r.balance || 0), 0);
 
       // Auto-match: vendors waar som van openstaande facturen ≈ 0 én >1 factuur
       let autoMatchVendors = 0;
       let autoMatchInvoices = 0;
-      if (openRows) {
-        const vendorGroups = {};
-        for (const r of openRows) {
-          if (!vendorGroups[r.vendor_id]) vendorGroups[r.vendor_id] = [];
-          vendorGroups[r.vendor_id].push(parseFloat(r.balance || 0));
-        }
-        for (const [vid, amounts] of Object.entries(vendorGroups)) {
-          if (amounts.length < 2) continue;
-          const sum = amounts.reduce((a, b) => a + b, 0);
-          if (Math.abs(sum) < 0.01) {
-            autoMatchVendors++;
-            autoMatchInvoices += amounts.length;
-          }
+      const vendorGroups = {};
+      for (const r of openRows) {
+        if (!vendorGroups[r.vendor_id]) vendorGroups[r.vendor_id] = [];
+        vendorGroups[r.vendor_id].push(parseFloat(r.balance || 0));
+      }
+      for (const [vid, amounts] of Object.entries(vendorGroups)) {
+        if (amounts.length < 2) continue;
+        const sum = amounts.reduce((a, b) => a + b, 0);
+        if (Math.abs(sum) < 0.01) {
+          autoMatchVendors++;
+          autoMatchInvoices += amounts.length;
         }
       }
 
