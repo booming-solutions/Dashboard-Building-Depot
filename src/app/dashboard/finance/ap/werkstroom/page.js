@@ -1,18 +1,16 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v2.js
+   BESTAND: ap_werkstroom_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
-   (overschrijft v1, hernoemen naar page.js)
+   (overschrijft v2, hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v1:
-   - GOEDKEURDER-ACTIES toegevoegd op tab "Bij goedkeurder":
-     · "✓ Keur goed" → status='approved' + approved_at/by gevuld
-     · "✗ Wijs af" → modal voor reden, status='open' + comment
-       opgeslagen in ap_comments (kind='rejection')
-   - Bij submit: submitted_at/by worden nu correct gevuld
-   - Bij select: selected_at/by worden gevuld
-   - Tabellen-kolommen passen aan per tab:
-     · "Bij goedkeurder" tab: extra kolom "Ingediend door"
-     · "Goedgekeurd" tab: extra kolom "Goedgekeurd door"
+   WIJZIGINGEN T.O.V. v2:
+   - FIX: canApprove wordt nu lokaal berekend uit effectiveRole.
+     Werkt onafhankelijk van layout.js versie — admin, cfo en
+     ap_approver krijgen nu allemaal de goedkeur/afwijs knoppen.
+   - Afwijs-indicator op rijen: rood pijltje + tooltip met reden,
+     wie en wanneer. Verschijnt op tab "Openstaand" voor facturen
+     die eerder zijn afgewezen.
+   - Comments worden mee opgehaald uit ap_comments (kind='rejection')
    ============================================================ */
 'use client';
 
@@ -83,13 +81,16 @@ function daysUntilDue(dueDate) {
 }
 
 export default function WerkstroomPage() {
-  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole, canApprove } = useApRole();
+  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
+  // Lokaal berekend (niet afhankelijk van context) zodat het altijd werkt
+  const canApprove = ['admin', 'cfo', 'ap_approver'].includes(effectiveRole);
 
   const [tab, setTab] = useState('open');
   const [byStatus, setByStatus] = useState({});
   const [userNames, setUserNames] = useState({});
+  const [rejections, setRejections] = useState({});  // invoice_id → latest rejection comment
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [busy, setBusy] = useState(false);
@@ -132,6 +133,27 @@ export default function WerkstroomPage() {
         }
       }
       setUserNames(userNameMap);
+
+      // Rejection comments ophalen — meest recente per factuur
+      const openInvoiceIds = (grouped['open'] || []).map(r => r.id);
+      if (openInvoiceIds.length > 0) {
+        const rejs = await fetchAllPaginated(() =>
+          supabase
+            .from('ap_comments')
+            .select('invoice_id, body, created_at, user_name, user_role')
+            .eq('kind', 'rejection')
+            .in('invoice_id', openInvoiceIds)
+            .order('created_at', { ascending: false })
+        );
+        // Per invoice: meest recente
+        const byInv = {};
+        for (const r of rejs) {
+          if (!byInv[r.invoice_id]) byInv[r.invoice_id] = r;
+        }
+        setRejections(byInv);
+      } else {
+        setRejections({});
+      }
 
       const grouped = {};
       for (const s of statuses) grouped[s] = [];
@@ -418,6 +440,7 @@ export default function WerkstroomPage() {
           allSelected={selectedIds.size > 0 && selectedIds.size === currentInvoices.length}
           tab={tab}
           userNames={userNames}
+          rejections={rejections}
         />
       )}
     </div>
@@ -581,9 +604,10 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames }) {
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, rejections }) {
   const showSubmitter = tab === 'approver_review';
   const showApprover = tab === 'approved' || tab === 'in_batch';
+  const showRejectionIndicator = tab === 'open';
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -619,6 +643,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
                 showSubmitter={showSubmitter}
                 showApprover={showApprover}
                 userNames={userNames}
+                rejection={showRejectionIndicator ? rejections[inv.id] : null}
               />
             ))}
           </tbody>
@@ -628,7 +653,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
   );
 }
 
-function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames }) {
+function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, rejection }) {
   const bal = parseFloat(inv.balance);
   const isCredit = bal < 0;
   const daysUntil = daysUntilDue(inv.due_date);
@@ -654,8 +679,23 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
         />
       </td>
       <td className="p-3">
-        <div className="font-semibold text-[#1B3A5C]">{inv.vendor_name}</div>
+        <div className="flex items-center gap-1.5">
+          <div className="font-semibold text-[#1B3A5C]">{inv.vendor_name}</div>
+          {rejection && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 cursor-help"
+              title={`Afgewezen door ${rejection.user_name || 'onbekend'} op ${new Date(rejection.created_at).toLocaleDateString('nl-NL')}: ${rejection.body}`}
+            >
+              ❗ Afgewezen
+            </span>
+          )}
+        </div>
         <div className="text-[10px] text-[#1B3A5C]/40 font-mono">#{inv.vendor_id}</div>
+        {rejection && (
+          <div className="text-[10px] text-rose-700/80 mt-1 italic line-clamp-1" title={rejection.body}>
+            &ldquo;{rejection.body}&rdquo;
+          </div>
+        )}
       </td>
       <td className="p-3">
         <div className="font-mono text-[#1B3A5C]">{inv.invoice_number}</div>
