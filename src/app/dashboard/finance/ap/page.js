@@ -1,15 +1,16 @@
 /* ============================================================
-   BESTAND: ap_page_v5.js
+   BESTAND: ap_page_v6.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v4, hernoemen naar page.js)
+   (overschrijft v5, hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v4:
-   - FIX: Supabase PostgREST geeft standaard max 1000 rijen per
-     query terug. Bij 3299 facturen kreeg de som-berekening dus
-     maar een derde van de data, waardoor het openstaand bedrag
-     veel te laag werd getoond.
-   - Nieuwe fetchAllPaginated helper haalt alle rijen op in
-     batches van 1000 (totaal 4 calls voor 3299 facturen).
+   WIJZIGINGEN T.O.V. v5:
+   - Auto-match snelkoppeling is nu klikbaar (href naar werklijst)
+   - Auto-match callout telt nu PAREN ipv vendors met som=0.
+     De echte data heeft 0 vendors waar volledige som = 0, maar
+     38 paren waar +X/-X tegen elkaar wegvallen — dat is wat we
+     willen detecteren.
+   - Algoritme matcht abs-bedragen in centen om floating-point
+     issues te vermijden (zelfde logica als auto-match pagina).
    ============================================================ */
 'use client';
 
@@ -79,20 +80,33 @@ export default function APDashboard() {
       const openInvoices = openRows.length;
       const totalOpen = openRows.reduce((s, r) => s + parseFloat(r.balance || 0), 0);
 
-      // Auto-match: vendors waar som van openstaande facturen ≈ 0 én >1 factuur
+      // Auto-match: detecteer paren binnen vendor waarbij +X / -X elkaar opheffen.
+      // Match op centen om floating-point issues te vermijden.
       let autoMatchVendors = 0;
       let autoMatchInvoices = 0;
       const vendorGroups = {};
       for (const r of openRows) {
+        const bal = parseFloat(r.balance || 0);
+        if (bal === 0) continue;
         if (!vendorGroups[r.vendor_id]) vendorGroups[r.vendor_id] = [];
-        vendorGroups[r.vendor_id].push(parseFloat(r.balance || 0));
+        vendorGroups[r.vendor_id].push(bal);
       }
       for (const [vid, amounts] of Object.entries(vendorGroups)) {
         if (amounts.length < 2) continue;
-        const sum = amounts.reduce((a, b) => a + b, 0);
-        if (Math.abs(sum) < 0.01) {
+        const byAbs = {};
+        for (const a of amounts) {
+          const cents = Math.round(Math.abs(a) * 100);
+          if (!byAbs[cents]) byAbs[cents] = { pos: 0, neg: 0 };
+          if (a > 0) byAbs[cents].pos++;
+          else byAbs[cents].neg++;
+        }
+        let vendorPairs = 0;
+        for (const k in byAbs) {
+          vendorPairs += Math.min(byAbs[k].pos, byAbs[k].neg);
+        }
+        if (vendorPairs > 0) {
           autoMatchVendors++;
-          autoMatchInvoices += amounts.length;
+          autoMatchInvoices += vendorPairs * 2;
         }
       }
 
@@ -204,10 +218,12 @@ export default function APDashboard() {
           <ActionCard icon="📄" label="Openstaande AP" desc="Filterbaar overzicht" />
           <ActionCard icon="✅" label="Werkstroom" desc="Selectie → Goedkeuring → Bank" />
           <ActionCard
+            href="/dashboard/finance/ap/auto-match"
             icon="⚖️"
             label="Auto-match"
             desc="Compensaties zonder bank-betaling"
             badge={stats.autoMatchVendors > 0 ? `${stats.autoMatchVendors}` : null}
+            available
           />
           <ActionCard icon="🏦" label="Bank-bestanden" desc="MCB FEP + RBC export" />
           <ActionCard icon="📋" label="Audit log" desc="Volledig actie-spoor" />
@@ -241,14 +257,20 @@ function ActionCard({ href, icon, label, desc, available, badge }) {
     return (
       <Link
         href={href}
-        className="flex items-start gap-3 p-3 bg-[#f8fafc] rounded-lg border border-gray-200 hover:border-[#1B3A5C]/30 hover:bg-white transition-all group"
+        className="flex items-start gap-3 p-3 bg-[#f8fafc] rounded-lg border border-gray-200 hover:border-[#1B3A5C]/30 hover:bg-white transition-all group relative"
       >
         <span className="text-lg flex-shrink-0">{icon}</span>
         <div className="flex-1">
           <p className="text-[13px] font-semibold text-[#1B3A5C] group-hover:text-[#152e4a]">{label}</p>
           <p className="text-[11px] text-[#1B3A5C]/50">{desc}</p>
         </div>
-        <span className="text-[#1B3A5C]/30 group-hover:text-[#1B3A5C]/60">→</span>
+        {badge ? (
+          <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+            {badge}
+          </span>
+        ) : (
+          <span className="text-[#1B3A5C]/30 group-hover:text-[#1B3A5C]/60">→</span>
+        )}
       </Link>
     );
   }
@@ -259,12 +281,7 @@ function ActionCard({ href, icon, label, desc, available, badge }) {
         <p className="text-[13px] font-semibold text-[#1B3A5C]/60">{label}</p>
         <p className="text-[11px] text-[#1B3A5C]/40">{desc}</p>
       </div>
-      {badge && (
-        <span className="absolute top-2 right-2 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-          {badge}
-        </span>
-      )}
-      {!badge && <span className="text-[10px] text-[#1B3A5C]/40 italic">binnenkort</span>}
+      <span className="text-[10px] text-[#1B3A5C]/40 italic">binnenkort</span>
     </div>
   );
 }
