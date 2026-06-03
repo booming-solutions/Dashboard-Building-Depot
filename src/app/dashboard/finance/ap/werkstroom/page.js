@@ -1,10 +1,13 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v3_1.js
+   BESTAND: ap_werkstroom_page_v3_2.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v2, hernoemen naar page.js)
 
-   PATCH t.o.v. v3 origineel: rejection-fetch verplaatst NA grouped declaration
-   (TDZ fout opgelost — gebruikten grouped voor declaratie)
+   PATCH t.o.v. v3:
+   - rejection-fetch verplaatst NA grouped declaration (TDZ fix)
+   - .in() filter weggehaald — bij 1500+ UUIDs werd URL te lang.
+     Nu gewoon alle rejection-comments ophalen (kleine tabel) en
+     client-side matchen op invoice_id.
 
    WIJZIGINGEN T.O.V. v2:
    - FIX: canApprove wordt nu lokaal berekend uit effectiveRole.
@@ -145,25 +148,26 @@ export default function WerkstroomPage() {
       }
       setByStatus(grouped);
 
-      // Daarna rejection comments ophalen voor de openstaande facturen
-      const openInvoiceIds = (grouped['open'] || []).map(r => r.id);
-      if (openInvoiceIds.length > 0) {
-        const rejs = await fetchAllPaginated(() =>
-          supabase
-            .from('ap_comments')
-            .select('invoice_id, body, created_at, user_name, user_role')
-            .eq('kind', 'rejection')
-            .in('invoice_id', openInvoiceIds)
-            .order('created_at', { ascending: false })
-        );
-        const byInv = {};
-        for (const r of rejs) {
-          if (!byInv[r.invoice_id]) byInv[r.invoice_id] = r;
+      // Rejection-comments ophalen — alle, zonder .in() filter
+      // (URL met 1500+ UUIDs zou te lang zijn voor PostgREST).
+      // Comments-tabel is klein, dus alles ophalen en client-side matchen.
+      const openInvoiceIds = new Set((grouped['open'] || []).map(r => r.id));
+      const rejs = await fetchAllPaginated(() =>
+        supabase
+          .from('ap_comments')
+          .select('invoice_id, body, created_at, user_name, user_role')
+          .eq('kind', 'rejection')
+          .order('created_at', { ascending: false })
+      );
+      const byInv = {};
+      for (const r of rejs) {
+        // Alleen meest recente per factuur (door order DESC) en alleen
+        // voor facturen die nu 'open' zijn (anders niet relevant om te tonen)
+        if (openInvoiceIds.has(r.invoice_id) && !byInv[r.invoice_id]) {
+          byInv[r.invoice_id] = r;
         }
-        setRejections(byInv);
-      } else {
-        setRejections({});
       }
+      setRejections(byInv);
     } catch (e) {
       setError(e.message || 'Onbekende fout');
     } finally {
