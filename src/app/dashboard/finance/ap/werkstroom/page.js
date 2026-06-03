@@ -1,9 +1,17 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v5.js
+   BESTAND: ap_werkstroom_page_v6.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
 
-   GROTE WIJZIGINGEN T.O.V. v4:
+   WIJZIGINGEN T.O.V. v5:
+   - Extra kolommen in tabel: Invoice Date, Reference, PO Number,
+     Original Amount (naast Current Balance)
+   - Datum-range filter: kies veld (Vervaldatum/Factuurdatum) +
+     van/tot datums
+   - Verbeterde zoekbox: ook in reference en PO
+   - "Wis filters" knop om snel terug naar default
+   
+   WIJZIGINGEN T.O.V. v4:
    - WERKSTROOM CORRECTIE:
      · Tab "In batch" verwijderd, "Bij bank" toegevoegd (status='at_bank')
      · AP Clerk actie op "Goedgekeurd": "Markeer verzonden naar bank"
@@ -72,7 +80,7 @@ function daysUntilDue(dueDate) {
   return Math.round((due - today) / (1000 * 60 * 60 * 24));
 }
 
-const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by';
+const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by';
 
 export default function WerkstroomPage() {
   const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
@@ -98,6 +106,9 @@ export default function WerkstroomPage() {
   const [vendorFilter, setVendorFilter] = useState('');
   const [sortBy, setSortBy] = useState('due_date');
   const [sortDesc, setSortDesc] = useState(false);
+  const [dateField, setDateField] = useState('due_date');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   // Counts laden (parallel)
   const loadCounts = useCallback(async () => {
@@ -186,19 +197,34 @@ export default function WerkstroomPage() {
   const currentInvoices = useMemo(() => {
     const rows = tabRows[tab] || [];
     let filtered = rows;
+    // Tekst-zoek
     if (vendorFilter.trim()) {
       const q = vendorFilter.trim().toLowerCase();
       filtered = filtered.filter(r =>
         (r.vendor_name || '').toLowerCase().includes(q) ||
         String(r.vendor_id || '').includes(q) ||
         (r.invoice_number || '').toLowerCase().includes(q) ||
-        (r.voucher || '').includes(q)
+        (r.voucher || '').includes(q) ||
+        (r.reference || '').toLowerCase().includes(q) ||
+        (r.po_number || '').toLowerCase().includes(q)
       );
+    }
+    // Datum-range filter
+    if (dateFrom || dateTo) {
+      filtered = filtered.filter(r => {
+        const v = r[dateField];
+        if (!v) return false;
+        if (dateFrom && v < dateFrom) return false;
+        if (dateTo && v > dateTo) return false;
+        return true;
+      });
     }
     return [...filtered].sort((a, b) => {
       let cmp = 0;
       if (sortBy === 'due_date') {
         cmp = (a.due_date || '9999').localeCompare(b.due_date || '9999');
+      } else if (sortBy === 'invoice_date') {
+        cmp = (a.invoice_date || '9999').localeCompare(b.invoice_date || '9999');
       } else if (sortBy === 'amount') {
         cmp = Math.abs(parseFloat(a.balance)) - Math.abs(parseFloat(b.balance));
       } else if (sortBy === 'vendor') {
@@ -206,7 +232,14 @@ export default function WerkstroomPage() {
       }
       return sortDesc ? -cmp : cmp;
     });
-  }, [tabRows, tab, vendorFilter, sortBy, sortDesc]);
+  }, [tabRows, tab, vendorFilter, sortBy, sortDesc, dateField, dateFrom, dateTo]);
+
+  const hasFilters = vendorFilter.trim() || dateFrom || dateTo;
+  function clearFilters() {
+    setVendorFilter('');
+    setDateFrom('');
+    setDateTo('');
+  }
 
   function toggleSelect(id) {
     const next = new Set(selectedIds);
@@ -384,27 +417,49 @@ export default function WerkstroomPage() {
       </div>
 
       {/* Filter & sort */}
-      <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap">
-        <input
-          type="text"
-          value={vendorFilter}
-          onChange={e => setVendorFilter(e.target.value)}
-          placeholder="Zoek op vendor, factuur, voucher..."
-          className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] focus:outline-none focus:border-[#1B3A5C]"
-        />
-        <div className="flex items-center gap-1.5 text-[12px] text-[#1B3A5C]/60">
-          <span>Sorteer op:</span>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer">
-            <option value="due_date">Vervaldatum</option>
-            <option value="amount">Bedrag</option>
-            <option value="vendor">Vendor</option>
-          </select>
-          <button onClick={() => setSortDesc(!sortDesc)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] hover:bg-gray-50" title={sortDesc ? 'Aflopend' : 'Oplopend'}>
-            {sortDesc ? '↓' : '↑'}
-          </button>
+      <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 shadow-sm space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <input
+            type="text"
+            value={vendorFilter}
+            onChange={e => setVendorFilter(e.target.value)}
+            placeholder="Zoek op vendor, factuur, voucher, referentie, PO..."
+            className="flex-1 min-w-[260px] px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] focus:outline-none focus:border-[#1B3A5C]"
+          />
+          <div className="flex items-center gap-1.5 text-[12px] text-[#1B3A5C]/60">
+            <span>Sorteer:</span>
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer">
+              <option value="due_date">Vervaldatum</option>
+              <option value="invoice_date">Factuurdatum</option>
+              <option value="amount">Bedrag</option>
+              <option value="vendor">Vendor</option>
+            </select>
+            <button onClick={() => setSortDesc(!sortDesc)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] hover:bg-gray-50" title={sortDesc ? 'Aflopend' : 'Oplopend'}>
+              {sortDesc ? '↓' : '↑'}
+            </button>
+          </div>
+          <div className="text-[11px] text-[#1B3A5C]/50 ml-auto whitespace-nowrap">
+            {fmtNum(currentInvoices.length)} regels · XCG {fmtMoney(currentTotal)}
+          </div>
         </div>
-        <div className="text-[11px] text-[#1B3A5C]/50 ml-auto">
-          {fmtNum(currentInvoices.length)} regels · XCG {fmtMoney(currentTotal)}
+        <div className="flex items-center gap-2 flex-wrap text-[12px] text-[#1B3A5C]/60">
+          <span>Datum-range op:</span>
+          <select value={dateField} onChange={e => setDateField(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer">
+            <option value="due_date">Vervaldatum</option>
+            <option value="invoice_date">Factuurdatum</option>
+          </select>
+          <span>van</span>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] focus:outline-none focus:border-[#1B3A5C]" />
+          <span>t/m</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] focus:outline-none focus:border-[#1B3A5C]" />
+          {hasFilters && (
+            <button onClick={clearFilters}
+              className="px-2 py-1.5 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[12px] font-semibold hover:bg-gray-200">
+              ✗ Wis filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -609,17 +664,20 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
         <table className="w-full text-[12px]">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="w-10 p-3">
+              <th className="w-10 p-2">
                 <input type="checkbox" checked={allSelected} onChange={() => allSelected ? onDeselectAll() : onSelectAll()} className="cursor-pointer" />
               </th>
-              <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Vendor</th>
-              <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Factuur</th>
-              <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Voucher</th>
-              <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Type</th>
-              <th className="p-3 text-right font-semibold text-[#1B3A5C]/70">Bedrag</th>
-              <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Vervaldatum</th>
-              {showSubmitter && <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Ingediend door</th>}
-              {showApprover && <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Goedgekeurd door</th>}
+              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Vendor</th>
+              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Factuur</th>
+              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Factuurdatum</th>
+              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Referentie</th>
+              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">PO Nummer</th>
+              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Type</th>
+              <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Origineel</th>
+              <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Saldo</th>
+              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Vervaldatum</th>
+              {showSubmitter && <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Ingediend door</th>}
+              {showApprover && <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Goedgekeurd door</th>}
             </tr>
           </thead>
           <tbody>
@@ -651,11 +709,11 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
 
   return (
     <tr onClick={onToggle} className={`border-b border-gray-100 cursor-pointer transition-all ${selected ? 'bg-blue-50/60' : 'hover:bg-gray-50/60'}`}>
-      <td className="p-3" onClick={e => e.stopPropagation()}>
+      <td className="p-2" onClick={e => e.stopPropagation()}>
         <input type="checkbox" checked={selected} onChange={onToggle} className="cursor-pointer" />
       </td>
-      <td className="p-3">
-        <div className="flex items-center gap-1.5">
+      <td className="p-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <div className="font-semibold text-[#1B3A5C]">{inv.vendor_name}</div>
           {rejection && (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 cursor-help"
@@ -671,20 +729,32 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
           </div>
         )}
       </td>
-      <td className="p-3"><div className="font-mono text-[#1B3A5C]">{inv.invoice_number}</div></td>
-      <td className="p-3 font-mono text-[#1B3A5C]/60">{inv.voucher}</td>
-      <td className="p-3"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${typeColor}`}>{inv.type}</span></td>
-      <td className={`p-3 text-right font-mono font-semibold ${isCredit ? 'text-rose-700' : 'text-[#1B3A5C]'}`}>{fmtMoney(bal)}</td>
-      <td className="p-3">
+      <td className="p-2">
+        <div className="font-mono text-[#1B3A5C]">{inv.invoice_number}</div>
+        <div className="text-[10px] text-[#1B3A5C]/40 font-mono">v.{inv.voucher}</div>
+      </td>
+      <td className="p-2 text-[#1B3A5C]/70 whitespace-nowrap">{fmtDate(inv.invoice_date)}</td>
+      <td className="p-2 text-[#1B3A5C]/70 text-[11px]" title={inv.reference || ''}>
+        {inv.reference || <span className="text-[#1B3A5C]/30">—</span>}
+      </td>
+      <td className="p-2 text-[#1B3A5C]/70 text-[11px]" title={inv.po_number || ''}>
+        {inv.po_number || <span className="text-[#1B3A5C]/30">—</span>}
+      </td>
+      <td className="p-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${typeColor}`}>{inv.type}</span></td>
+      <td className="p-2 text-right font-mono text-[#1B3A5C]/70 text-[11px]">
+        {inv.original_amount !== null && inv.original_amount !== undefined ? fmtMoney(parseFloat(inv.original_amount)) : '—'}
+      </td>
+      <td className={`p-2 text-right font-mono font-semibold ${isCredit ? 'text-rose-700' : 'text-[#1B3A5C]'}`}>{fmtMoney(bal)}</td>
+      <td className="p-2 whitespace-nowrap">
         <div className={`${isOverdue ? 'text-rose-700 font-semibold' : isUrgent ? 'text-amber-700 font-semibold' : 'text-[#1B3A5C]/70'}`}>{fmtDate(inv.due_date)}</div>
         {daysUntil !== null && (
           <div className={`text-[10px] ${isOverdue ? 'text-rose-600' : isUrgent ? 'text-amber-600' : 'text-[#1B3A5C]/40'}`}>
-            {isOverdue ? `${Math.abs(daysUntil)} dagen verlopen` : daysUntil === 0 ? 'vervalt vandaag' : `over ${daysUntil} dagen`}
+            {isOverdue ? `${Math.abs(daysUntil)} dgn verlopen` : daysUntil === 0 ? 'vandaag' : `over ${daysUntil} dgn`}
           </div>
         )}
       </td>
-      {showSubmitter && <td className="p-3 text-[#1B3A5C]/70">{inv.submitted_by ? (userNames[inv.submitted_by] || '—') : '—'}</td>}
-      {showApprover && <td className="p-3 text-[#1B3A5C]/70">{inv.approved_by ? (userNames[inv.approved_by] || '—') : '—'}</td>}
+      {showSubmitter && <td className="p-2 text-[#1B3A5C]/70 text-[11px]">{inv.submitted_by ? (userNames[inv.submitted_by] || '—') : '—'}</td>}
+      {showApprover && <td className="p-2 text-[#1B3A5C]/70 text-[11px]">{inv.approved_by ? (userNames[inv.approved_by] || '—') : '—'}</td>}
     </tr>
   );
 }
