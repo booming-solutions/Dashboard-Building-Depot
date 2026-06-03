@@ -1,8 +1,15 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v6.js
+   BESTAND: ap_werkstroom_page_v7.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
 
+   WIJZIGINGEN T.O.V. v6:
+   - Vendor dropdown: aparte selectie ipv typen (browser-native
+     keyboard nav + scroll). Geen filter-trigger bij elke toets.
+   - Debounced search: filter wacht 300ms na laatste toetsaanslag
+     voordat hij zoekt. Veel sneller en niet meer laggy bij typen.
+   - clearFilters wist ook vendor-selectie en search input.
+   
    WIJZIGINGEN T.O.V. v5:
    - Extra kolommen in tabel: Invoice Date, Reference, PO Number,
      Original Amount (naast Current Balance)
@@ -103,12 +110,34 @@ export default function WerkstroomPage() {
   const [error, setError] = useState(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
 
-  const [vendorFilter, setVendorFilter] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [vendorSelected, setVendorSelected] = useState('');
+  const [allVendors, setAllVendors] = useState([]);
   const [sortBy, setSortBy] = useState('due_date');
   const [sortDesc, setSortDesc] = useState(false);
   const [dateField, setDateField] = useState('due_date');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+
+  // Vendors ophalen voor de dropdown (eenmalig)
+  useEffect(() => {
+    let cancelled = false;
+    async function loadVendors() {
+      const data = await fetchAllPaginated(() =>
+        supabase.from('ap_vendors').select('vendor_id, vendor_name').order('vendor_name')
+      );
+      if (!cancelled) setAllVendors(data || []);
+    }
+    loadVendors();
+    return () => { cancelled = true; };
+  }, [supabase]);
+
+  // Debounce de search input (300ms)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   // Counts laden (parallel)
   const loadCounts = useCallback(async () => {
@@ -197,12 +226,14 @@ export default function WerkstroomPage() {
   const currentInvoices = useMemo(() => {
     const rows = tabRows[tab] || [];
     let filtered = rows;
-    // Tekst-zoek
-    if (vendorFilter.trim()) {
-      const q = vendorFilter.trim().toLowerCase();
+    // Vendor dropdown filter (snelle filter op vendor_id)
+    if (vendorSelected) {
+      filtered = filtered.filter(r => String(r.vendor_id) === vendorSelected);
+    }
+    // Tekst-zoek (debounced) — niet vendor (die gaat via dropdown)
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.trim().toLowerCase();
       filtered = filtered.filter(r =>
-        (r.vendor_name || '').toLowerCase().includes(q) ||
-        String(r.vendor_id || '').includes(q) ||
         (r.invoice_number || '').toLowerCase().includes(q) ||
         (r.voucher || '').includes(q) ||
         (r.reference || '').toLowerCase().includes(q) ||
@@ -232,11 +263,12 @@ export default function WerkstroomPage() {
       }
       return sortDesc ? -cmp : cmp;
     });
-  }, [tabRows, tab, vendorFilter, sortBy, sortDesc, dateField, dateFrom, dateTo]);
+  }, [tabRows, tab, debouncedSearch, vendorSelected, sortBy, sortDesc, dateField, dateFrom, dateTo]);
 
-  const hasFilters = vendorFilter.trim() || dateFrom || dateTo;
+  const hasFilters = vendorSelected || searchInput.trim() || dateFrom || dateTo;
   function clearFilters() {
-    setVendorFilter('');
+    setSearchInput('');
+    setVendorSelected('');
     setDateFrom('');
     setDateTo('');
   }
@@ -419,12 +451,24 @@ export default function WerkstroomPage() {
       {/* Filter & sort */}
       <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 shadow-sm space-y-2">
         <div className="flex items-center gap-3 flex-wrap">
+          <select
+            value={vendorSelected}
+            onChange={e => setVendorSelected(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[13px] bg-white focus:outline-none focus:border-[#1B3A5C] cursor-pointer min-w-[200px] max-w-[280px]"
+          >
+            <option value="">Alle vendors ({allVendors.length})</option>
+            {allVendors.map(v => (
+              <option key={v.vendor_id} value={v.vendor_id}>
+                {v.vendor_name} (#{v.vendor_id})
+              </option>
+            ))}
+          </select>
           <input
             type="text"
-            value={vendorFilter}
-            onChange={e => setVendorFilter(e.target.value)}
-            placeholder="Zoek op vendor, factuur, voucher, referentie, PO..."
-            className="flex-1 min-w-[260px] px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] focus:outline-none focus:border-[#1B3A5C]"
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            placeholder="Zoek op factuur, voucher, referentie, PO..."
+            className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] focus:outline-none focus:border-[#1B3A5C]"
           />
           <div className="flex items-center gap-1.5 text-[12px] text-[#1B3A5C]/60">
             <span>Sorteer:</span>
@@ -497,7 +541,7 @@ export default function WerkstroomPage() {
           <p className="text-[14px] text-[#1B3A5C]">Laden...</p>
         </div>
       ) : currentInvoices.length === 0 ? (
-        <EmptyState tab={tab} hasFilter={!!vendorFilter.trim()} isClerk={isClerk} />
+        <EmptyState tab={tab} hasFilter={hasFilters} isClerk={isClerk} />
       ) : (
         <InvoiceTable
           invoices={currentInvoices}
