@@ -1,18 +1,20 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v2.js
+   BESTAND: ap_werkstroom_page_v1.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
-   (overschrijft v1, hernoemen naar page.js)
+   (nieuwe file in folder 'werkstroom', hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v1:
-   - GOEDKEURDER-ACTIES toegevoegd op tab "Bij goedkeurder":
-     · "✓ Keur goed" → status='approved' + approved_at/by gevuld
-     · "✗ Wijs af" → modal voor reden, status='open' + comment
-       opgeslagen in ap_comments (kind='rejection')
-   - Bij submit: submitted_at/by worden nu correct gevuld
-   - Bij select: selected_at/by worden gevuld
-   - Tabellen-kolommen passen aan per tab:
-     · "Bij goedkeurder" tab: extra kolom "Ingediend door"
-     · "Goedgekeurd" tab: extra kolom "Goedgekeurd door"
+   Werkstroom-pagina voor AP:
+   - Tabs per status: Openstaand / Klaar voor indiening / Bij goedkeurder /
+     Goedgekeurd / In batch
+   - Rolfiltering: AP Clerk ziet alleen eigen toegewezen,
+     anderen alles
+   - AP Clerk acties:
+     · "Selecteer" (open → selected_by_ap)
+     · "Dien in bij goedkeurder" (selected_by_ap → approver_review)
+     · "Terug naar openstaand" (selected_by_ap → open)
+   - Filters: vendor zoeken, sortering (due date / bedrag / vendor)
+   - Bulk selectie met totaal-bedrag indicatie
+   - Audit log per actie
    ============================================================ */
 'use client';
 
@@ -83,18 +85,16 @@ function daysUntilDue(dueDate) {
 }
 
 export default function WerkstroomPage() {
-  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole, canApprove } = useApRole();
+  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
 
   const [tab, setTab] = useState('open');
   const [byStatus, setByStatus] = useState({});
-  const [userNames, setUserNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [showRejectModal, setShowRejectModal] = useState(false);
 
   const [vendorFilter, setVendorFilter] = useState('');
   const [sortBy, setSortBy] = useState('due_date');
@@ -108,30 +108,11 @@ export default function WerkstroomPage() {
       const allRows = await fetchAllPaginated(() => {
         let q = supabase
           .from('ap_invoices')
-          .select('id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, status, assigned_ap_clerk, selected_by, submitted_by, approved_by')
+          .select('id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, status, assigned_ap_clerk')
           .in('status', statuses);
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
       });
-
-      // Profielen ophalen voor naam-resolution (selected_by / submitted_by / approved_by)
-      const userIds = new Set();
-      for (const r of allRows) {
-        if (r.selected_by) userIds.add(r.selected_by);
-        if (r.submitted_by) userIds.add(r.submitted_by);
-        if (r.approved_by) userIds.add(r.approved_by);
-      }
-      let userNameMap = {};
-      if (userIds.size > 0) {
-        const { data: profs } = await supabase
-          .from('profiles')
-          .select('id, full_name')
-          .in('id', Array.from(userIds));
-        if (profs) {
-          for (const p of profs) userNameMap[p.id] = p.full_name;
-        }
-      }
-      setUserNames(userNameMap);
 
       const grouped = {};
       for (const s of statuses) grouped[s] = [];
@@ -189,7 +170,7 @@ export default function WerkstroomPage() {
     setSelectedIds(new Set());
   }
 
-  async function doAction(actionKey, extra = {}) {
+  async function doAction(actionKey) {
     setBusy(true);
     setError(null);
     try {
@@ -198,40 +179,10 @@ export default function WerkstroomPage() {
 
       const now = new Date().toISOString();
       let newStatus, auditAction;
-      // Extra velden afhankelijk van actie
-      const extraFields = {};
-
-      if (actionKey === 'select') {
-        newStatus = 'selected_by_ap';
-        auditAction = 'selected';
-        extraFields.selected_at = now;
-        extraFields.selected_by = actualProfile.id;
-      } else if (actionKey === 'submit') {
-        newStatus = 'approver_review';
-        auditAction = 'submitted';
-        extraFields.submitted_at = now;
-        extraFields.submitted_by = actualProfile.id;
-      } else if (actionKey === 'unselect') {
-        newStatus = 'open';
-        auditAction = 'unselected';
-        extraFields.selected_at = null;
-        extraFields.selected_by = null;
-      } else if (actionKey === 'approve') {
-        newStatus = 'approved';
-        auditAction = 'approved';
-        extraFields.approved_at = now;
-        extraFields.approved_by = actualProfile.id;
-      } else if (actionKey === 'reject') {
-        newStatus = 'open';
-        auditAction = 'rejected';
-        // Reset workflow timestamps
-        extraFields.selected_at = null;
-        extraFields.selected_by = null;
-        extraFields.submitted_at = null;
-        extraFields.submitted_by = null;
-      } else {
-        throw new Error('Onbekende actie: ' + actionKey);
-      }
+      if (actionKey === 'select') { newStatus = 'selected_by_ap'; auditAction = 'selected'; }
+      else if (actionKey === 'submit') { newStatus = 'approver_review'; auditAction = 'submitted'; }
+      else if (actionKey === 'unselect') { newStatus = 'open'; auditAction = 'unselected'; }
+      else throw new Error('Onbekende actie');
 
       const { error: updErr } = await supabase
         .from('ap_invoices')
@@ -239,24 +190,9 @@ export default function WerkstroomPage() {
           status: newStatus,
           last_status_change: now,
           last_status_change_by: actualProfile.id,
-          ...extraFields,
         })
         .in('id', ids);
       if (updErr) throw updErr;
-
-      // Voor reject: comments toevoegen
-      if (actionKey === 'reject' && extra.reason) {
-        const commentRows = ids.map(id => ({
-          invoice_id: id,
-          body: extra.reason,
-          user_id: actualProfile.id,
-          user_name: actualProfile.full_name,
-          user_role: actualProfile.role,
-          kind: 'rejection',
-        }));
-        const { error: cErr } = await supabase.from('ap_comments').insert(commentRows);
-        if (cErr) console.warn('Comment insert mislukt:', cErr);
-      }
 
       // Audit per factuur
       const auditRows = ids.map(id => ({
@@ -270,13 +206,11 @@ export default function WerkstroomPage() {
           new_status: newStatus,
           batch_size: ids.length,
           played_as: isPlayingRole ? effectiveName : null,
-          ...(extra.reason ? { reason: extra.reason } : {}),
         },
       }));
       if (auditRows.length > 0) await supabase.from('ap_audit_log').insert(auditRows);
 
       setSelectedIds(new Set());
-      setShowRejectModal(false);
       await loadInvoices();
     } catch (e) {
       setError(e.message || 'Fout bij actie');
@@ -379,24 +313,11 @@ export default function WerkstroomPage() {
         <BulkBar
           tab={tab}
           isClerk={isClerk}
-          canApprove={canApprove}
           count={selectedCount}
           total={selectedTotal}
           busy={busy}
           onAction={doAction}
           onDeselect={deselectAll}
-          onRejectClick={() => setShowRejectModal(true)}
-        />
-      )}
-
-      {/* Reject modal */}
-      {showRejectModal && (
-        <RejectModal
-          count={selectedCount}
-          total={selectedTotal}
-          busy={busy}
-          onConfirm={(reason) => doAction('reject', { reason })}
-          onCancel={() => setShowRejectModal(false)}
         />
       )}
 
@@ -416,8 +337,6 @@ export default function WerkstroomPage() {
           onSelectAll={selectAll}
           onDeselectAll={deselectAll}
           allSelected={selectedIds.size > 0 && selectedIds.size === currentInvoices.length}
-          tab={tab}
-          userNames={userNames}
         />
       )}
     </div>
@@ -442,7 +361,7 @@ function Header() {
   );
 }
 
-function BulkBar({ tab, isClerk, canApprove, count, total, busy, onAction, onDeselect, onRejectClick }) {
+function BulkBar({ tab, isClerk, count, total, busy, onAction, onDeselect }) {
   return (
     <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
       <span className="text-[13px] font-semibold">
@@ -483,78 +402,11 @@ function BulkBar({ tab, isClerk, canApprove, count, total, busy, onAction, onDes
             </button>
           </>
         )}
-        {tab === 'approver_review' && canApprove && (
-          <>
-            <button
-              onClick={onRejectClick}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700 transition-all disabled:opacity-50"
-            >
-              ✗ Wijs af
-            </button>
-            <button
-              onClick={() => onAction('approve')}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
-            >
-              {busy ? 'Bezig...' : '✓ Keur goed'}
-            </button>
-          </>
-        )}
-        {tab === 'approver_review' && !canApprove && (
+        {!isClerk && (
           <span className="text-[11px] text-white/60 italic">
-            Goedkeuren kan alleen door goedkeurders/CFO/admin
+            Acties voor jouw rol komen in volgende update
           </span>
         )}
-        {(tab === 'approved' || tab === 'in_batch') && (
-          <span className="text-[11px] text-white/60 italic">
-            Batch-acties voor CFO komen in volgende update
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function RejectModal({ count, total, busy, onConfirm, onCancel }) {
-  const [reason, setReason] = useState('');
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
-      <div className="bg-white rounded-xl p-6 w-[460px] shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h3 className="text-[16px] font-bold text-[#1B3A5C] mb-1">
-          Afwijzen ({count} {count === 1 ? 'factuur' : 'facturen'})
-        </h3>
-        <p className="text-[12px] text-[#1B3A5C]/60 mb-3">
-          Totaal XCG {fmtMoney(total)} · gaan terug naar status &quot;Openstaand&quot; voor de AP Clerk.
-        </p>
-        <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Reden voor afwijzing</label>
-        <textarea
-          value={reason}
-          onChange={e => setReason(e.target.value)}
-          placeholder="Bijv. ontbrekende informatie, dubbele factuur, verkeerd bedrag, eerst credit memo verwerken..."
-          rows={4}
-          className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] resize-none"
-          autoFocus
-        />
-        <p className="text-[11px] text-[#1B3A5C]/40 mt-1">
-          Deze reden wordt opgeslagen bij elke factuur en is zichtbaar voor de AP Clerk.
-        </p>
-        <div className="flex justify-end gap-2 mt-4">
-          <button
-            onClick={onCancel}
-            disabled={busy}
-            className="px-4 py-2 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[13px] font-semibold hover:bg-gray-200 disabled:opacity-50"
-          >
-            Annuleren
-          </button>
-          <button
-            onClick={() => onConfirm(reason)}
-            disabled={!reason.trim() || busy}
-            className="px-4 py-2 rounded-lg bg-rose-600 text-white text-[13px] font-semibold hover:bg-rose-700 disabled:opacity-50"
-          >
-            {busy ? 'Bezig...' : 'Afwijzen met reden'}
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -581,10 +433,7 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames }) {
-  const showSubmitter = tab === 'approver_review';
-  const showApprover = tab === 'approved' || tab === 'in_batch';
-
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
@@ -605,8 +454,6 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
               <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Type</th>
               <th className="p-3 text-right font-semibold text-[#1B3A5C]/70">Bedrag</th>
               <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Vervaldatum</th>
-              {showSubmitter && <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Ingediend door</th>}
-              {showApprover && <th className="p-3 text-left font-semibold text-[#1B3A5C]/70">Goedgekeurd door</th>}
             </tr>
           </thead>
           <tbody>
@@ -616,9 +463,6 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
                 inv={inv}
                 selected={selectedIds.has(inv.id)}
                 onToggle={() => onToggle(inv.id)}
-                showSubmitter={showSubmitter}
-                showApprover={showApprover}
-                userNames={userNames}
               />
             ))}
           </tbody>
@@ -628,7 +472,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
   );
 }
 
-function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames }) {
+function InvoiceRow({ inv, selected, onToggle }) {
   const bal = parseFloat(inv.balance);
   const isCredit = bal < 0;
   const daysUntil = daysUntilDue(inv.due_date);
@@ -683,16 +527,6 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
           </div>
         )}
       </td>
-      {showSubmitter && (
-        <td className="p-3 text-[#1B3A5C]/70">
-          {inv.submitted_by ? (userNames[inv.submitted_by] || '—') : '—'}
-        </td>
-      )}
-      {showApprover && (
-        <td className="p-3 text-[#1B3A5C]/70">
-          {inv.approved_by ? (userNames[inv.approved_by] || '—') : '—'}
-        </td>
-      )}
     </tr>
   );
 }
