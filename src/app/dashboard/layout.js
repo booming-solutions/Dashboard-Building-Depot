@@ -1,19 +1,22 @@
 /* ============================================================
-   BESTAND: layout.js
+   BESTAND: layout_v3.js
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (overschrijft de bestaande layout.js)
+   (overschrijft de bestaande layout.js, hernoemen naar layout.js)
 
-   WIJZIGINGEN T.O.V. V27.06:
+   WIJZIGINGEN V27.11:
+   - Finance menu toegevoegd met Overzichten (/dashboard/finance/statements)
+     en Accounts Payable (/dashboard/finance/ap)
+   - REPORT_MAP uitgebreid met finance_statements en finance_ap
+   - Finance verschijnt tussen Omzet en Voorraad in de sidebar
+   - Alle bestaande wijzigingen uit V27.10 behouden:
+     · NOS Check onder Voorraad
+     · Afdelingen (dept-config) onder Admin
+     · Vereenvoudigd HR-menu
+
+   WIJZIGINGEN T.O.V. V27.06 (origineel):
    - BUM-rol opgeheven, BUMs zijn nu 'manager'
    - isBum check vervangen door isManager
    - Urenplanning zichtbaar voor admin + manager
-   - Versie aangepast naar V27.07
-
-   WIJZIGINGEN T.O.V. V27.05:
-   - Urenplanning toegevoegd aan HR-menu (zichtbaar voor BUMs + admin)
-   - Urenplanning Overzicht toegevoegd aan HR-menu (admin only)
-   - isBum check toegevoegd voor role='bum' users
-   - Versie aangepast naar V27.06
    ============================================================ */
 'use client';
 
@@ -24,7 +27,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.10';
+const APP_VERSION = 'V27.11';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -239,6 +242,8 @@ export default function DashboardLayout({ children }) {
     '/dashboard/hr/urentarget': 'hr_urentarget',
     '/dashboard/hr/urenplanning': 'hr_urenplanning',
     '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
+    '/dashboard/finance/statements': 'finance_statements',
+    '/dashboard/finance/ap': 'finance_ap',
   };
 
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
@@ -275,6 +280,10 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
     { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning', badge: '(concept)', visible: isAdmin },
   ];
+  const financeItemsAll = [
+    { href: '/dashboard/finance/statements', label: 'Overzichten' },
+    { href: '/dashboard/finance/ap', label: 'Accounts Payable', badge: '(concept)' },
+  ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
@@ -282,6 +291,7 @@ export default function DashboardLayout({ children }) {
     if (typeof item.visible !== 'undefined') return item.visible;
     return hasReport(REPORT_MAP[item.href]);
   });
+  const financeItems = financeItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
@@ -306,6 +316,7 @@ export default function DashboardLayout({ children }) {
           <div className="space-y-1">
             {/* Overzicht, Rapportages en Bestanden zijn verborgen */}
             {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {financeItems.length > 0 && <NavDropdown icon="🧾" label="Finance" items={financeItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>
