@@ -1,16 +1,14 @@
 /* ============================================================
-   BESTAND: ap_page_v6.js
+   BESTAND: ap_page_v7.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v5, hernoemen naar page.js)
+   (overschrijft v6, hernoemen naar page.js)
 
-   WIJZIGINGEN T.O.V. v5:
-   - Auto-match snelkoppeling is nu klikbaar (href naar werklijst)
-   - Auto-match callout telt nu PAREN ipv vendors met som=0.
-     De echte data heeft 0 vendors waar volledige som = 0, maar
-     38 paren waar +X/-X tegen elkaar wegvallen — dat is wat we
-     willen detecteren.
-   - Algoritme matcht abs-bedragen in centen om floating-point
-     issues te vermijden (zelfde logica als auto-match pagina).
+   WIJZIGINGEN T.O.V. v6:
+   - Eagle Sync tegel is nu klikbaar met badge-aantal
+   - Nieuwe callout (amber) bovenaan voor AP Clerks die paren op
+     hun Eagle Sync werklijst hebben staan — direct zichtbaar bij
+     inloggen zodat ze weten dat er werk in Eagle gedaan moet worden
+   - Telling 'eaglePending' wordt opgehaald (count-only, geen data)
    ============================================================ */
 'use client';
 
@@ -50,6 +48,7 @@ export default function APDashboard() {
     totalOpen: null,
     autoMatchVendors: null,
     autoMatchInvoices: null,
+    eaglePending: null,
   });
 
   useEffect(() => {
@@ -110,6 +109,14 @@ export default function APDashboard() {
         }
       }
 
+      // Eagle Sync werklijst telling — auto_matched rijen (gefilterd op clerk)
+      let eagleQuery = supabase
+        .from('ap_invoices')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'auto_matched');
+      if (isClerk) eagleQuery = eagleQuery.eq('assigned_ap_clerk', effectiveProfileId);
+      const { count: ep } = await eagleQuery;
+
       setStats({
         vendors: vc,
         invoices: ic,
@@ -117,6 +124,7 @@ export default function APDashboard() {
         totalOpen,
         autoMatchVendors,
         autoMatchInvoices,
+        eaglePending: ep || 0,
       });
     }
     loadStats();
@@ -186,6 +194,29 @@ export default function APDashboard() {
         />
       </div>
 
+      {/* Eagle Sync callout — heeft prioriteit: dit is werk dat in Eagle nog gedaan moet worden */}
+      {stats.eaglePending !== null && stats.eaglePending > 0 && (
+        <Link
+          href="/dashboard/finance/ap/eagle-sync"
+          className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 flex items-center gap-4 hover:bg-amber-100 transition-all group"
+        >
+          <div className="w-11 h-11 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+            <span className="text-xl">🔄</span>
+          </div>
+          <div className="flex-1">
+            <p className="text-[14px] font-bold text-amber-900">
+              {stats.eaglePending} {stats.eaglePending === 1 ? 'factuur wacht' : 'facturen wachten'} op afletteren in Eagle
+            </p>
+            <p className="text-[12px] text-amber-800">
+              {isClerk
+                ? 'Boek deze paren in Eagle af. Bij de volgende Compass-upload wordt automatisch gedetecteerd dat het rond is.'
+                : 'Auto-matches bevestigd in portal, nog niet in Eagle afgeletterd.'}
+            </p>
+          </div>
+          <span className="text-amber-700 group-hover:text-amber-900">Bekijk werklijst →</span>
+        </Link>
+      )}
+
       {/* Auto-match callout — alleen tonen als er kandidaten zijn */}
       {stats.autoMatchVendors !== null && stats.autoMatchVendors > 0 && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4 flex items-center gap-4">
@@ -223,6 +254,14 @@ export default function APDashboard() {
             label="Auto-match"
             desc="Compensaties zonder bank-betaling"
             badge={stats.autoMatchVendors > 0 ? `${stats.autoMatchVendors}` : null}
+            available
+          />
+          <ActionCard
+            href="/dashboard/finance/ap/eagle-sync"
+            icon="🔄"
+            label="Eagle Sync"
+            desc="Afletteren door te voeren in Eagle"
+            badge={stats.eaglePending > 0 ? `${stats.eaglePending}` : null}
             available
           />
           <ActionCard icon="🏦" label="Bank-bestanden" desc="MCB FEP + RBC export" />
