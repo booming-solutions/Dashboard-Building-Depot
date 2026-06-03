@@ -1,13 +1,16 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v3_2.js
+   BESTAND: ap_werkstroom_page_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v2, hernoemen naar page.js)
 
-   PATCH t.o.v. v3:
-   - rejection-fetch verplaatst NA grouped declaration (TDZ fix)
-   - .in() filter weggehaald — bij 1500+ UUIDs werd URL te lang.
-     Nu gewoon alle rejection-comments ophalen (kleine tabel) en
-     client-side matchen op invoice_id.
+   WIJZIGINGEN T.O.V. v3:
+   - Rejection opslag verhuisd van ap_comments naar 3 kolommen
+     direct op ap_invoices: rejection_reason / rejected_at / rejected_by.
+     Reden: atomic update + geen aparte RLS issues.
+   - Geen aparte fetch meer voor rejection-comments — de info
+     staat direct in elke invoice-rij.
+   - Bij select/submit/approve/unselect: rejection-velden worden
+     gewist (frisse start).
 
    WIJZIGINGEN T.O.V. v2:
    - FIX: canApprove wordt nu lokaal berekend uit effectiveRole.
@@ -96,7 +99,6 @@ export default function WerkstroomPage() {
   const [tab, setTab] = useState('open');
   const [byStatus, setByStatus] = useState({});
   const [userNames, setUserNames] = useState({});
-  const [rejections, setRejections] = useState({});  // invoice_id → latest rejection comment
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [busy, setBusy] = useState(false);
@@ -115,7 +117,7 @@ export default function WerkstroomPage() {
       const allRows = await fetchAllPaginated(() => {
         let q = supabase
           .from('ap_invoices')
-          .select('id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, status, assigned_ap_clerk, selected_by, submitted_by, approved_by')
+          .select('id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by')
           .in('status', statuses);
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
@@ -148,26 +150,7 @@ export default function WerkstroomPage() {
       }
       setByStatus(grouped);
 
-      // Rejection-comments ophalen — alle, zonder .in() filter
-      // (URL met 1500+ UUIDs zou te lang zijn voor PostgREST).
-      // Comments-tabel is klein, dus alles ophalen en client-side matchen.
-      const openInvoiceIds = new Set((grouped['open'] || []).map(r => r.id));
-      const rejs = await fetchAllPaginated(() =>
-        supabase
-          .from('ap_comments')
-          .select('invoice_id, body, created_at, user_name, user_role')
-          .eq('kind', 'rejection')
-          .order('created_at', { ascending: false })
-      );
-      const byInv = {};
-      for (const r of rejs) {
-        // Alleen meest recente per factuur (door order DESC) en alleen
-        // voor facturen die nu 'open' zijn (anders niet relevant om te tonen)
-        if (openInvoiceIds.has(r.invoice_id) && !byInv[r.invoice_id]) {
-          byInv[r.invoice_id] = r;
-        }
-      }
-      setRejections(byInv);
+      // Geen aparte rejection-fetch meer — info staat direct op invoice
     } catch (e) {
       setError(e.message || 'Onbekende fout');
     } finally {
@@ -230,16 +213,25 @@ export default function WerkstroomPage() {
       // Extra velden afhankelijk van actie
       const extraFields = {};
 
+      // Alle positieve acties wissen eventuele eerdere afwijzing
+      const clearRejection = {
+        rejection_reason: null,
+        rejected_at: null,
+        rejected_by: null,
+      };
+
       if (actionKey === 'select') {
         newStatus = 'selected_by_ap';
         auditAction = 'selected';
         extraFields.selected_at = now;
         extraFields.selected_by = actualProfile.id;
+        Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'submit') {
         newStatus = 'approver_review';
         auditAction = 'submitted';
         extraFields.submitted_at = now;
         extraFields.submitted_by = actualProfile.id;
+        Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'unselect') {
         newStatus = 'open';
         auditAction = 'unselected';
@@ -250,7 +242,11 @@ export default function WerkstroomPage() {
         auditAction = 'approved';
         extraFields.approved_at = now;
         extraFields.approved_by = actualProfile.id;
+        Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'reject') {
+        if (!extra.reason || !extra.reason.trim()) {
+          throw new Error('Afwijs-reden is verplicht');
+        }
         newStatus = 'open';
         auditAction = 'rejected';
         // Reset workflow timestamps
@@ -258,6 +254,10 @@ export default function WerkstroomPage() {
         extraFields.selected_by = null;
         extraFields.submitted_at = null;
         extraFields.submitted_by = null;
+        // Sla rejection op direct in ap_invoices
+        extraFields.rejection_reason = extra.reason;
+        extraFields.rejected_at = now;
+        extraFields.rejected_by = actualProfile.id;
       } else {
         throw new Error('Onbekende actie: ' + actionKey);
       }
@@ -272,20 +272,6 @@ export default function WerkstroomPage() {
         })
         .in('id', ids);
       if (updErr) throw updErr;
-
-      // Voor reject: comments toevoegen
-      if (actionKey === 'reject' && extra.reason) {
-        const commentRows = ids.map(id => ({
-          invoice_id: id,
-          body: extra.reason,
-          user_id: actualProfile.id,
-          user_name: actualProfile.full_name,
-          user_role: actualProfile.role,
-          kind: 'rejection',
-        }));
-        const { error: cErr } = await supabase.from('ap_comments').insert(commentRows);
-        if (cErr) console.warn('Comment insert mislukt:', cErr);
-      }
 
       // Audit per factuur
       const auditRows = ids.map(id => ({
@@ -447,7 +433,6 @@ export default function WerkstroomPage() {
           allSelected={selectedIds.size > 0 && selectedIds.size === currentInvoices.length}
           tab={tab}
           userNames={userNames}
-          rejections={rejections}
         />
       )}
     </div>
@@ -611,7 +596,7 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, rejections }) {
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames }) {
   const showSubmitter = tab === 'approver_review';
   const showApprover = tab === 'approved' || tab === 'in_batch';
   const showRejectionIndicator = tab === 'open';
@@ -650,7 +635,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
                 showSubmitter={showSubmitter}
                 showApprover={showApprover}
                 userNames={userNames}
-                rejection={showRejectionIndicator ? rejections[inv.id] : null}
+                showRejection={showRejectionIndicator}
               />
             ))}
           </tbody>
@@ -660,7 +645,12 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
   );
 }
 
-function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, rejection }) {
+function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection }) {
+  const rejection = showRejection && inv.rejection_reason ? {
+    body: inv.rejection_reason,
+    created_at: inv.rejected_at,
+    user_name: userNames[inv.rejected_by] || null,
+  } : null;
   const bal = parseFloat(inv.balance);
   const isCredit = bal < 0;
   const daysUntil = daysUntilDue(inv.due_date);
