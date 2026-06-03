@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: layout_v3.js
+   BESTAND: layout_v4.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js, hernoemen naar layout.js)
+
+   WIJZIGINGEN V27.12:
+   - Price Changes verwijderd uit Voorraad menu (rapport nog niet correct)
+   - REPORT_MAP entry voor inventory_price_changes ook verwijderd
 
    WIJZIGINGEN V27.11:
    - Finance menu toegevoegd met Overzichten (/dashboard/finance/statements)
@@ -27,7 +31,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.11';
+const APP_VERSION = 'V27.12';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -236,7 +240,6 @@ export default function DashboardLayout({ children }) {
     '/dashboard/inventory/negative': 'inventory_negative',
     '/dashboard/inventory/health': 'inventory_health',
     '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
-    '/dashboard/inventory/price-changes': 'inventory_price_changes',
     '/dashboard/inventory/nos-check': 'inventory_nos_check',
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
@@ -264,7 +267,6 @@ export default function DashboardLayout({ children }) {
       { href: '/dashboard/inventory/stockrisk/sanitair-keukens', label: 'Sanitair & Keukens' },
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
-    { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
     { href: '/dashboard/inventory/nos-check', label: 'NOS Check' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
