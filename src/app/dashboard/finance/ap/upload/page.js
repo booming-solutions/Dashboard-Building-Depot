@@ -1,10 +1,15 @@
 /* ============================================================
-   BESTAND: ap_upload_page_v1.js
+   BESTAND: ap_upload_page_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/upload/page.js
-   (nieuwe file, hernoemen naar page.js bij upload)
+   (overschrijft v1, hernoemen naar page.js bij upload)
 
-   Folder "upload" wordt automatisch aangemaakt onder
-   src/app/dashboard/finance/ap/
+   WIJZIGINGEN T.O.V. v1:
+   - Diff/import gebruikt nu VOUCHER als unieke key i.p.v.
+     (vendor_id, invoice_number).
+   - Eagle blijkt voucher als natuurlijke unique key te hebben,
+     niet de invoice_number combinatie. 11 duplicaat-groepen in
+     echte export ontdekt (credits, debet-correcties, Excel-bugs).
+   - Requires DB constraint fix via ap_constraint_fix_v1.sql
 
    Data Upload pagina voor AP:
    - Compass/Eagle CSV inlezen
@@ -165,25 +170,31 @@ function parseCompassCSV(text) {
 // DIFF ENGINE
 // =====================================================================
 async function computeDiff(supabase, parsedInvoices) {
+  // Voucher is Eagle's natuurlijke unieke key
   const { data: existing, error } = await supabase
     .from('ap_invoices')
-    .select('id, vendor_id, invoice_number, balance, status, assigned_ap_clerk')
+    .select('id, vendor_id, invoice_number, voucher, balance, status, assigned_ap_clerk')
     .not('status', 'in', '(paid,disappeared_from_export)');
   if (error) throw new Error(`Kan bestaande facturen niet laden: ${error.message}`);
 
+  // Map op voucher
   const existingMap = new Map();
   for (const inv of existing) {
-    existingMap.set(`${inv.vendor_id}|${inv.invoice_number}`, inv);
+    if (inv.voucher) existingMap.set(inv.voucher, inv);
   }
-  const parsedKeys = new Set(parsedInvoices.map(p => `${p.vendor_id}|${p.invoice_number}`));
+  const parsedVouchers = new Set(parsedInvoices.map(p => p.voucher).filter(v => v));
 
   const newInvoices = [];
   const updatedInvoices = [];
   const unchanged = [];
+  const skipped = [];
 
   for (const p of parsedInvoices) {
-    const key = `${p.vendor_id}|${p.invoice_number}`;
-    const ex = existingMap.get(key);
+    if (!p.voucher) {
+      skipped.push(p);
+      continue;
+    }
+    const ex = existingMap.get(p.voucher);
     if (!ex) {
       newInvoices.push(p);
     } else {
@@ -195,8 +206,9 @@ async function computeDiff(supabase, parsedInvoices) {
     }
   }
 
+  // Disappeared: in DB maar niet in nieuwe CSV
   const disappearedInvoices = existing.filter(inv =>
-    !parsedKeys.has(`${inv.vendor_id}|${inv.invoice_number}`)
+    inv.voucher && !parsedVouchers.has(inv.voucher)
   );
 
   const { data: vendors, error: vErr } = await supabase
@@ -215,7 +227,7 @@ async function computeDiff(supabase, parsedInvoices) {
     }
   }
 
-  return { newInvoices, updatedInvoices, unchanged, disappearedInvoices, newVendors };
+  return { newInvoices, updatedInvoices, unchanged, disappearedInvoices, newVendors, skipped };
 }
 
 // =====================================================================
