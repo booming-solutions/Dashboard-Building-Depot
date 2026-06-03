@@ -273,8 +273,7 @@ export default function DashboardLayout({ children }) {
   const hrItemsAll = [
     { href: '/dashboard/hr/salary', label: 'Salariskosten' },
     { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
-    { href: '/dashboard/hr/urenplanning', label: 'Urenplanning', badge: '(concept)', visible: isAdmin || isManager },
-    { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
+    { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning', badge: '(concept)', visible: isAdmin },
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
