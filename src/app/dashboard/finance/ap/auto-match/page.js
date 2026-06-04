@@ -362,6 +362,7 @@ function Stat({ label, value, isText, highlight, highlightLabel, color }) {
 }
 
 function VendorCard({ vendor, vIdx, busyPair, donePair, onConfirmPair, onConfirmAll }) {
+  const isAlias = !!vendor?.isAlias;
   const allDone = vendor.pairs.every((_, i) => donePair[`${vIdx}-${i}`]);
   const someDone = vendor.pairs.some((_, i) => donePair[`${vIdx}-${i}`]);
   const someBusy = vendor.pairs.some((_, i) => busyPair[`${vIdx}-${i}`]);
@@ -406,7 +407,7 @@ function VendorCard({ vendor, vIdx, busyPair, donePair, onConfirmPair, onConfirm
       </div>
 
       <div className="space-y-2">
-        {vendor.pairs.map((pair, i) => {
+        {pairs.map((pair, i) => {
           const pairKey = `${vIdx}-${i}`;
           return (
             <PairRow
@@ -415,6 +416,7 @@ function VendorCard({ vendor, vIdx, busyPair, donePair, onConfirmPair, onConfirm
               done={donePair[pairKey]}
               busy={busyPair[pairKey]}
               onConfirm={() => onConfirmPair(pair, pairKey)}
+              isAliasContext={isAlias}
             />
           );
         })}
@@ -423,12 +425,12 @@ function VendorCard({ vendor, vIdx, busyPair, donePair, onConfirmPair, onConfirm
   );
 }
 
-function PairRow({ pair, done, busy, onConfirm }) {
+function PairRow({ pair, done, busy, onConfirm, isAliasContext }) {
   return (
     <div className={`rounded-lg border p-3 ${done ? 'bg-emerald-50 border-emerald-200' : 'bg-[#f8fafc] border-gray-200'} flex items-center gap-3 flex-wrap`}>
       <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <InvoiceRow label="+" inv={pair.positive} positive showVendor={vendor.isAlias} />
-        <InvoiceRow label="−" inv={pair.negative} positive={false} showVendor={vendor.isAlias} />
+        <InvoiceRow label="+" inv={pair.positive} positive showVendor={isAliasContext} />
+        <InvoiceRow label="−" inv={pair.negative} positive={false} showVendor={isAliasContext} />
       </div>
       <div className="flex-shrink-0">
         {done ? (
