@@ -1,7 +1,14 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v11.js
+   BESTAND: ap_werkstroom_page_v12.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   v12 WIJZIGINGEN:
+   - Datum-filter prominenter: eigen blok onder de filters,
+     duidelijk zichtbaar met betere styling.
+   - Quick presets: "Na 1/1/2026", "Recent 30 dagen", "Verlopen",
+     "Lopende maand", "Wis datums".
+   - Default veld is "Factuurdatum" (vaker gebruikt dan vervaldatum).
 
    v11 WIJZIGINGEN:
    - Multi-select voor vendors (search + checkboxes); handig bij
@@ -147,7 +154,7 @@ export default function WerkstroomPage() {
   const [allVendors, setAllVendors] = useState([]);
   const [sortBy, setSortBy] = useState('due_date');
   const [sortDesc, setSortDesc] = useState(false);
-  const [dateField, setDateField] = useState('due_date');
+  const [dateField, setDateField] = useState('invoice_date');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
@@ -302,6 +309,42 @@ export default function WerkstroomPage() {
     setVendorSelected(new Set());
     setDateFrom('');
     setDateTo('');
+  }
+
+  function clearDates() {
+    setDateFrom('');
+    setDateTo('');
+  }
+
+  function applyDatePreset(preset) {
+    const today = new Date();
+    const fmt = d => d.toISOString().substring(0, 10);
+    if (preset === 'after_2026') {
+      setDateFrom('2026-01-01');
+      setDateTo('');
+    } else if (preset === 'recent_30') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 30);
+      setDateField('invoice_date');
+      setDateFrom(fmt(d));
+      setDateTo('');
+    } else if (preset === 'overdue') {
+      // Verlopen = vervaldatum < vandaag
+      setDateField('due_date');
+      setDateFrom('');
+      setDateTo(fmt(today));
+    } else if (preset === 'this_month') {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      setDateField('invoice_date');
+      setDateFrom(fmt(start));
+      setDateTo(fmt(end));
+    } else if (preset === 'this_year') {
+      const start = new Date(today.getFullYear(), 0, 1);
+      setDateField('invoice_date');
+      setDateFrom(fmt(start));
+      setDateTo('');
+    }
   }
 
   function handleSort(field) {
@@ -588,24 +631,56 @@ export default function WerkstroomPage() {
             {fmtNum(currentInvoices.length)} regels · XCG {fmtMoney(currentTotal)}
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap text-[12px] text-[#1B3A5C]/60">
-          <span>Datum-range op:</span>
-          <select value={dateField} onChange={e => setDateField(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer">
-            <option value="due_date">Vervaldatum</option>
-            <option value="invoice_date">Factuurdatum</option>
-          </select>
-          <span>van</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] focus:outline-none focus:border-[#1B3A5C]" />
-          <span>t/m</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] focus:outline-none focus:border-[#1B3A5C]" />
-          {hasFilters && (
-            <button onClick={clearFilters}
-              className="px-2 py-1.5 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[12px] font-semibold hover:bg-gray-200">
-              ✗ Wis filters
+        <div className={`border-t pt-2 mt-1 ${(dateFrom || dateTo) ? 'border-blue-200 bg-blue-50/30 -mx-3 px-3 pb-2 rounded-b-xl' : 'border-gray-100'}`}>
+          <div className="flex items-center gap-2 flex-wrap text-[12px]">
+            <span className="font-semibold text-[#1B3A5C]/70">Datum-filter:</span>
+            <select value={dateField} onChange={e => setDateField(e.target.value)}
+              className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer">
+              <option value="invoice_date">Factuurdatum</option>
+              <option value="due_date">Vervaldatum</option>
+            </select>
+            <span className="text-[#1B3A5C]/50">van</span>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] focus:outline-none focus:border-[#1B3A5C]" />
+            <span className="text-[#1B3A5C]/50">t/m</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] focus:outline-none focus:border-[#1B3A5C]" />
+            {(dateFrom || dateTo) && (
+              <button onClick={clearDates}
+                className="px-2 py-1 rounded bg-rose-100 text-rose-700 text-[11px] font-semibold hover:bg-rose-200">
+                ✗ Wis datums
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap mt-2 text-[11px]">
+            <span className="text-[#1B3A5C]/50">Snelle keuze:</span>
+            <button onClick={() => applyDatePreset('after_2026')}
+              className="px-2 py-1 rounded bg-blue-100 text-blue-800 font-semibold hover:bg-blue-200">
+              Na 1/1/2026
             </button>
-          )}
+            <button onClick={() => applyDatePreset('recent_30')}
+              className="px-2 py-1 rounded bg-blue-100 text-blue-800 font-semibold hover:bg-blue-200">
+              Recent 30 dagen
+            </button>
+            <button onClick={() => applyDatePreset('this_month')}
+              className="px-2 py-1 rounded bg-blue-100 text-blue-800 font-semibold hover:bg-blue-200">
+              Lopende maand
+            </button>
+            <button onClick={() => applyDatePreset('this_year')}
+              className="px-2 py-1 rounded bg-blue-100 text-blue-800 font-semibold hover:bg-blue-200">
+              Dit jaar
+            </button>
+            <button onClick={() => applyDatePreset('overdue')}
+              className="px-2 py-1 rounded bg-amber-100 text-amber-800 font-semibold hover:bg-amber-200">
+              Verlopen
+            </button>
+            {hasFilters && (
+              <button onClick={clearFilters}
+                className="ml-auto px-2 py-1 rounded bg-gray-100 text-[#1B3A5C]/70 font-semibold hover:bg-gray-200">
+                ✗ Wis alle filters
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
