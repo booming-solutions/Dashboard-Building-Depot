@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_match_bank_page_v2.js
+   BESTAND: ap_match_bank_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/bank/page.js
    (nieuwe folder: match/bank/, hernoemen naar page.js)
 
@@ -10,6 +10,19 @@
    filtert uitgaande betalingen → matcht tegen openstaande
    facturen → toont resultaten → importeert kandidaten naar
    ap_match_candidates met source='bank_mcb' of 'bank_rbc'.
+
+   v3 WIJZIGINGEN:
+   - Tolerantie verhoogd tot 30% verschil (was 1% XCG / 6% FX).
+     Curaçao realiteit: FX, bank fees, credit memo verrekeningen
+     en gedeeltelijke betalingen geven vaak 5-15% afwijking.
+   - Score-gradient (92 voor exact, 55 voor 15-30% verschil).
+     AP Clerk ziet score en beslist of het accepteren.
+   - CREDIT MEMOs uit primary matching gefilterd. Combinatie met
+     andere facturen kan in latere versie.
+   - Diagnose-hint bij "geen match": dichtstbijzijnde portal-factuur
+     wordt getoond met %verschil voor handmatige review.
+   - Auto-pick bij top-gap >= 10 punten: duidelijke winnaar telt
+     als unique match in plaats van ambiguous.
 
    v2 WIJZIGINGEN:
    - MULTI-FILE upload (50+ PDFs in één batch).
@@ -271,7 +284,7 @@ function extractRbcReference(tx) {
   return null;
 }
 
-// ====== MATCHING ENGINE (vrijwel identiek aan PCS Tier 2) ======
+// ====== MATCHING ENGINE v3 (Curaçao realiteit: bredere tolerantie + score) ======
 function tryMatchInvoice(tx, vendorId, invoicesByVendor, claimedIds) {
   const invoices = invoicesByVendor[vendorId] ? Object.values(invoicesByVendor[vendorId]) : [];
   if (invoices.length === 0) return { type: 'no_invoices', candidates: [] };
@@ -286,15 +299,17 @@ function tryMatchInvoice(tx, vendorId, invoicesByVendor, claimedIds) {
   for (const inv of invoices) {
     if (claimedIds.has(inv.id)) continue;
     if (inv.status === 'paid') continue;
-    const invAmount = parseFloat(inv.original_amount) || Math.abs(parseFloat(inv.balance)) || 0;
-    if (invAmount <= 0) continue;
+    // Skip CREDIT MEMOs uit primaire matching — die zijn negatief saldo
+    if (inv.type === 'CREDIT MEMO') continue;
+    const invBalance = parseFloat(inv.balance) || 0;
+    // Alleen positive balances (echte schuld); skip credit memos via balance ook
+    if (invBalance <= 0) continue;
+    const invAmount = invBalance;
 
-    // Bedrag tolerantie: 1% voor XCG, 6% voor non-XCG (FX-marge)
-    const isXcg = !inv.currency || inv.currency === 'XCG' || inv.currency === 'ANG';
-    const tol = isXcg ? 0.01 : 0.06;
+    // Verbrede tolerantie: tot 30%, met score-gradient
     const diff = Math.abs(invAmount - txAmount);
     const pct = invAmount > 0 ? diff / invAmount : 1;
-    if (pct > tol) continue;
+    if (pct > 0.30) continue;
 
     // Tijdsvenster
     const invDate = inv.invoice_date ? new Date(inv.invoice_date) : null;
@@ -315,18 +330,42 @@ function tryMatchInvoice(tx, vendorId, invoicesByVendor, claimedIds) {
     }
     if (txDate < earliest || txDate > latest) continue;
 
-    let score = 70;
-    if (pct < 0.001) score = 88;
-    else if (pct < 0.01) score = 80;
-    else if (pct < 0.03) score = 75;
+    // Score-gradient — scherper = hoger
+    let score;
+    if (pct < 0.001) score = 92;
+    else if (pct < 0.01) score = 85;
+    else if (pct < 0.05) score = 75;
+    else if (pct < 0.15) score = 60;
+    else score = 45;
 
     candidates.push({ invoice: inv, score, amtPct: pct });
   }
 
   if (candidates.length === 0) return { type: 'no_match', candidates: [] };
-  if (candidates.length === 1) return { type: 'unique', candidates };
   candidates.sort((a, b) => b.score - a.score);
+
+  // Auto-pick: bij meerdere kandidaten, als top duidelijk wint (gap >= 10)
+  if (candidates.length === 1) return { type: 'unique', candidates };
+  const gap = candidates[0].score - candidates[1].score;
+  if (gap >= 10) return { type: 'unique', candidates: [candidates[0]] };
   return { type: 'ambiguous', candidates };
+}
+
+function findNearestInvoice(tx, vendorId, invoicesByVendor) {
+  const invoices = invoicesByVendor[vendorId] ? Object.values(invoicesByVendor[vendorId]) : [];
+  if (invoices.length === 0) return null;
+  const txAmount = Math.abs(tx.amount);
+  let best = null;
+  let bestPct = Infinity;
+  for (const inv of invoices) {
+    if (inv.status === 'paid') continue;
+    if (inv.type === 'CREDIT MEMO') continue;
+    const bal = parseFloat(inv.balance) || 0;
+    if (bal <= 0) continue;
+    const pct = Math.abs(bal - txAmount) / bal;
+    if (pct < bestPct) { bestPct = pct; best = { invoice: inv, pct }; }
+  }
+  return best;
 }
 
 // ====== HOOFD COMPONENT ======
@@ -496,8 +535,16 @@ export default function BankMatchPage() {
           tally('Vendor herkend, geen openstaande facturen');
           unmatched.push({ tx, vendorName, reference, reason: 'Vendor herkend, geen openstaande facturen' });
         } else {
+          // Geen match binnen 30% — toon dichtstbijzijnde factuur als diagnose
+          const nearest = findNearestInvoice(tx, vid, invByVendor);
+          let hint = null;
+          if (nearest) {
+            const pct = Math.round(nearest.pct * 100);
+            const amt = parseFloat(nearest.invoice.balance);
+            hint = `${nearest.invoice.invoice_number} · ${amt.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${pct}% verschil)`;
+          }
           tally('Geen factuur binnen bedrag/tijdsvenster');
-          unmatched.push({ tx, vendorName, reference, reason: 'Geen factuur binnen bedrag/tijdsvenster' });
+          unmatched.push({ tx, vendorName, reference, reason: 'Geen factuur binnen bedrag/tijdsvenster', hint });
         }
       }
 
@@ -681,6 +728,22 @@ export default function BankMatchPage() {
             {matchResult.duplicates > 0 && <StatCard label="Duplicaten" value={matchResult.duplicates} color="gray" sub="al ingelezen" />}
           </div>
 
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4 text-[11px] text-[#1B3A5C]/80">
+            <strong>Score uitleg:</strong>
+            <span className="inline-flex items-center gap-1 ml-2">
+              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">85+</span> exact
+            </span>
+            <span className="inline-flex items-center gap-1 ml-2">
+              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">70-84</span> bedrag ~5% af (FX/fees)
+            </span>
+            <span className="inline-flex items-center gap-1 ml-2">
+              <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-bold">55-69</span> bedrag 5-15% af (partial / credit memo)
+            </span>
+            <span className="inline-flex items-center gap-1 ml-2">
+              <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">45-54</span> bedrag 15-30% af (review nodig)
+            </span>
+          </div>
+
           {matchResult.matches > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
@@ -815,7 +878,12 @@ function MatchTable({ matches }) {
                 {fmtMoney(parseFloat(m.invoice.original_amount) || Math.abs(parseFloat(m.invoice.balance)))}
               </td>
               <td className="p-2 text-center">
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  m.score >= 85 ? 'bg-emerald-100 text-emerald-700' :
+                  m.score >= 70 ? 'bg-amber-100 text-amber-700' :
+                  m.score >= 55 ? 'bg-orange-100 text-orange-700' :
+                  'bg-rose-100 text-rose-700'
+                }`}>
                   {Math.round(m.score)}
                 </span>
               </td>
@@ -855,7 +923,10 @@ function UnmatchedTable({ rows }) {
                 {u.tx.description}
               </td>
               <td className="p-2 text-right font-mono">{fmtMoney(u.tx.amount)}</td>
-              <td className="p-2 text-rose-700/80 text-[11px]">{u.reason}</td>
+              <td className="p-2 text-rose-700/80 text-[11px]">
+                {u.reason}
+                {u.hint && <div className="text-[10px] text-[#1B3A5C]/60 italic mt-0.5">→ {u.hint}</div>}
+              </td>
             </tr>
           ))}
         </tbody>
