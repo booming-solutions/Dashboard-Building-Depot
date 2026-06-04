@@ -73,7 +73,7 @@ function fmtDateTime(iso) {
 }
 
 export default function EagleSyncPage() {
-  const { effectiveProfileId, effectiveRole, effectiveName } = useApRole();
+  const { effectiveProfileId, effectiveRole, effectiveName, actualProfile } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
 
@@ -81,6 +81,8 @@ export default function EagleSyncPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [oldestPending, setOldestPending] = useState(null);
+  const [processingIds, setProcessingIds] = useState(new Set());
+  const [exporting, setExporting] = useState(false);
 
   const loadPending = useCallback(async () => {
     setLoading(true);
@@ -174,6 +176,139 @@ export default function EagleSyncPage() {
     else oldestAgeText = 'recent';
   }
 
+  // Markeer 1 of meerdere facturen handmatig als verwerkt (status='paid')
+  async function markProcessed(invoiceIds, label) {
+    if (!invoiceIds || invoiceIds.length === 0) return;
+    setProcessingIds(prev => {
+      const next = new Set(prev);
+      for (const id of invoiceIds) next.add(id);
+      return next;
+    });
+    setError(null);
+    try {
+      const now = new Date().toISOString();
+      const { error: updErr } = await supabase
+        .from('ap_invoices')
+        .update({
+          status: 'paid',
+          paid_at: now,
+          paid_by: actualProfile.id,
+          last_status_change: now,
+          last_status_change_by: actualProfile.id,
+        })
+        .in('id', invoiceIds)
+        .eq('status', 'auto_matched');
+      if (updErr) throw updErr;
+
+      // Audit log per factuur
+      const auditRows = invoiceIds.map(id => ({
+        action: 'eagle_sync_manual_confirmed',
+        entity_type: 'invoice',
+        entity_id: id,
+        user_id: actualProfile.id,
+        user_name: actualProfile.full_name,
+        user_role: actualProfile.role,
+        details: {
+          batch_size: invoiceIds.length,
+          batch_label: label || null,
+          previous_status: 'auto_matched',
+          new_status: 'paid',
+        },
+      }));
+      if (auditRows.length > 0) await supabase.from('ap_audit_log').insert(auditRows);
+
+      // Optimistic UI update: verwijder uit werklijst
+      setVendors(prev => {
+        if (!prev) return prev;
+        const removeSet = new Set(invoiceIds);
+        return prev.map(v => {
+          const newPairs = v.pairs.filter(p => !removeSet.has(p.positive.id) && !removeSet.has(p.negative.id));
+          const newOrphans = v.orphans.filter(o => !removeSet.has(o.id));
+          return {
+            ...v,
+            pairs: newPairs,
+            orphans: newOrphans,
+            totalAmount: newPairs.reduce((s, p) => s + Math.abs(p.amount), 0) +
+              newOrphans.reduce((s, o) => s + Math.abs(parseFloat(o.balance) || 0), 0),
+          };
+        }).filter(v => v.pairs.length > 0 || v.orphans.length > 0);
+      });
+    } catch (e) {
+      setError(e.message || 'Fout bij markeren');
+      await loadPending();
+    } finally {
+      setProcessingIds(prev => {
+        const next = new Set(prev);
+        for (const id of invoiceIds) next.delete(id);
+        return next;
+      });
+    }
+  }
+
+  // Excel export van de hele werklijst
+  async function exportToExcel() {
+    if (!vendors || vendors.length === 0) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const XLSX = await import('xlsx');
+      const rows = [];
+      let groupCounter = 0;
+      for (const v of vendors) {
+        for (const pair of v.pairs) {
+          groupCounter++;
+          for (const side of ['positive', 'negative']) {
+            const inv = pair[side];
+            rows.push({
+              'Vendor naam': v.name,
+              'Vendor #': v.id,
+              'Groep #': `G${groupCounter}`,
+              '+/-': side === 'positive' ? '+' : '−',
+              'Factuurnummer': inv.invoice_number,
+              'Voucher': inv.voucher,
+              'Type': inv.type,
+              'Saldo': parseFloat(inv.balance),
+              'Factuurdatum': inv.invoice_date || '',
+              'Auto-matched sinds': inv.last_status_change ? fmtDateTime(inv.last_status_change) : '',
+              'Verwerkt in Eagle': '',
+            });
+          }
+        }
+        for (const o of v.orphans) {
+          groupCounter++;
+          rows.push({
+            'Vendor naam': v.name,
+            'Vendor #': v.id,
+            'Groep #': `O${groupCounter}`,
+            '+/-': parseFloat(o.balance) >= 0 ? '+' : '−',
+            'Factuurnummer': o.invoice_number,
+            'Voucher': o.voucher,
+            'Type': o.type,
+            'Saldo': parseFloat(o.balance),
+            'Factuurdatum': o.invoice_date || '',
+            'Auto-matched sinds': o.last_status_change ? fmtDateTime(o.last_status_change) : '',
+            'Verwerkt in Eagle': '',
+          });
+        }
+      }
+      const ws = XLSX.utils.json_to_sheet(rows);
+      // Kolom-breedtes
+      ws['!cols'] = [
+        { wch: 30 }, { wch: 10 }, { wch: 8 }, { wch: 4 },
+        { wch: 18 }, { wch: 10 }, { wch: 14 }, { wch: 14 },
+        { wch: 12 }, { wch: 20 }, { wch: 16 },
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Eagle Sync werklijst');
+      const dt = new Date().toISOString().substring(0, 10).replace(/-/g, '');
+      XLSX.writeFile(wb, `eagle_sync_werklijst_${dt}.xlsx`);
+    } catch (e) {
+      setError(`Export fout: ${e.message}`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto">
       <Header />
@@ -217,10 +352,17 @@ export default function EagleSyncPage() {
             totalAmount={totalAmount}
             oldestAgeText={oldestAgeText}
             onRefresh={loadPending}
+            onExport={exportToExcel}
+            exporting={exporting}
           />
 
           {vendors.map(v => (
-            <VendorCard key={v.id} vendor={v} />
+            <VendorCard
+              key={v.id}
+              vendor={v}
+              processingIds={processingIds}
+              onMarkProcessed={markProcessed}
+            />
           ))}
         </>
       )}
@@ -271,7 +413,7 @@ function IntroCard({ isClerk, effectiveName }) {
   );
 }
 
-function StatsBar({ vendorCount, totalRows, totalPairs, totalOrphans, totalAmount, oldestAgeText, onRefresh }) {
+function StatsBar({ vendorCount, totalRows, totalPairs, totalOrphans, totalAmount, oldestAgeText, onRefresh, onExport, exporting }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 shadow-sm flex items-center gap-6 flex-wrap">
       <Stat label="Vendors" value={vendorCount} />
@@ -280,12 +422,21 @@ function StatsBar({ vendorCount, totalRows, totalPairs, totalOrphans, totalAmoun
       {oldestAgeText && (
         <Stat label="Oudste wachtend" value={oldestAgeText} isText color="amber" />
       )}
-      <button
-        onClick={onRefresh}
-        className="ml-auto px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-[12px] text-[#1B3A5C]/70 hover:text-[#1B3A5C] hover:bg-gray-100 transition-all"
-      >
-        ↻ Verversen
-      </button>
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          onClick={onExport}
+          disabled={exporting}
+          className="px-3 py-1.5 rounded-lg bg-[#1B3A5C] text-white text-[12px] font-semibold hover:bg-[#264a73] transition-all disabled:opacity-50"
+        >
+          {exporting ? 'Exporteren...' : '📥 Exporteer Excel'}
+        </button>
+        <button
+          onClick={onRefresh}
+          className="px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-[12px] text-[#1B3A5C]/70 hover:text-[#1B3A5C] hover:bg-gray-100 transition-all"
+        >
+          ↻ Verversen
+        </button>
+      </div>
     </div>
   );
 }
@@ -303,45 +454,75 @@ function Stat({ label, value, sublabel, isText, color }) {
   );
 }
 
-function VendorCard({ vendor }) {
+function VendorCard({ vendor, processingIds, onMarkProcessed }) {
+  const allIds = [
+    ...vendor.pairs.flatMap(p => [p.positive.id, p.negative.id]),
+    ...vendor.orphans.map(o => o.id),
+  ];
+  const anyBusy = allIds.some(id => processingIds.has(id));
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 mb-3 shadow-sm">
-      <div className="mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-base">📦</span>
-          <h3 className="text-[15px] font-bold text-[#1B3A5C]">{vendor.name}</h3>
-          <span className="text-[11px] text-[#1B3A5C]/40 font-mono">#{vendor.id}</span>
+      <div className="mb-3 flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-base">📦</span>
+            <h3 className="text-[15px] font-bold text-[#1B3A5C]">{vendor.name}</h3>
+            <span className="text-[11px] text-[#1B3A5C]/40 font-mono">#{vendor.id}</span>
+          </div>
+          <p className="text-[12px] text-[#1B3A5C]/60 mt-0.5">
+            {vendor.pairs.length} {vendor.pairs.length === 1 ? 'paar' : 'paren'}
+            {vendor.orphans.length > 0 && <>, {vendor.orphans.length} los</>} ·
+            totaal saldo XCG {fmtMoney(vendor.totalAmount)}
+            {vendor.oldestChange && <> · sinds {fmtDateTime(vendor.oldestChange)}</>}
+          </p>
         </div>
-        <p className="text-[12px] text-[#1B3A5C]/60 mt-0.5">
-          {vendor.pairs.length} {vendor.pairs.length === 1 ? 'paar' : 'paren'}
-          {vendor.orphans.length > 0 && <>, {vendor.orphans.length} los</>} ·
-          totaal saldo XCG {fmtMoney(vendor.totalAmount)}
-          {vendor.oldestChange && <> · sinds {fmtDateTime(vendor.oldestChange)}</>}
-        </p>
+        <button
+          onClick={() => onMarkProcessed(allIds, `vendor ${vendor.name} (#${vendor.id})`)}
+          disabled={anyBusy}
+          className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 transition-all disabled:opacity-50"
+          title="Markeer alle facturen van deze vendor als verwerkt in Eagle (status wordt 'betaald')"
+        >
+          {anyBusy ? 'Bezig...' : `✓ Markeer alle ${allIds.length} verwerkt`}
+        </button>
       </div>
 
       <div className="space-y-2">
         {vendor.pairs.map((pair, i) => (
-          <PairRow key={`p-${i}`} pair={pair} />
+          <PairRow key={`p-${i}`} pair={pair}
+            isBusy={processingIds.has(pair.positive.id) || processingIds.has(pair.negative.id)}
+            onMarkProcessed={() => onMarkProcessed([pair.positive.id, pair.negative.id], `pair ${pair.positive.invoice_number}+${pair.negative.invoice_number}`)} />
         ))}
         {vendor.orphans.map((inv, i) => (
-          <OrphanRow key={`o-${i}`} inv={inv} />
+          <OrphanRow key={`o-${i}`} inv={inv}
+            isBusy={processingIds.has(inv.id)}
+            onMarkProcessed={() => onMarkProcessed([inv.id], `orphan ${inv.invoice_number}`)} />
         ))}
       </div>
     </div>
   );
 }
 
-function PairRow({ pair }) {
+function PairRow({ pair, isBusy, onMarkProcessed }) {
   return (
-    <div className="rounded-lg border bg-[#f8fafc] border-gray-200 p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-      <InvoiceRow label="+" inv={pair.positive} positive />
-      <InvoiceRow label="−" inv={pair.negative} positive={false} />
+    <div className="rounded-lg border bg-[#f8fafc] border-gray-200 p-3 flex items-center gap-3 flex-wrap">
+      <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <InvoiceRow label="+" inv={pair.positive} positive />
+        <InvoiceRow label="−" inv={pair.negative} positive={false} />
+      </div>
+      <button
+        onClick={onMarkProcessed}
+        disabled={isBusy}
+        className="flex-shrink-0 px-2 py-1 rounded bg-emerald-100 text-emerald-700 text-[11px] font-semibold hover:bg-emerald-200 disabled:opacity-50"
+        title="Markeer dit paar als verwerkt in Eagle"
+      >
+        {isBusy ? '...' : '✓ verwerkt'}
+      </button>
     </div>
   );
 }
 
-function OrphanRow({ inv }) {
+function OrphanRow({ inv, isBusy, onMarkProcessed }) {
   const isPos = parseFloat(inv.balance) >= 0;
   return (
     <div className="rounded-lg border bg-gray-50 border-gray-200 p-3 flex items-center gap-2 text-[12px]">
@@ -359,6 +540,14 @@ function OrphanRow({ inv }) {
       <p className={`font-mono font-bold text-[13px] ${isPos ? 'text-emerald-700' : 'text-rose-700'}`}>
         {isPos ? '+' : ''}{fmtMoney(parseFloat(inv.balance))}
       </p>
+      <button
+        onClick={onMarkProcessed}
+        disabled={isBusy}
+        className="flex-shrink-0 px-2 py-1 rounded bg-emerald-100 text-emerald-700 text-[11px] font-semibold hover:bg-emerald-200 disabled:opacity-50"
+        title="Markeer als verwerkt in Eagle"
+      >
+        {isBusy ? '...' : '✓ verwerkt'}
+      </button>
     </div>
   );
 }
