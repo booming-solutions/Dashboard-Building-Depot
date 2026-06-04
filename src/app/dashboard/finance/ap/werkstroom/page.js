@@ -1,8 +1,14 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v7.js
+   BESTAND: ap_werkstroom_page_v8.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
 
+   WIJZIGINGEN T.O.V. v7:
+   - Methode 4 toegevoegd: bulk-actie "Markeer extern betaald"
+     voor admin/cfo op tab "Openstaand". Modal voor datum + reden.
+     Maakt match_candidate met source='manual', status='confirmed'
+     in één keer. Plus status='paid' op de invoice.
+   
    WIJZIGINGEN T.O.V. v6:
    - Vendor dropdown: aparte selectie ipv typen (browser-native
      keyboard nav + scroll). Geen filter-trigger bij elke toets.
@@ -98,6 +104,7 @@ export default function WerkstroomPage() {
   const canApprove = ['admin', 'cfo', 'ap_approver'].includes(effectiveRole);
   const canSendToBank = ['admin', 'ap_clerk'].includes(effectiveRole);
   const canMarkPaid = ['admin', 'cfo'].includes(effectiveRole);
+  const canManualWriteoff = ['admin', 'cfo'].includes(effectiveRole);
 
   const [tab, setTab] = useState('open');
   const [tabCounts, setTabCounts] = useState({});
@@ -109,6 +116,7 @@ export default function WerkstroomPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showMarkPaidModal, setShowMarkPaidModal] = useState(false);
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -336,6 +344,14 @@ export default function WerkstroomPage() {
         auditAction = 'marked_paid';
         extraFields.paid_at = now;
         extraFields.paid_by = actualProfile.id;
+      } else if (actionKey === 'manual_writeoff') {
+        if (!extra.reason || !extra.reason.trim()) throw new Error('Reden is verplicht');
+        if (!extra.paidDate) throw new Error('Betaaldatum is verplicht');
+        newStatus = 'paid';
+        auditAction = 'manual_writeoff';
+        extraFields.paid_at = extra.paidDate;
+        extraFields.paid_by = actualProfile.id;
+        Object.assign(extraFields, clearRejection);
       } else {
         throw new Error('Onbekende actie: ' + actionKey);
       }
@@ -367,6 +383,30 @@ export default function WerkstroomPage() {
         .in('id', ids);
       if (updErr) throw updErr;
 
+      // Voor manual_writeoff: maak ook match_candidate aan (al confirmed)
+      if (actionKey === 'manual_writeoff') {
+        const invoices = (tabRows[tab] || []).filter(r => ids.includes(r.id));
+        const candidateRows = invoices.map(inv => ({
+          invoice_id: inv.id,
+          source: 'manual',
+          source_reference: null,
+          matched_amount: parseFloat(inv.balance) || parseFloat(inv.original_amount) || 0,
+          matched_date: extra.paidDate,
+          matched_currency: inv.currency || 'XCG',
+          confidence: 'manual',
+          match_score: null,
+          match_meta: { reason: extra.reason, source_invoice_status_before: inv.status },
+          status: 'confirmed',
+          confirmed_at: now,
+          confirmed_by: actualProfile.id,
+          created_by: actualProfile.id,
+        }));
+        if (candidateRows.length > 0) {
+          const { error: cErr } = await supabase.from('ap_match_candidates').insert(candidateRows);
+          if (cErr) console.warn('Manual candidate insert mislukt:', cErr);
+        }
+      }
+
       // Audit log per factuur
       const auditRows = ids.map(id => ({
         action: auditAction,
@@ -380,6 +420,7 @@ export default function WerkstroomPage() {
           batch_size: ids.length,
           played_as: isPlayingRole ? effectiveName : null,
           ...(extra.reason ? { reason: extra.reason } : {}),
+          ...(extra.paidDate ? { paid_date: extra.paidDate } : {}),
         },
       }));
       if (auditRows.length > 0) await supabase.from('ap_audit_log').insert(auditRows);
@@ -515,12 +556,14 @@ export default function WerkstroomPage() {
           canApprove={canApprove}
           canSendToBank={canSendToBank}
           canMarkPaid={canMarkPaid}
+          canManualWriteoff={canManualWriteoff}
           count={selectedCount}
           total={selectedTotal}
           busy={busy}
           onAction={doAction}
           onDeselect={deselectAll}
           onRejectClick={() => setShowRejectModal(true)}
+          onMarkPaidClick={() => setShowMarkPaidModal(true)}
         />
       )}
 
@@ -531,6 +574,19 @@ export default function WerkstroomPage() {
           busy={busy}
           onConfirm={(reason) => doAction('reject', { reason })}
           onCancel={() => setShowRejectModal(false)}
+        />
+      )}
+
+      {showMarkPaidModal && (
+        <ManualPaidModal
+          count={selectedCount}
+          total={selectedTotal}
+          busy={busy}
+          onConfirm={(paidDate, reason) => {
+            doAction('manual_writeoff', { paidDate, reason });
+            setShowMarkPaidModal(false);
+          }}
+          onCancel={() => setShowMarkPaidModal(false)}
         />
       )}
 
@@ -584,7 +640,7 @@ function Header({ onRefresh }) {
   );
 }
 
-function BulkBar({ tab, isClerk, canApprove, canSendToBank, canMarkPaid, count, total, busy, onAction, onDeselect, onRejectClick }) {
+function BulkBar({ tab, isClerk, canApprove, canSendToBank, canMarkPaid, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick }) {
   return (
     <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
       <span className="text-[13px] font-semibold">
@@ -599,6 +655,13 @@ function BulkBar({ tab, isClerk, canApprove, canSendToBank, canMarkPaid, count, 
           <button onClick={() => onAction('select')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-white text-[#1B3A5C] text-[12px] font-semibold hover:bg-gray-100 transition-all disabled:opacity-50">
             {busy ? 'Bezig...' : '→ Selecteer voor indiening'}
+          </button>
+        )}
+        {tab === 'open' && canManualWriteoff && (
+          <button onClick={onMarkPaidClick} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-[12px] font-semibold hover:bg-amber-600 transition-all disabled:opacity-50"
+            title="Voor oude facturen die in werkelijkheid al betaald zijn (buiten portal om)">
+            ⚐ Markeer extern betaald
           </button>
         )}
         {tab === 'selected_by_ap' && isClerk && (
@@ -676,6 +739,45 @@ function RejectModal({ count, total, busy, onConfirm, onCancel }) {
           </button>
           <button onClick={() => onConfirm(reason)} disabled={!reason.trim() || busy} className="px-4 py-2 rounded-lg bg-rose-600 text-white text-[13px] font-semibold hover:bg-rose-700 disabled:opacity-50">
             {busy ? 'Bezig...' : 'Afwijzen met reden'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManualPaidModal({ count, total, busy, onConfirm, onCancel }) {
+  const [paidDate, setPaidDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reason, setReason] = useState('');
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
+      <div className="bg-white rounded-xl p-6 w-[480px] shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-[16px] font-bold text-[#1B3A5C] mb-1">
+          Markeer als extern betaald ({count} {count === 1 ? 'factuur' : 'facturen'})
+        </h3>
+        <p className="text-[12px] text-[#1B3A5C]/60 mb-3">
+          Totaal XCG {fmtMoney(total)} · gaan direct naar status &quot;Betaald&quot;.
+          Bedoeld voor oude facturen die in werkelijkheid al zijn betaald.
+        </p>
+        <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Betaaldatum</label>
+        <input type="date" value={paidDate} onChange={e => setPaidDate(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] mb-3" />
+        <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Reden</label>
+        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+          placeholder="Bijv. Al betaald vóór portal-introductie, gezien in bank statement maart 2025..."
+          className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] resize-none"
+          autoFocus />
+        <p className="text-[11px] text-[#1B3A5C]/40 mt-1">
+          Wordt vastgelegd in audit log en in de afletter-werklijst.
+        </p>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onCancel} disabled={busy}
+            className="px-4 py-2 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[13px] font-semibold hover:bg-gray-200 disabled:opacity-50">
+            Annuleren
+          </button>
+          <button onClick={() => onConfirm(paidDate, reason)} disabled={!paidDate || !reason.trim() || busy}
+            className="px-4 py-2 rounded-lg bg-amber-500 text-white text-[13px] font-semibold hover:bg-amber-600 disabled:opacity-50">
+            {busy ? 'Bezig...' : '⚐ Markeer betaald'}
           </button>
         </div>
       </div>

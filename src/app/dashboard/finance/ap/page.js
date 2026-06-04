@@ -49,6 +49,7 @@ export default function APDashboard() {
     autoMatchInvoices: null,
     eaglePending: null,
     selectedPending: null,
+    pendingCandidates: null,
   });
 
   useEffect(() => {
@@ -125,6 +126,12 @@ export default function APDashboard() {
       if (isClerk) selQuery = selQuery.eq('assigned_ap_clerk', effectiveProfileId);
       const { count: sp } = await selQuery;
 
+      // Pending match candidates (afletter werklijst)
+      const { count: pc } = await supabase
+        .from('ap_match_candidates')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending');
+
       setStats({
         vendors: vc,
         invoices: ic,
@@ -134,6 +141,7 @@ export default function APDashboard() {
         autoMatchInvoices,
         eaglePending: ep || 0,
         selectedPending: sp || 0,
+        pendingCandidates: pc || 0,
       });
     }
     loadStats();
@@ -299,7 +307,22 @@ export default function APDashboard() {
             badge={stats.eaglePending > 0 ? `${stats.eaglePending}` : null}
             available
           />
-          <ActionCard icon="🏦" label="Bank-bestanden" desc="MCB FEP + RBC export" />
+          <ActionCard
+            href="/dashboard/finance/ap/match/worklist"
+            icon="🎯"
+            label="Afletter werklijst"
+            desc="Match-kandidaten bevestigen of afwijzen"
+            badge={stats.pendingCandidates > 0 ? `${stats.pendingCandidates}` : null}
+            available
+          />
+          <ActionCard
+            href="/dashboard/finance/ap/match/pcs"
+            icon="📊"
+            label="PCS Import"
+            desc="Payment Control Sheet inlezen voor matching"
+            available
+          />
+          <ActionCard icon="🏦" label="Bank-bestanden" desc="MCB + RBC parsing (binnenkort)" />
           <ActionCard icon="📋" label="Audit log" desc="Volledig actie-spoor" />
         </div>
       </div>
