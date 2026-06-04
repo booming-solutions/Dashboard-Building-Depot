@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_match_bank_page_v1.js
+   BESTAND: ap_match_bank_page_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/bank/page.js
    (nieuwe folder: match/bank/, hernoemen naar page.js)
 
@@ -10,6 +10,14 @@
    filtert uitgaande betalingen → matcht tegen openstaande
    facturen → toont resultaten → importeert kandidaten naar
    ap_match_candidates met source='bank_mcb' of 'bank_rbc'.
+
+   v2 WIJZIGINGEN:
+   - MULTI-FILE upload (50+ PDFs in één batch).
+   - Auto-detect bank per PDF — geen handmatige bank-keuze meer.
+   - Per-file status (✓/✗) met counts en error meldingen.
+   - Dedup binnen batch: zelfde transactie in twee PDFs telt maar
+     één keer.
+   - Eén match-run over alle transacties tegelijk.
 
    PARSER STRATEGIE:
    - MCB: balans-tracking voor debit/credit detectie + filter
@@ -104,6 +112,14 @@ async function readPdfLines(file) {
     }
   }
   return allLines;
+}
+
+function detectBank(lines) {
+  // Bekijk eerste 40 regels van de PDF voor bank-identificatie
+  const head = lines.slice(0, 40).join(' ');
+  if (/Maduro.*Curiel|\bMCB\b|MCBKCWCU|XCG - CURRENT ACCOUNT/i.test(head)) return 'mcb';
+  if (/Royal\s*Bank|RBC\b|InternetBanking|BOOK\s+VALUE\s+DESCRIPTION/i.test(head)) return 'rbc';
+  return null;
 }
 
 // ====== MCB PARSER ======
@@ -319,47 +335,88 @@ export default function BankMatchPage() {
   const supabase = createClient();
   const canImport = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(effectiveRole);
 
-  const [bank, setBank] = useState('mcb');
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [fileStatuses, setFileStatuses] = useState([]);  // [{name, status, bank, count, dupes, error}]
   const [parsing, setParsing] = useState(false);
+  const [parseProgress, setParseProgress] = useState(0);
   const [transactions, setTransactions] = useState([]);
   const [matchResult, setMatchResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importDone, setImportDone] = useState(null);
   const [error, setError] = useState(null);
 
-  async function handleFile(e) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setFile(f);
+  async function handleFiles(e) {
+    const fileList = Array.from(e.target.files || []);
+    if (fileList.length === 0) return;
+    setFiles(fileList);
     setError(null);
     setMatchResult(null);
     setImportDone(null);
+    setParseProgress(0);
+
+    // Init statuses
+    const statuses = fileList.map(f => ({
+      name: f.name, size: f.size, status: 'pending',
+      bank: null, count: 0, dupes: 0, error: null,
+    }));
+    setFileStatuses(statuses);
     setParsing(true);
-    try {
-      const lines = await readPdfLines(f);
-      let txs = bank === 'mcb' ? parseMcbStatement(lines) : parseRbcStatement(lines);
-      // Filter ruis + alleen debits (uitgaande betalingen)
-      txs = txs.filter(t => {
-        if (t.type !== 'debit') return false;
-        if (bank === 'mcb') return !isMcbNoise(t);
-        if (bank === 'rbc') return isRbcVendorPayment(t);
-        return false;
-      });
-      setTransactions(txs);
-      await runMatching(txs);
-    } catch (e) {
-      console.error(e);
-      setError(`Fout bij lezen PDF: ${e.message}`);
-    } finally {
-      setParsing(false);
+
+    const allTxs = [];
+    const seen = new Set();  // dedup keys
+
+    for (let i = 0; i < fileList.length; i++) {
+      const f = fileList[i];
+      statuses[i] = { ...statuses[i], status: 'parsing' };
+      setFileStatuses([...statuses]);
+      setParseProgress(i);
+
+      try {
+        const lines = await readPdfLines(f);
+        const fileBank = detectBank(lines);
+        if (!fileBank) {
+          statuses[i] = { ...statuses[i], status: 'error', error: 'Bank niet herkend (geen MCB of RBC)' };
+          setFileStatuses([...statuses]);
+          continue;
+        }
+        let txs = fileBank === 'mcb' ? parseMcbStatement(lines) : parseRbcStatement(lines);
+        txs = txs.filter(t => {
+          if (t.type !== 'debit') return false;
+          if (fileBank === 'mcb') return !isMcbNoise(t);
+          if (fileBank === 'rbc') return isRbcVendorPayment(t);
+          return false;
+        });
+
+        let added = 0, dupes = 0;
+        for (const tx of txs) {
+          // Dedup-key: bank + datum + bedrag (op 2 decimalen)
+          const key = `${fileBank}|${tx.date}|${Math.round(tx.amount * 100)}|${tx.description.substring(0, 40)}`;
+          if (seen.has(key)) { dupes++; continue; }
+          seen.add(key);
+          tx.bank = fileBank;
+          tx.sourceFile = f.name;
+          allTxs.push(tx);
+          added++;
+        }
+
+        statuses[i] = { ...statuses[i], status: 'done', bank: fileBank, count: added, dupes };
+        setFileStatuses([...statuses]);
+      } catch (err) {
+        console.error('Parse error voor', f.name, err);
+        statuses[i] = { ...statuses[i], status: 'error', error: err.message };
+        setFileStatuses([...statuses]);
+      }
     }
+
+    setParseProgress(fileList.length);
+    setTransactions(allTxs);
+    if (allTxs.length > 0) await runMatching(allTxs);
+    setParsing(false);
   }
 
   async function runMatching(txs) {
     setError(null);
     try {
-      // Vendors ophalen
       const vendors = await fetchAllPaginated(() =>
         supabase.from('ap_vendors').select('vendor_id, vendor_name')
       );
@@ -370,7 +427,6 @@ export default function BankMatchPage() {
       }
       const vendorNamesList = Object.entries(vendorByName);
 
-      // Alle invoices
       const invoices = await fetchAllPaginated(() =>
         supabase.from('ap_invoices')
           .select('id, vendor_id, vendor_name, invoice_number, balance, original_amount, currency, status, invoice_date, due_date')
@@ -382,16 +438,15 @@ export default function BankMatchPage() {
         invByVendor[vid][inv.id] = inv;
       }
 
-      // Bestaande candidates
-      const sourceKey = bank === 'mcb' ? 'bank_mcb' : 'bank_rbc';
+      // Existing candidates voor BEIDE banken
       const existing = await fetchAllPaginated(() =>
         supabase.from('ap_match_candidates')
-          .select('invoice_id, source_reference, status')
-          .eq('source', sourceKey)
+          .select('invoice_id, source, source_reference, status')
+          .in('source', ['bank_mcb', 'bank_rbc'])
       );
       const existingKey = new Set(
         existing.filter(e => e.status !== 'rejected')
-          .map(e => `${e.invoice_id}|${e.source_reference || ''}`)
+          .map(e => `${e.source}|${e.invoice_id}|${e.source_reference || ''}`)
       );
 
       const matches = [];
@@ -402,10 +457,11 @@ export default function BankMatchPage() {
       function tally(r) { reasonCounts[r] = (reasonCounts[r] || 0) + 1; }
 
       for (const tx of txs) {
-        const vendorName = bank === 'mcb' ? extractMcbVendor(tx) : extractRbcVendor(tx);
-        const reference = bank === 'mcb' ? extractMcbReference(tx) : extractRbcReference(tx);
+        const txBank = tx.bank;
+        const sourceKey = txBank === 'mcb' ? 'bank_mcb' : 'bank_rbc';
+        const vendorName = txBank === 'mcb' ? extractMcbVendor(tx) : extractRbcVendor(tx);
+        const reference = txBank === 'mcb' ? extractMcbReference(tx) : extractRbcReference(tx);
 
-        // Vendor zoek
         const nameNorm = normalizeName(vendorName);
         let vid = null;
         if (nameNorm && vendorByName[nameNorm]) {
@@ -425,18 +481,18 @@ export default function BankMatchPage() {
           continue;
         }
 
-        const match = tryMatchInvoice(tx, vid, invByVendor, claimedIds);
+        const m = tryMatchInvoice(tx, vid, invByVendor, claimedIds);
         const sourceRef = `${tx.date}_${Math.round(tx.amount * 100)}`;
 
-        if (match.type === 'unique') {
-          const c = match.candidates[0];
-          const isDupe = existingKey.has(`${c.invoice.id}|${sourceRef}`);
-          matches.push({ tx, vendorName, reference, invoice: c.invoice, score: c.score, sourceRef, isDupe, vid });
+        if (m.type === 'unique') {
+          const c = m.candidates[0];
+          const isDupe = existingKey.has(`${sourceKey}|${c.invoice.id}|${sourceRef}`);
+          matches.push({ tx, vendorName, reference, invoice: c.invoice, score: c.score, sourceRef, isDupe, vid, sourceKey });
           claimedIds.add(c.invoice.id);
-        } else if (match.type === 'ambiguous') {
+        } else if (m.type === 'ambiguous') {
           tally('Meerdere mogelijke matches');
-          ambiguous.push({ tx, vendorName, reference, candidates: match.candidates, vid });
-        } else if (match.type === 'no_invoices') {
+          ambiguous.push({ tx, vendorName, reference, candidates: m.candidates, vid });
+        } else if (m.type === 'no_invoices') {
           tally('Vendor herkend, geen openstaande facturen');
           unmatched.push({ tx, vendorName, reference, reason: 'Vendor herkend, geen openstaande facturen' });
         } else {
@@ -467,11 +523,10 @@ export default function BankMatchPage() {
     setImporting(true);
     setError(null);
     try {
-      const sourceKey = bank === 'mcb' ? 'bank_mcb' : 'bank_rbc';
       const toImport = matchResult.matchList.filter(m => !m.isDupe);
       const rows = toImport.map(m => ({
         invoice_id: m.invoice.id,
-        source: sourceKey,
+        source: m.sourceKey,
         source_reference: m.sourceRef,
         matched_amount: m.tx.amount,
         matched_date: m.tx.date,
@@ -479,7 +534,8 @@ export default function BankMatchPage() {
         confidence: 'fuzzy',
         match_score: m.score,
         match_meta: {
-          bank,
+          bank: m.tx.bank,
+          source_file: m.tx.sourceFile || null,
           tx_description: m.tx.description,
           tx_extra_lines: m.tx.extraLines,
           tx_amount: m.tx.amount,
@@ -501,16 +557,19 @@ export default function BankMatchPage() {
         imported += batch.length;
       }
 
+      const fileList = files.map(f => f.name);
+      const mcbCount = rows.filter(r => r.source === 'bank_mcb').length;
+      const rbcCount = rows.filter(r => r.source === 'bank_rbc').length;
       await supabase.from('ap_audit_log').insert({
-        action: `${sourceKey}_imported`,
+        action: 'bank_statements_imported',
         entity_type: 'match_candidates',
         user_id: actualProfile.id,
         user_name: actualProfile.full_name,
         user_role: actualProfile.role,
-        details: { imported, bank, file: file?.name },
+        details: { imported, mcb: mcbCount, rbc: rbcCount, files: fileList },
       });
 
-      setImportDone({ imported });
+      setImportDone({ imported, mcb: mcbCount, rbc: rbcCount });
     } catch (e) {
       console.error(e);
       setError(`Import fout: ${e.message}`);
@@ -548,39 +607,65 @@ export default function BankMatchPage() {
         </div>
       )}
 
-      {/* Bank kiezer + file upload */}
+      {/* Multi-file upload */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
-        <label className="block text-[14px] font-semibold text-[#1B3A5C] mb-2">Bank</label>
-        <div className="flex gap-2 mb-4">
-          {[
-            { key: 'mcb', label: 'MCB (Maduro & Curiel\'s Bank)', icon: '🏦' },
-            { key: 'rbc', label: 'RBC (Royal Bank of Canada)', icon: '🏛️' },
-          ].map(b => (
-            <button key={b.key} onClick={() => { setBank(b.key); setFile(null); setMatchResult(null); }}
-              className={`px-4 py-2 rounded-lg text-[13px] font-medium ${
-                bank === b.key
-                  ? 'bg-[#1B3A5C] text-white'
-                  : 'bg-white border border-gray-200 text-[#1B3A5C]/70 hover:border-[#1B3A5C]/30'
-              }`}>
-              {b.icon} {b.label}
-            </button>
-          ))}
-        </div>
-
         <label className="block text-[14px] font-semibold text-[#1B3A5C] mb-2">
-          Selecteer {bank === 'mcb' ? 'MCB' : 'RBC'} statement PDF
+          Selecteer bank statement PDF(s)
         </label>
-        <input type="file" accept=".pdf" onChange={handleFile} disabled={parsing}
+        <p className="text-[12px] text-[#1B3A5C]/60 mb-3">
+          Selecteer één of meerdere MCB- of RBC-statements tegelijk (Ctrl/Cmd-klik voor meerdere).
+          Bank wordt per bestand automatisch gedetecteerd.
+        </p>
+        <input type="file" accept=".pdf" multiple onChange={handleFiles} disabled={parsing}
           className="text-[13px] file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-[#1B3A5C] file:text-white file:font-semibold file:cursor-pointer hover:file:bg-[#264a73]" />
-        {file && (
-          <p className="text-[11px] text-[#1B3A5C]/50 mt-2">
-            Gekozen: {file.name} ({(file.size / 1024).toFixed(1)} KB)
-          </p>
-        )}
+
         {parsing && (
-          <div className="mt-3 text-[12px] text-[#1B3A5C]/60">
+          <div className="mt-3 text-[12px] text-[#1B3A5C]/70 font-medium">
             <span className="inline-block w-4 h-4 border-2 border-[#1B3A5C]/20 border-t-[#1B3A5C] rounded-full animate-spin mr-2 align-middle" />
-            PDF parseren en matchen...
+            Bestand {parseProgress + 1} van {files.length} verwerken...
+          </div>
+        )}
+
+        {fileStatuses.length > 0 && (
+          <div className="mt-4 border-t border-gray-100 pt-3">
+            <p className="text-[11px] font-semibold text-[#1B3A5C]/70 mb-2">
+              Bestanden ({fileStatuses.length}):
+            </p>
+            <div className="max-h-60 overflow-y-auto space-y-1">
+              {fileStatuses.map((s, i) => (
+                <div key={i} className="flex items-center gap-2 text-[11px] py-1 border-b border-gray-50 last:border-0">
+                  <span className="w-5 flex-shrink-0">
+                    {s.status === 'pending' && <span className="text-gray-400">⌛</span>}
+                    {s.status === 'parsing' && <span className="text-blue-600 animate-pulse">⏳</span>}
+                    {s.status === 'done' && <span className="text-emerald-600">✓</span>}
+                    {s.status === 'error' && <span className="text-rose-600">✗</span>}
+                  </span>
+                  <span className="flex-1 truncate text-[#1B3A5C]/80" title={s.name}>{s.name}</span>
+                  {s.status === 'done' && (
+                    <span className="text-[10px] text-[#1B3A5C]/50 whitespace-nowrap">
+                      <span className={`px-1.5 py-0.5 rounded font-bold mr-1 ${
+                        s.bank === 'mcb' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                      }`}>{s.bank?.toUpperCase()}</span>
+                      {s.count} betalingen
+                      {s.dupes > 0 && <span className="text-[#1B3A5C]/40 ml-1">({s.dupes} dup)</span>}
+                    </span>
+                  )}
+                  {s.status === 'error' && (
+                    <span className="text-[10px] text-rose-700 max-w-[200px] truncate" title={s.error}>{s.error}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {fileStatuses.filter(s => s.status === 'done').length > 0 && (
+              <div className="mt-2 text-[11px] text-[#1B3A5C]/60 flex items-center gap-3">
+                <span>Klaar: {fileStatuses.filter(s => s.status === 'done').length}/{fileStatuses.length}</span>
+                <span className="text-[10px]">
+                  MCB: {fileStatuses.filter(s => s.bank === 'mcb').length} ·
+                  RBC: {fileStatuses.filter(s => s.bank === 'rbc').length} ·
+                  Fout: {fileStatuses.filter(s => s.status === 'error').length}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -661,6 +746,9 @@ export default function BankMatchPage() {
           <h2 className="text-[18px] font-bold text-emerald-800 mb-2">
             ✓ {fmtNum(importDone.imported)} kandidaten geïmporteerd
           </h2>
+          <p className="text-[13px] text-emerald-900 mb-3">
+            MCB: {fmtNum(importDone.mcb)} · RBC: {fmtNum(importDone.rbc)}
+          </p>
           <Link href="/dashboard/finance/ap/match/worklist"
             className="inline-block px-4 py-2 rounded-lg bg-emerald-600 text-white text-[13px] font-semibold hover:bg-emerald-700">
             → Naar afletter-werklijst
@@ -694,6 +782,7 @@ function MatchTable({ matches }) {
       <table className="w-full text-[12px]">
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
+            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Datum</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank vendor</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Portal vendor</th>
@@ -706,6 +795,11 @@ function MatchTable({ matches }) {
         <tbody>
           {matches.map((m, i) => (
             <tr key={i} className="border-b border-gray-100">
+              <td className="p-2">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  m.tx.bank === 'mcb' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                }`}>{m.tx.bank?.toUpperCase()}</span>
+              </td>
               <td className="p-2 text-[#1B3A5C]/70">{fmtDate(m.tx.date)}</td>
               <td className="p-2 text-[11px] text-[#1B3A5C]/80" title={m.tx.description}>
                 {m.vendorName}
@@ -739,6 +833,7 @@ function UnmatchedTable({ rows }) {
       <table className="w-full text-[12px]">
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
+            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Datum</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Geëxtraheerde vendor</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank beschrijving</th>
@@ -749,6 +844,11 @@ function UnmatchedTable({ rows }) {
         <tbody>
           {rows.map((u, i) => (
             <tr key={i} className="border-b border-gray-100">
+              <td className="p-2">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  u.tx.bank === 'mcb' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                }`}>{u.tx.bank?.toUpperCase()}</span>
+              </td>
               <td className="p-2 text-[#1B3A5C]/70 whitespace-nowrap">{fmtDate(u.tx.date)}</td>
               <td className="p-2 text-[11px] text-[#1B3A5C]/80">{u.vendorName || '—'}</td>
               <td className="p-2 text-[11px] text-[#1B3A5C]/60" title={u.tx.extraLines.join(' | ')}>
