@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v9_1.js
+   BESTAND: ap_werkstroom_page_v9_2.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   PATCH v9.2: defensief — alle nieuwe match-code is omhuld met
+     null/undefined checks zodat een fout niet de hele pagina crasht.
+     Plus: fetch error van ap_match_candidates wordt gevangen en
+     gelogd, niet doorgegooid.
 
    PATCH v9.1: InvoiceRow signature fix — matchCandidate prop en
      SOURCE_LABELS_LOCAL ontbraken in v9 (veroorzaakte client-side
@@ -219,20 +224,29 @@ export default function WerkstroomPage() {
           });
         }
       }
-      // Match candidates voor "open" tab — niet voor andere tabs
+      // Match candidates voor "open" tab — niet voor andere tabs.
+      // Gevangen in eigen try/catch zodat een fout hier de hele
+      // werkstroom niet onbruikbaar maakt.
       if (statusKey === 'open') {
-        const cands = await fetchAllPaginated(() =>
-          supabase.from('ap_match_candidates')
-            .select('invoice_id, source, matched_amount, matched_date, matched_currency, confidence, match_score, status')
-            .in('status', ['pending', 'confirmed'])
-        );
-        const byInv = {};
-        for (const c of cands) {
-          if (!byInv[c.invoice_id] || (c.match_score || 0) > (byInv[c.invoice_id].match_score || 0)) {
-            byInv[c.invoice_id] = c;
+        try {
+          const cands = await fetchAllPaginated(() =>
+            supabase.from('ap_match_candidates')
+              .select('invoice_id, source, matched_amount, matched_date, matched_currency, confidence, match_score, status')
+              .in('status', ['pending', 'confirmed'])
+          );
+          const byInv = {};
+          for (const c of (cands || [])) {
+            if (!c || !c.invoice_id) continue;
+            const existing = byInv[c.invoice_id];
+            if (!existing || (c.match_score || 0) > (existing.match_score || 0)) {
+              byInv[c.invoice_id] = c;
+            }
           }
+          setMatchCandidates(byInv);
+        } catch (mcErr) {
+          console.warn('Match-kandidaten konden niet worden geladen:', mcErr);
+          setMatchCandidates({});
         }
-        setMatchCandidates(byInv);
       }
     } catch (e) {
       setError(e.message || 'Onbekende fout bij laden');
@@ -829,7 +843,7 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, matchCandidates }) {
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, matchCandidates = {} }) {
   const showSubmitter = tab === 'approver_review';
   const showApprover = tab === 'approved' || tab === 'at_bank';
   const showRejectionIndicator = tab === 'open';
@@ -861,7 +875,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
               <InvoiceRow key={inv.id} inv={inv} selected={selectedIds.has(inv.id)} onToggle={() => onToggle(inv.id)}
                 showSubmitter={showSubmitter} showApprover={showApprover} userNames={userNames}
                 showRejection={showRejectionIndicator}
-                matchCandidate={showMatchIndicator ? matchCandidates[inv.id] : null} />
+                matchCandidate={showMatchIndicator && matchCandidates ? matchCandidates[inv.id] : null} />
             ))}
           </tbody>
         </table>
@@ -899,9 +913,9 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
               ❗ Afgewezen
             </span>
           )}
-          {matchCandidate && (
+          {matchCandidate && matchCandidate.source && (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 cursor-help"
-              title={`Match uit ${SOURCE_LABELS_LOCAL[matchCandidate.source] || matchCandidate.source} · score ${Math.round(matchCandidate.match_score || 0)} · bedrag ${matchCandidate.matched_amount} ${matchCandidate.matched_currency || ''} · betaaldatum ${matchCandidate.matched_date || '?'} · status ${matchCandidate.status}`}>
+              title={`Match uit ${SOURCE_LABELS_LOCAL[matchCandidate.source] || matchCandidate.source} | score ${Math.round(matchCandidate.match_score || 0)} | bedrag ${matchCandidate.matched_amount || '?'} ${matchCandidate.matched_currency || ''} | betaaldatum ${matchCandidate.matched_date || '?'} | status ${matchCandidate.status || '?'}`}>
               🎯 {SOURCE_LABELS_LOCAL[matchCandidate.source] || matchCandidate.source} {Math.round(matchCandidate.match_score || 0)}
             </span>
           )}
@@ -912,7 +926,7 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
             &ldquo;{rejection.body}&rdquo;
           </div>
         )}
-        {matchCandidate && !rejection && (
+        {matchCandidate && matchCandidate.source && !rejection && (
           <div className="text-[10px] text-emerald-700/80 mt-1">
             Hoogst waarschijnlijk al betaald op {matchCandidate.matched_date ? new Date(matchCandidate.matched_date).toLocaleDateString('nl-NL') : '?'}
           </div>
