@@ -376,10 +376,12 @@ export default function APDashboard() {
             available
           />
           <ActionCard
+            href="/dashboard/finance/ap/match/bank"
             icon="🏦"
             label="Bank Statement Import"
-            desc="MCB + RBC parsing (binnenkort)"
+            desc="MCB + RBC PDF parsen voor automatische matching"
             cleanup
+            available
           />
           <ActionCard
             icon="📨"
