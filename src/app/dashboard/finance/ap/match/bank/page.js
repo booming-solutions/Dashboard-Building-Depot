@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_match_bank_page_v4.js
+   BESTAND: ap_match_bank_page_v5.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/bank/page.js
    (nieuwe folder: match/bank/, hernoemen naar page.js)
 
@@ -10,6 +10,18 @@
    filtert uitgaande betalingen → matcht tegen openstaande
    facturen → toont resultaten → importeert kandidaten naar
    ap_match_candidates met source='bank_mcb' of 'bank_rbc'.
+
+   v5 WIJZIGINGEN:
+   - VENDOR ALIAS-GROEPEN:
+     · Naam-paar: "Axselo" en "Comacord" tellen als 1 bedrijf.
+     · Prefix-groep: alle vendors die met "BDMM" beginnen worden
+       behandeld als 1 groep (8 vendors in portal).
+   - Bij matching wordt over alle vendor_ids binnen de alias-groep
+     gezocht, niet alleen tegen 1 specifieke vendor_id.
+   - Resolutie: bank-vendor "AXSELO" → vindt Comacord in portal.
+     Bank-vendor "BDMM FOO" → kan matchen tegen elke BDMM-vendor.
+   - "🔗 alias" badge in match-tabel als match via alias-groep
+     is gemaakt (transparantie voor AP clerk).
 
    v4 WIJZIGINGEN:
    - Per-rij checkbox bij te importeren kandidaten.
@@ -102,6 +114,113 @@ function normalizeName(s) {
     .replace(/[.,\-'"\(\)&\/]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// ====== VENDOR ALIAS-GROEPEN ======
+// Naam-paren: gegenormaliseerde namen of zoektermen die hetzelfde bedrijf zijn
+const VENDOR_ALIAS_PAIRS = [
+  ['axselo', 'comacord'],
+];
+// Prefixen: alle vendors waarvan de naam met deze prefix begint, zitten in 1 groep
+const VENDOR_PREFIX_GROUPS = ['bdmm'];
+
+// Bouw een vendor_id → Set(vendor_ids) map waar elke set 1 alias-groep is.
+// Vendors zonder alias zitten alleen in hun eigen "groep".
+function buildAliasGroups(vendors) {
+  const groups = {};  // vendor_id → Set
+  for (const v of vendors) {
+    const id = String(v.vendor_id);
+    if (!groups[id]) groups[id] = new Set([id]);
+  }
+
+  function mergeGroups(ids) {
+    if (ids.length < 2) return;
+    const merged = new Set();
+    for (const id of ids) {
+      const g = groups[id] || new Set([id]);
+      for (const x of g) merged.add(x);
+    }
+    for (const id of merged) groups[id] = merged;
+  }
+
+  // Naam-paren: vind vendors die match met elk lid van het paar, merge tot 1 groep
+  for (const pair of VENDOR_ALIAS_PAIRS) {
+    const idsInPair = [];
+    for (const v of vendors) {
+      const norm = normalizeName(v.vendor_name);
+      if (norm && pair.some(p => norm.includes(p))) {
+        idsInPair.push(String(v.vendor_id));
+      }
+    }
+    mergeGroups(idsInPair);
+  }
+
+  // Prefix-groepen: alle vendors waarvan genormaliseerde naam met prefix begint
+  for (const prefix of VENDOR_PREFIX_GROUPS) {
+    const idsInPrefix = [];
+    for (const v of vendors) {
+      const norm = normalizeName(v.vendor_name);
+      if (norm && norm.startsWith(prefix)) {
+        idsInPrefix.push(String(v.vendor_id));
+      }
+    }
+    mergeGroups(idsInPrefix);
+  }
+
+  return groups;
+}
+
+// Bepaal vendor-id en alias-groep o.b.v. bank-vendor naam.
+// Returns: { vid, groupIds: Set, method: 'direct'|'substring'|'alias'|'prefix' }
+function resolveVendorAndGroup(name, vendorByName, vendorNamesList, aliasGroups) {
+  const norm = normalizeName(name);
+  if (!norm) return null;
+
+  function wrap(vid, method, extra) {
+    const vidStr = String(vid);
+    const groupIds = aliasGroups[vidStr] || new Set([vidStr]);
+    return { vid: vidStr, groupIds, method, ...(extra || {}) };
+  }
+
+  // 1. Direct match (exact normalized name)
+  if (vendorByName[norm]) return wrap(vendorByName[norm], 'direct');
+
+  // 2. Substring beide kanten op
+  if (norm.length >= 3) {
+    for (const [vname, id] of vendorNamesList) {
+      if (vname.length >= 3 && (vname.includes(norm) || norm.includes(vname))) {
+        return wrap(id, 'substring');
+      }
+    }
+  }
+
+  // 3. Naam-paar alias: bank-naam "axselo" → vind Comacord in portal
+  for (const pair of VENDOR_ALIAS_PAIRS) {
+    const matchingTerm = pair.find(p => norm.includes(p));
+    if (matchingTerm) {
+      for (const other of pair) {
+        if (other === matchingTerm) continue;
+        for (const [vname, id] of vendorNamesList) {
+          if (vname.includes(other)) {
+            return wrap(id, 'alias', { aliasTerm: matchingTerm, viaTerm: other });
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Prefix-groep: bank-naam "bdmm foo" → eerste BDMM vendor
+  for (const prefix of VENDOR_PREFIX_GROUPS) {
+    if (norm.startsWith(prefix)) {
+      for (const [vname, id] of vendorNamesList) {
+        if (vname.startsWith(prefix)) {
+          return wrap(id, 'prefix', { prefix });
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 // ====== PDF EXTRACTIE ======
@@ -295,9 +414,17 @@ function extractRbcReference(tx) {
   return null;
 }
 
-// ====== MATCHING ENGINE v3 (Curaçao realiteit: bredere tolerantie + score) ======
-function tryMatchInvoice(tx, vendorId, invoicesByVendor, claimedIds) {
-  const invoices = invoicesByVendor[vendorId] ? Object.values(invoicesByVendor[vendorId]) : [];
+// ====== MATCHING ENGINE v5 (alias-groep aware) ======
+function tryMatchInvoice(tx, groupIds, invoicesByVendor, claimedIds) {
+  // Verzamel invoices van ALLE vendor_ids in de alias-groep
+  const invoices = [];
+  for (const vid of groupIds) {
+    if (invoicesByVendor[vid]) {
+      for (const inv of Object.values(invoicesByVendor[vid])) {
+        invoices.push(inv);
+      }
+    }
+  }
   if (invoices.length === 0) return { type: 'no_invoices', candidates: [] };
 
   const txAmount = Math.abs(tx.amount);
@@ -362,8 +489,15 @@ function tryMatchInvoice(tx, vendorId, invoicesByVendor, claimedIds) {
   return { type: 'ambiguous', candidates };
 }
 
-function findNearestInvoice(tx, vendorId, invoicesByVendor) {
-  const invoices = invoicesByVendor[vendorId] ? Object.values(invoicesByVendor[vendorId]) : [];
+function findNearestInvoice(tx, groupIds, invoicesByVendor) {
+  const invoices = [];
+  for (const vid of groupIds) {
+    if (invoicesByVendor[vid]) {
+      for (const inv of Object.values(invoicesByVendor[vid])) {
+        invoices.push(inv);
+      }
+    }
+  }
   if (invoices.length === 0) return null;
   const txAmount = Math.abs(tx.amount);
   let best = null;
@@ -489,6 +623,9 @@ export default function BankMatchPage() {
         invByVendor[vid][inv.id] = inv;
       }
 
+      // Bouw alias-groepen
+      const aliasGroups = buildAliasGroups(vendors);
+
       // Existing candidates voor BEIDE banken
       const existing = await fetchAllPaginated(() =>
         supabase.from('ap_match_candidates')
@@ -513,50 +650,40 @@ export default function BankMatchPage() {
         const vendorName = txBank === 'mcb' ? extractMcbVendor(tx) : extractRbcVendor(tx);
         const reference = txBank === 'mcb' ? extractMcbReference(tx) : extractRbcReference(tx);
 
-        const nameNorm = normalizeName(vendorName);
-        let vid = null;
-        if (nameNorm && vendorByName[nameNorm]) {
-          vid = String(vendorByName[nameNorm]);
-        } else if (nameNorm.length >= 3) {
-          for (const [name, id] of vendorNamesList) {
-            if (name.length >= 3 && (name.includes(nameNorm) || nameNorm.includes(name))) {
-              vid = String(id);
-              break;
-            }
-          }
-        }
-
-        if (!vid) {
+        const resolved = resolveVendorAndGroup(vendorName, vendorByName, vendorNamesList, aliasGroups);
+        if (!resolved) {
           tally('Vendor niet herkend');
           unmatched.push({ tx, vendorName, reference, reason: 'Vendor niet herkend' });
           continue;
         }
+        const { vid, groupIds, method: vMethod, aliasTerm, prefix } = resolved;
+        const isViaAlias = vMethod === 'alias' || vMethod === 'prefix';
+        const aliasInfo = isViaAlias ? (vMethod === 'alias' ? `${aliasTerm} → andere naam` : `prefix ${prefix?.toUpperCase()}`) : null;
 
-        const m = tryMatchInvoice(tx, vid, invByVendor, claimedIds);
+        const m = tryMatchInvoice(tx, groupIds, invByVendor, claimedIds);
         const sourceRef = `${tx.date}_${Math.round(tx.amount * 100)}`;
 
         if (m.type === 'unique') {
           const c = m.candidates[0];
           const isDupe = existingKey.has(`${sourceKey}|${c.invoice.id}|${sourceRef}`);
-          matches.push({ tx, vendorName, reference, invoice: c.invoice, score: c.score, sourceRef, isDupe, vid, sourceKey });
+          matches.push({ tx, vendorName, reference, invoice: c.invoice, score: c.score, sourceRef, isDupe, vid, sourceKey, vMethod, aliasInfo });
           claimedIds.add(c.invoice.id);
         } else if (m.type === 'ambiguous') {
           tally('Meerdere mogelijke matches');
-          ambiguous.push({ tx, vendorName, reference, candidates: m.candidates, vid });
+          ambiguous.push({ tx, vendorName, reference, candidates: m.candidates, vid, vMethod, aliasInfo });
         } else if (m.type === 'no_invoices') {
           tally('Vendor herkend, geen openstaande facturen');
-          unmatched.push({ tx, vendorName, reference, reason: 'Vendor herkend, geen openstaande facturen' });
+          unmatched.push({ tx, vendorName, reference, reason: 'Vendor herkend, geen openstaande facturen', aliasInfo });
         } else {
-          // Geen match binnen 30% — toon dichtstbijzijnde factuur als diagnose
-          const nearest = findNearestInvoice(tx, vid, invByVendor);
+          const nearest = findNearestInvoice(tx, groupIds, invByVendor);
           let hint = null;
           if (nearest) {
             const pct = Math.round(nearest.pct * 100);
             const amt = parseFloat(nearest.invoice.balance);
-            hint = `${nearest.invoice.invoice_number} · ${amt.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${pct}% verschil)`;
+            hint = `${nearest.invoice.vendor_name} · ${nearest.invoice.invoice_number} · ${amt.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${pct}% verschil)`;
           }
           tally('Geen factuur binnen bedrag/tijdsvenster');
-          unmatched.push({ tx, vendorName, reference, reason: 'Geen factuur binnen bedrag/tijdsvenster', hint });
+          unmatched.push({ tx, vendorName, reference, reason: 'Geen factuur binnen bedrag/tijdsvenster', hint, aliasInfo });
         }
       }
 
@@ -605,6 +732,8 @@ export default function BankMatchPage() {
           tx_balance: m.tx.balance,
           extracted_vendor: m.vendorName,
           extracted_reference: m.reference,
+          vendor_match_method: m.vMethod,
+          alias_info: m.aliasInfo,
           invoice_original_amount: m.invoice.original_amount,
           invoice_balance: m.invoice.balance,
         },
@@ -949,7 +1078,15 @@ function MatchTable({ matches, selectedKeys, onToggle, onToggleAll, allSelected,
                   {m.reference && <div className="text-[10px] text-[#1B3A5C]/40 font-mono">ref: {m.reference}</div>}
                 </td>
                 <td className="p-2">
-                  <div className="font-semibold text-[#1B3A5C]">{m.invoice.vendor_name}</div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <div className="font-semibold text-[#1B3A5C]">{m.invoice.vendor_name}</div>
+                    {(m.vMethod === 'alias' || m.vMethod === 'prefix') && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-100 text-violet-700 cursor-help"
+                        title={`Via alias: ${m.aliasInfo}`}>
+                        🔗 alias
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[10px] text-[#1B3A5C]/40 font-mono">#{m.invoice.vendor_id}</div>
                 </td>
                 <td className="p-2 font-mono text-[#1B3A5C]">{m.invoice.invoice_number}</td>
