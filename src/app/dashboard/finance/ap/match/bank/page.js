@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_match_bank_page_v5.js
+   BESTAND: ap_match_bank_page_v6.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/bank/page.js
    (nieuwe folder: match/bank/, hernoemen naar page.js)
 
@@ -10,6 +10,12 @@
    filtert uitgaande betalingen → matcht tegen openstaande
    facturen → toont resultaten → importeert kandidaten naar
    ap_match_candidates met source='bank_mcb' of 'bank_rbc'.
+
+   v6 WIJZIGINGEN:
+   - Vendor alias-groepen leest uit database (ap_vendors.alias_group_id)
+     ipv hardcoded constants. Werkt voor alle huidige + toekomstige
+     groepen die admin via SQL of UI (komt nog) toevoegt.
+   - Vereist eerst ap_schema_v11.sql gedraaid in Supabase.
 
    v5 WIJZIGINGEN:
    - VENDOR ALIAS-GROEPEN:
@@ -116,70 +122,60 @@ function normalizeName(s) {
     .trim();
 }
 
-// ====== VENDOR ALIAS-GROEPEN ======
-// Naam-paren: gegenormaliseerde namen of zoektermen die hetzelfde bedrijf zijn
-const VENDOR_ALIAS_PAIRS = [
-  ['axselo', 'comacord'],
-];
-// Prefixen: alle vendors waarvan de naam met deze prefix begint, zitten in 1 groep
-const VENDOR_PREFIX_GROUPS = ['bdmm'];
+// ====== VENDOR ALIAS-GROEPEN (uit database) ======
+// Vendors hebben een alias_group_id; alle vendors met dezelfde
+// group_id horen bij hetzelfde bedrijf. Wordt centraal beheerd
+// via ap_vendor_alias_groups tabel (admin via SQL of UI).
 
-// Bouw een vendor_id → Set(vendor_ids) map waar elke set 1 alias-groep is.
-// Vendors zonder alias zitten alleen in hun eigen "groep".
+// Bouw vendor_id → Set(vendor_ids) map van vendors uit DB query.
+// Vendors zonder alias_group_id zitten alleen in hun eigen "groep".
 function buildAliasGroups(vendors) {
   const groups = {};  // vendor_id → Set
+  const groupMembers = {};  // alias_group_id → Set van vendor_ids
+
+  // Verzamel per alias_group_id alle vendor_ids
   for (const v of vendors) {
-    const id = String(v.vendor_id);
-    if (!groups[id]) groups[id] = new Set([id]);
+    const vid = String(v.vendor_id);
+    if (v.alias_group_id) {
+      if (!groupMembers[v.alias_group_id]) groupMembers[v.alias_group_id] = new Set();
+      groupMembers[v.alias_group_id].add(vid);
+    }
   }
 
-  function mergeGroups(ids) {
-    if (ids.length < 2) return;
-    const merged = new Set();
-    for (const id of ids) {
-      const g = groups[id] || new Set([id]);
-      for (const x of g) merged.add(x);
+  // Per vendor: pak de full group set, of jezelf
+  for (const v of vendors) {
+    const vid = String(v.vendor_id);
+    if (v.alias_group_id && groupMembers[v.alias_group_id]) {
+      groups[vid] = groupMembers[v.alias_group_id];
+    } else {
+      groups[vid] = new Set([vid]);
     }
-    for (const id of merged) groups[id] = merged;
-  }
-
-  // Naam-paren: vind vendors die match met elk lid van het paar, merge tot 1 groep
-  for (const pair of VENDOR_ALIAS_PAIRS) {
-    const idsInPair = [];
-    for (const v of vendors) {
-      const norm = normalizeName(v.vendor_name);
-      if (norm && pair.some(p => norm.includes(p))) {
-        idsInPair.push(String(v.vendor_id));
-      }
-    }
-    mergeGroups(idsInPair);
-  }
-
-  // Prefix-groepen: alle vendors waarvan genormaliseerde naam met prefix begint
-  for (const prefix of VENDOR_PREFIX_GROUPS) {
-    const idsInPrefix = [];
-    for (const v of vendors) {
-      const norm = normalizeName(v.vendor_name);
-      if (norm && norm.startsWith(prefix)) {
-        idsInPrefix.push(String(v.vendor_id));
-      }
-    }
-    mergeGroups(idsInPrefix);
   }
 
   return groups;
 }
 
 // Bepaal vendor-id en alias-groep o.b.v. bank-vendor naam.
-// Returns: { vid, groupIds: Set, method: 'direct'|'substring'|'alias'|'prefix' }
-function resolveVendorAndGroup(name, vendorByName, vendorNamesList, aliasGroups) {
+// Returns: { vid, groupIds: Set, method, aliasGroupName }
+// De groupIds bevat ALLE vendors in de alias-groep (kan 1 zijn als geen alias).
+function resolveVendorAndGroup(name, vendorByName, vendorNamesList, aliasGroups, vendorById) {
   const norm = normalizeName(name);
   if (!norm) return null;
 
-  function wrap(vid, method, extra) {
+  function wrap(vid, method) {
     const vidStr = String(vid);
     const groupIds = aliasGroups[vidStr] || new Set([vidStr]);
-    return { vid: vidStr, groupIds, method, ...(extra || {}) };
+    const viaAlias = groupIds.size > 1;
+    let aliasGroupName = null;
+    if (viaAlias && vendorById) {
+      // Verzamel namen van alle vendors in de groep voor info
+      const names = [];
+      for (const gid of groupIds) {
+        if (vendorById[gid]?.vendor_name) names.push(vendorById[gid].vendor_name);
+      }
+      aliasGroupName = names.slice(0, 3).join(' / ') + (names.length > 3 ? ` +${names.length - 3} meer` : '');
+    }
+    return { vid: vidStr, groupIds, method, viaAlias, aliasGroupName };
   }
 
   // 1. Direct match (exact normalized name)
@@ -190,32 +186,6 @@ function resolveVendorAndGroup(name, vendorByName, vendorNamesList, aliasGroups)
     for (const [vname, id] of vendorNamesList) {
       if (vname.length >= 3 && (vname.includes(norm) || norm.includes(vname))) {
         return wrap(id, 'substring');
-      }
-    }
-  }
-
-  // 3. Naam-paar alias: bank-naam "axselo" → vind Comacord in portal
-  for (const pair of VENDOR_ALIAS_PAIRS) {
-    const matchingTerm = pair.find(p => norm.includes(p));
-    if (matchingTerm) {
-      for (const other of pair) {
-        if (other === matchingTerm) continue;
-        for (const [vname, id] of vendorNamesList) {
-          if (vname.includes(other)) {
-            return wrap(id, 'alias', { aliasTerm: matchingTerm, viaTerm: other });
-          }
-        }
-      }
-    }
-  }
-
-  // 4. Prefix-groep: bank-naam "bdmm foo" → eerste BDMM vendor
-  for (const prefix of VENDOR_PREFIX_GROUPS) {
-    if (norm.startsWith(prefix)) {
-      for (const [vname, id] of vendorNamesList) {
-        if (vname.startsWith(prefix)) {
-          return wrap(id, 'prefix', { prefix });
-        }
       }
     }
   }
@@ -603,12 +573,14 @@ export default function BankMatchPage() {
     setError(null);
     try {
       const vendors = await fetchAllPaginated(() =>
-        supabase.from('ap_vendors').select('vendor_id, vendor_name')
+        supabase.from('ap_vendors').select('vendor_id, vendor_name, alias_group_id')
       );
       const vendorByName = {};
+      const vendorById = {};
       for (const v of vendors) {
         const n = normalizeName(v.vendor_name);
         if (n) vendorByName[n] = v.vendor_id;
+        vendorById[String(v.vendor_id)] = v;
       }
       const vendorNamesList = Object.entries(vendorByName);
 
@@ -650,15 +622,14 @@ export default function BankMatchPage() {
         const vendorName = txBank === 'mcb' ? extractMcbVendor(tx) : extractRbcVendor(tx);
         const reference = txBank === 'mcb' ? extractMcbReference(tx) : extractRbcReference(tx);
 
-        const resolved = resolveVendorAndGroup(vendorName, vendorByName, vendorNamesList, aliasGroups);
+        const resolved = resolveVendorAndGroup(vendorName, vendorByName, vendorNamesList, aliasGroups, vendorById);
         if (!resolved) {
           tally('Vendor niet herkend');
           unmatched.push({ tx, vendorName, reference, reason: 'Vendor niet herkend' });
           continue;
         }
-        const { vid, groupIds, method: vMethod, aliasTerm, prefix } = resolved;
-        const isViaAlias = vMethod === 'alias' || vMethod === 'prefix';
-        const aliasInfo = isViaAlias ? (vMethod === 'alias' ? `${aliasTerm} → andere naam` : `prefix ${prefix?.toUpperCase()}`) : null;
+        const { vid, groupIds, method: vMethod, viaAlias, aliasGroupName } = resolved;
+        const aliasInfo = viaAlias ? `Groep: ${aliasGroupName}` : null;
 
         const m = tryMatchInvoice(tx, groupIds, invByVendor, claimedIds);
         const sourceRef = `${tx.date}_${Math.round(tx.amount * 100)}`;
@@ -1080,9 +1051,9 @@ function MatchTable({ matches, selectedKeys, onToggle, onToggleAll, allSelected,
                 <td className="p-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <div className="font-semibold text-[#1B3A5C]">{m.invoice.vendor_name}</div>
-                    {(m.vMethod === 'alias' || m.vMethod === 'prefix') && (
+                    {m.aliasInfo && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-100 text-violet-700 cursor-help"
-                        title={`Via alias: ${m.aliasInfo}`}>
+                        title={m.aliasInfo}>
                         🔗 alias
                       </span>
                     )}
