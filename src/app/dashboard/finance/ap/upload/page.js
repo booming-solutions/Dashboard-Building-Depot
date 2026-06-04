@@ -1,9 +1,15 @@
 /* ============================================================
-   BESTAND: ap_upload_page_v3.js
+   BESTAND: ap_upload_page_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/upload/page.js
    (overschrijft v2, hernoemen naar page.js bij upload)
 
    WIJZIGINGEN T.O.V. v2:
+   - PROJECT CLEAN UP integratie: bij elke upload worden confirmed
+     match candidates van invoices die uit de CSV verdwijnen
+     automatisch op status='processed' gezet. AP clerks hoeven
+     niets meer handmatig te markeren — als ze in Eagle hebben
+     afgeletterd, ziet de portal dat bij de volgende upload.
+
    - Detecteert nu Eagle-sync van auto_matched facturen:
      als een voucher in status='auto_matched' niet meer in de
      nieuwe Compass-export staat, betekent dat Eagle de aflettering
@@ -239,7 +245,37 @@ async function computeDiff(supabase, parsedInvoices) {
     }
   }
 
-  return { newInvoices, updatedInvoices, unchanged, disappearedInvoices, newVendors, skipped, eagleSyncedInvoices };
+  // === PROJECT CLEAN UP: confirmed match candidates die uit CSV verdwijnen ===
+  // Haal alle confirmed candidates op (klein aantal, ~100en)
+  const confirmedCandidates = await fetchAllPaginated(() =>
+    supabase.from('ap_match_candidates')
+      .select('id, invoice_id')
+      .eq('status', 'confirmed')
+  );
+
+  // Voor ELKE confirmed candidate: check of bijbehorende invoice uit CSV verdwenen is.
+  // De invoice kan al op 'paid' status staan (na confirm), of nog niet.
+  // We hebben hun voucher nodig — extra fetch om die te krijgen.
+  let processedCandidates = [];
+  if (confirmedCandidates.length > 0) {
+    const invIds = [...new Set(confirmedCandidates.map(c => c.invoice_id))];
+    // Haal voucher op voor deze invoices
+    const invsForCandidates = await fetchAllPaginated(() =>
+      supabase.from('ap_invoices')
+        .select('id, voucher')
+        .in('id', invIds.slice(0, 1000))  // safety limit
+    );
+    const voucherByInv = {};
+    for (const inv of invsForCandidates) voucherByInv[inv.id] = inv.voucher;
+
+    // Filter candidates wiens invoice voucher NIET in nieuwe CSV staat
+    processedCandidates = confirmedCandidates.filter(c => {
+      const voucher = voucherByInv[c.invoice_id];
+      return voucher && !parsedVouchers.has(voucher);
+    });
+  }
+
+  return { newInvoices, updatedInvoices, unchanged, disappearedInvoices, newVendors, skipped, eagleSyncedInvoices, processedCandidates };
 }
 
 // =====================================================================
@@ -385,6 +421,41 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
     }
   }
 
+  // === PROJECT CLEAN UP: mark candidates as processed ===
+  if (diff.processedCandidates && diff.processedCandidates.length > 0) {
+    const candIds = diff.processedCandidates.map(c => c.id);
+    const now2 = new Date().toISOString();
+    const { error: pErr } = await supabase
+      .from('ap_match_candidates')
+      .update({
+        status: 'processed',
+        processed_at: now2,
+        processed_by: currentUser.id,
+      })
+      .in('id', candIds);
+    if (pErr) errors.push(`Mark candidates processed: ${pErr.message}`);
+
+    // Audit log per processed candidate
+    const auditCands = diff.processedCandidates.map(c => ({
+      action: 'match_auto_processed',
+      entity_type: 'invoice',
+      entity_id: c.invoice_id,
+      user_id: currentUser.id,
+      user_name: currentUser.full_name,
+      user_role: currentUser.role,
+      details: {
+        candidate_id: c.id,
+        previous_status: 'confirmed',
+        new_status: 'processed',
+        detected_via_upload: filename,
+        note: 'Factuur verdwenen uit Compass CSV — AP clerk heeft Eagle-boeking voltooid',
+      },
+    }));
+    if (auditCands.length > 0) {
+      await supabase.from('ap_audit_log').insert(auditCands);
+    }
+  }
+
   await supabase.from('ap_audit_log').insert({
     action: 'upload_completed',
     entity_type: 'upload',
@@ -398,6 +469,8 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
       updated_invoices: diff.updatedInvoices.length,
       disappeared_invoices: diff.disappearedInvoices.length,
       new_vendors: diff.newVendors.length,
+      processed_candidates: (diff.processedCandidates || []).length,
+      eagle_synced: (diff.eagleSyncedInvoices || []).length,
     },
   });
 
@@ -635,6 +708,20 @@ function ReviewStage({ parsed, diff, filename, onConfirm, onCancel }) {
           <p className="text-[12px] text-emerald-800">
             Deze stonden in de portal op &quot;auto_matched&quot; en zijn niet meer in deze export aanwezig.
             Ze worden bij bevestiging automatisch op status &quot;Betaald&quot; gezet.
+          </p>
+        </div>
+      )}
+
+      {diff.processedCandidates && diff.processedCandidates.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p className="text-[13px] font-semibold text-amber-900 mb-1">
+            🧹 {diff.processedCandidates.length} afletter-{diff.processedCandidates.length === 1 ? 'kandidaat' : 'kandidaten'} klaar voor verwerking
+          </p>
+          <p className="text-[12px] text-amber-800">
+            Deze stonden in &quot;Te verwerken&quot; op de afletter-werklijst — de bijbehorende
+            facturen zijn nu uit de Compass export verdwenen, dus de AP clerk heeft ze in
+            Eagle afgeletterd. Bij bevestiging worden ze automatisch op &quot;Verwerkt&quot;
+            gezet (Project Clean Up).
           </p>
         </div>
       )}
