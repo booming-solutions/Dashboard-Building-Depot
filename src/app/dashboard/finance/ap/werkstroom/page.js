@@ -1,7 +1,16 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v10.js
+   BESTAND: ap_werkstroom_page_v11.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   v11 WIJZIGINGEN:
+   - Multi-select voor vendors (search + checkboxes); handig bij
+     BDMM/alias-groepen (typ "bdmm", selecteer alle 8 in 1 klik).
+   - Klikbare kolom-headers voor sorteren: Vendor / Factuurdatum
+     / Origineel / Saldo / Vervaldatum. Klik op header → sorteer,
+     klik nogmaals → omdraaien. Bedrag standaard groot→klein.
+   - Excel export-knop bovenaan voor huidige (gefilterde) lijst.
+     Vereist "xlsx" in package.json (al aanwezig).
 
    v10: ROLLBACK match-indicator op tab "Openstaand" — gaf bij Jeroen
      'ReferenceError: matchCandidate is not defined' in production build,
@@ -133,7 +142,8 @@ export default function WerkstroomPage() {
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [vendorSelected, setVendorSelected] = useState('');
+  const [vendorSelected, setVendorSelected] = useState(new Set());
+  const [exporting, setExporting] = useState(false);
   const [allVendors, setAllVendors] = useState([]);
   const [sortBy, setSortBy] = useState('due_date');
   const [sortDesc, setSortDesc] = useState(false);
@@ -247,9 +257,9 @@ export default function WerkstroomPage() {
   const currentInvoices = useMemo(() => {
     const rows = tabRows[tab] || [];
     let filtered = rows;
-    // Vendor dropdown filter (snelle filter op vendor_id)
-    if (vendorSelected) {
-      filtered = filtered.filter(r => String(r.vendor_id) === vendorSelected);
+    // Vendor multi-select filter
+    if (vendorSelected.size > 0) {
+      filtered = filtered.filter(r => vendorSelected.has(String(r.vendor_id)));
     }
     // Tekst-zoek (debounced) — niet vendor (die gaat via dropdown)
     if (debouncedSearch.trim()) {
@@ -286,12 +296,60 @@ export default function WerkstroomPage() {
     });
   }, [tabRows, tab, debouncedSearch, vendorSelected, sortBy, sortDesc, dateField, dateFrom, dateTo]);
 
-  const hasFilters = vendorSelected || searchInput.trim() || dateFrom || dateTo;
+  const hasFilters = vendorSelected.size > 0 || searchInput.trim() || dateFrom || dateTo;
   function clearFilters() {
     setSearchInput('');
-    setVendorSelected('');
+    setVendorSelected(new Set());
     setDateFrom('');
     setDateTo('');
+  }
+
+  function handleSort(field) {
+    if (sortBy === field) {
+      setSortDesc(!sortDesc);
+    } else {
+      setSortBy(field);
+      // Standaard: bedrag groot→klein, anderen klein→groot
+      setSortDesc(field === 'amount');
+    }
+  }
+
+  async function exportToExcel() {
+    if (currentInvoices.length === 0) return;
+    setExporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const tabLabel = STATUS_TABS.find(t => t.key === tab)?.label || tab;
+      const rows = currentInvoices.map(i => ({
+        'Vendor': i.vendor_name,
+        'Vendor #': i.vendor_id,
+        'Factuurnummer': i.invoice_number,
+        'Voucher': i.voucher,
+        'Type': i.type,
+        'Factuurdatum': i.invoice_date || '',
+        'Vervaldatum': i.due_date || '',
+        'Referentie': i.reference || '',
+        'PO Nummer': i.po_number || '',
+        'Currency': i.currency || '',
+        'Origineel bedrag': parseFloat(i.original_amount) || null,
+        'Saldo': parseFloat(i.balance),
+        'Status': i.status,
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [
+        { wch: 30 }, { wch: 9 }, { wch: 18 }, { wch: 10 }, { wch: 14 },
+        { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 6 },
+        { wch: 14 }, { wch: 14 }, { wch: 16 },
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, tabLabel);
+      const dt = new Date().toISOString().substring(0, 10).replace(/-/g, '');
+      XLSX.writeFile(wb, `werkstroom_${tab}_${dt}.xlsx`);
+    } catch (e) {
+      setError(`Export fout: ${e.message}`);
+    } finally {
+      setExporting(false);
+    }
   }
 
   function toggleSelect(id) {
@@ -505,18 +563,10 @@ export default function WerkstroomPage() {
       {/* Filter & sort */}
       <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 shadow-sm space-y-2">
         <div className="flex items-center gap-3 flex-wrap">
-          <select
-            value={vendorSelected}
-            onChange={e => setVendorSelected(e.target.value)}
-            className="px-2 py-1.5 rounded-lg border border-gray-200 text-[13px] bg-white focus:outline-none focus:border-[#1B3A5C] cursor-pointer min-w-[200px] max-w-[280px]"
-          >
-            <option value="">Alle vendors ({allVendors.length})</option>
-            {allVendors.map(v => (
-              <option key={v.vendor_id} value={v.vendor_id}>
-                {v.vendor_name} (#{v.vendor_id})
-              </option>
-            ))}
-          </select>
+          <VendorMultiSelect
+            allVendors={allVendors}
+            selected={vendorSelected}
+            onChange={setVendorSelected} />
           <input
             type="text"
             value={searchInput}
@@ -524,19 +574,17 @@ export default function WerkstroomPage() {
             placeholder="Zoek op factuur, voucher, referentie, PO..."
             className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] focus:outline-none focus:border-[#1B3A5C]"
           />
-          <div className="flex items-center gap-1.5 text-[12px] text-[#1B3A5C]/60">
-            <span>Sorteer:</span>
-            <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer">
-              <option value="due_date">Vervaldatum</option>
-              <option value="invoice_date">Factuurdatum</option>
-              <option value="amount">Bedrag</option>
-              <option value="vendor">Vendor</option>
-            </select>
-            <button onClick={() => setSortDesc(!sortDesc)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] hover:bg-gray-50" title={sortDesc ? 'Aflopend' : 'Oplopend'}>
-              {sortDesc ? '↓' : '↑'}
-            </button>
-          </div>
-          <div className="text-[11px] text-[#1B3A5C]/50 ml-auto whitespace-nowrap">
+          <span className="text-[11px] text-[#1B3A5C]/40 italic">
+            Klik op een kolom-header om te sorteren
+          </span>
+          <button
+            onClick={exportToExcel}
+            disabled={exporting || currentInvoices.length === 0}
+            className="ml-auto px-3 py-1.5 rounded-lg bg-[#1B3A5C] text-white text-[12px] font-semibold hover:bg-[#264a73] transition-all disabled:opacity-50"
+            title="Exporteer huidige (gefilterde) lijst naar Excel">
+            {exporting ? 'Exporteren...' : '📥 Excel'}
+          </button>
+          <div className="text-[11px] text-[#1B3A5C]/50 whitespace-nowrap">
             {fmtNum(currentInvoices.length)} regels · XCG {fmtMoney(currentTotal)}
           </div>
         </div>
@@ -621,6 +669,9 @@ export default function WerkstroomPage() {
           allSelected={selectedIds.size > 0 && selectedIds.size === currentInvoices.length}
           tab={tab}
           userNames={userNames}
+          sortBy={sortBy}
+          sortDesc={sortDesc}
+          onSort={handleSort}
         />
       )}
     </div>
@@ -813,7 +864,7 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames }) {
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, sortBy, sortDesc, onSort }) {
   const showSubmitter = tab === 'approver_review';
   const showApprover = tab === 'approved' || tab === 'at_bank';
   const showRejectionIndicator = tab === 'open';
@@ -826,15 +877,15 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
               <th className="w-10 p-2">
                 <input type="checkbox" checked={allSelected} onChange={() => allSelected ? onDeselectAll() : onSelectAll()} className="cursor-pointer" />
               </th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Vendor</th>
+              <SortableHeader field="vendor" label="Vendor" current={sortBy} desc={sortDesc} onSort={onSort} />
               <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Factuur</th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Factuurdatum</th>
+              <SortableHeader field="invoice_date" label="Factuurdatum" current={sortBy} desc={sortDesc} onSort={onSort} />
               <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Referentie</th>
               <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">PO Nummer</th>
               <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Type</th>
               <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Origineel</th>
-              <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Saldo</th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Vervaldatum</th>
+              <SortableHeader field="amount" label="Saldo" current={sortBy} desc={sortDesc} onSort={onSort} align="right" />
+              <SortableHeader field="due_date" label="Vervaldatum" current={sortBy} desc={sortDesc} onSort={onSort} />
               {showSubmitter && <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Ingediend door</th>}
               {showApprover && <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Goedgekeurd door</th>}
             </tr>
@@ -915,5 +966,127 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
       {showSubmitter && <td className="p-2 text-[#1B3A5C]/70 text-[11px]">{inv.submitted_by ? (userNames[inv.submitted_by] || '—') : '—'}</td>}
       {showApprover && <td className="p-2 text-[#1B3A5C]/70 text-[11px]">{inv.approved_by ? (userNames[inv.approved_by] || '—') : '—'}</td>}
     </tr>
+  );
+}
+
+function VendorMultiSelect({ allVendors, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allVendors;
+    return allVendors.filter(v =>
+      (v.vendor_name || '').toLowerCase().includes(q) ||
+      String(v.vendor_id).includes(q)
+    );
+  }, [allVendors, search]);
+
+  function toggle(vid) {
+    const next = new Set(selected);
+    const key = String(vid);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    onChange(next);
+  }
+
+  function selectAllFiltered() {
+    const next = new Set(selected);
+    for (const v of filtered) next.add(String(v.vendor_id));
+    onChange(next);
+  }
+
+  function deselectAllFiltered() {
+    const next = new Set(selected);
+    for (const v of filtered) next.delete(String(v.vendor_id));
+    onChange(next);
+  }
+
+  function clearAll() { onChange(new Set()); }
+
+  // Sluit dropdown bij klik buiten
+  useEffect(() => {
+    if (!open) return;
+    function handler(e) {
+      if (!e.target.closest('[data-vmselect]')) setOpen(false);
+    }
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const label = selected.size === 0
+    ? `Alle vendors (${allVendors.length})`
+    : `${selected.size} vendor${selected.size === 1 ? '' : 's'} geselecteerd`;
+
+  return (
+    <div className="relative" data-vmselect>
+      <button onClick={() => setOpen(!open)}
+        className="px-2 py-1.5 rounded-lg border border-gray-200 text-[13px] bg-white focus:outline-none cursor-pointer min-w-[220px] text-left flex items-center justify-between gap-2 hover:border-[#1B3A5C]/30">
+        <span className="truncate">{label}</span>
+        <span className="text-[10px] text-[#1B3A5C]/40 flex-shrink-0">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 bg-white shadow-xl rounded-lg border border-gray-200 w-[360px] max-w-[90vw]">
+          <div className="p-2 border-b border-gray-100">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Zoek vendor (bv. BDMM)..."
+              className="w-full px-2 py-1.5 rounded border border-gray-200 text-[12px] focus:outline-none focus:border-[#1B3A5C]"
+              autoFocus />
+          </div>
+          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-gray-100 text-[11px]">
+            <button onClick={selectAllFiltered}
+              className="px-2 py-1 rounded bg-emerald-100 text-emerald-800 font-semibold hover:bg-emerald-200">
+              + alle {filtered.length} zichtbaar
+            </button>
+            {filtered.length < allVendors.length && (
+              <button onClick={deselectAllFiltered}
+                className="px-2 py-1 rounded bg-gray-100 text-[#1B3A5C]/70 font-semibold hover:bg-gray-200">
+                − zichtbaar
+              </button>
+            )}
+            {selected.size > 0 && (
+              <button onClick={clearAll}
+                className="px-2 py-1 rounded bg-rose-100 text-rose-700 font-semibold hover:bg-rose-200">
+                wis alles ({selected.size})
+              </button>
+            )}
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {filtered.length === 0 && (
+              <p className="text-[12px] text-[#1B3A5C]/40 italic p-3 text-center">Geen vendors gevonden</p>
+            )}
+            {filtered.map(v => {
+              const key = String(v.vendor_id);
+              const isChecked = selected.has(key);
+              return (
+                <label key={v.vendor_id}
+                  className={`flex items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-gray-50 cursor-pointer ${isChecked ? 'bg-blue-50/40' : ''}`}>
+                  <input type="checkbox" checked={isChecked} onChange={() => toggle(v.vendor_id)} className="cursor-pointer" />
+                  <span className="flex-1 truncate text-[#1B3A5C]/80">{v.vendor_name}</span>
+                  <span className="text-[10px] font-mono text-[#1B3A5C]/40">#{v.vendor_id}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SortableHeader({ field, label, current, desc, onSort, align }) {
+  const isActive = current === field;
+  const arrow = isActive ? (desc ? ' ↓' : ' ↑') : '';
+  const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  return (
+    <th onClick={() => onSort(field)}
+      className={`p-2 ${alignClass} font-semibold cursor-pointer select-none transition-colors ${
+        isActive ? 'text-[#1B3A5C]' : 'text-[#1B3A5C]/70 hover:text-[#1B3A5C]'
+      }`}>
+      {label}{arrow}
+    </th>
   );
 }
