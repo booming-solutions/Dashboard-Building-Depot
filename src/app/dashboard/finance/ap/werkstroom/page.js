@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v9.js
+   BESTAND: ap_werkstroom_page_v9_1.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   PATCH v9.1: InvoiceRow signature fix — matchCandidate prop en
+     SOURCE_LABELS_LOCAL ontbraken in v9 (veroorzaakte client-side
+     exception bij tab "Openstaand" met match-kandidaten).
 
    WIJZIGINGEN T.O.V. v8:
    - "🎯 Match" badge op tab "Openstaand" voor facturen die een
@@ -866,7 +870,8 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
   );
 }
 
-function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection }) {
+function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection, matchCandidate }) {
+  const SOURCE_LABELS_LOCAL = { pcs: 'PCS', bank_mcb: 'MCB', bank_rbc: 'RBC', vendor_statement: 'V.stmt', manual: 'Hand' };
   const bal = parseFloat(inv.balance);
   const isCredit = bal < 0;
   const daysUntil = daysUntilDue(inv.due_date);
