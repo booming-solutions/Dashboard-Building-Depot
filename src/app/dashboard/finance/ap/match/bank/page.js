@@ -158,17 +158,16 @@ function buildAliasGroups(vendors) {
 // Bepaal vendor-id en alias-groep o.b.v. bank-vendor naam.
 // Returns: { vid, groupIds: Set, method, aliasGroupName }
 // De groupIds bevat ALLE vendors in de alias-groep (kan 1 zijn als geen alias).
-function resolveVendorAndGroup(name, vendorByName, vendorNamesList, aliasGroups, vendorById) {
+function resolveVendorAndGroup(name, vendorByName, vendorNamesList, aliasGroups, vendorById, externalNameIndex) {
   const norm = normalizeName(name);
   if (!norm) return null;
 
   function wrap(vid, method) {
     const vidStr = String(vid);
     const groupIds = aliasGroups[vidStr] || new Set([vidStr]);
-    const viaAlias = groupIds.size > 1;
+    const viaAlias = groupIds.size > 1 || method === 'external_alias';
     let aliasGroupName = null;
     if (viaAlias && vendorById) {
-      // Verzamel namen van alle vendors in de groep voor info
       const names = [];
       for (const gid of groupIds) {
         if (vendorById[gid]?.vendor_name) names.push(vendorById[gid].vendor_name);
@@ -186,6 +185,15 @@ function resolveVendorAndGroup(name, vendorByName, vendorNamesList, aliasGroups,
     for (const [vname, id] of vendorNamesList) {
       if (vname.length >= 3 && (vname.includes(norm) || norm.includes(vname))) {
         return wrap(id, 'substring');
+      }
+    }
+  }
+
+  // 3. External names: bank-naam ("axselo") in groep's external_names → vind eerste portal-vendor in die groep
+  if (externalNameIndex) {
+    for (const [extName, groupVendorId] of externalNameIndex) {
+      if (norm.includes(extName) || extName.includes(norm)) {
+        return wrap(groupVendorId, 'external_alias');
       }
     }
   }
@@ -598,6 +606,21 @@ export default function BankMatchPage() {
       // Bouw alias-groepen
       const aliasGroups = buildAliasGroups(vendors);
 
+      // Bouw external_names index: [normalized_external_name, first_vendor_id_in_group]
+      const { data: groupRows } = await supabase
+        .from('ap_vendor_alias_groups')
+        .select('id, external_names');
+      const externalNameIndex = [];
+      for (const g of (groupRows || [])) {
+        if (!g.external_names || g.external_names.length === 0) continue;
+        const firstVendor = vendors.find(v => v.alias_group_id === g.id);
+        if (!firstVendor) continue;
+        for (const ext of g.external_names) {
+          const normExt = normalizeName(ext);
+          if (normExt) externalNameIndex.push([normExt, String(firstVendor.vendor_id)]);
+        }
+      }
+
       // Existing candidates voor BEIDE banken
       const existing = await fetchAllPaginated(() =>
         supabase.from('ap_match_candidates')
@@ -622,7 +645,7 @@ export default function BankMatchPage() {
         const vendorName = txBank === 'mcb' ? extractMcbVendor(tx) : extractRbcVendor(tx);
         const reference = txBank === 'mcb' ? extractMcbReference(tx) : extractRbcReference(tx);
 
-        const resolved = resolveVendorAndGroup(vendorName, vendorByName, vendorNamesList, aliasGroups, vendorById);
+        const resolved = resolveVendorAndGroup(vendorName, vendorByName, vendorNamesList, aliasGroups, vendorById, externalNameIndex);
         if (!resolved) {
           tally('Vendor niet herkend');
           unmatched.push({ tx, vendorName, reference, reason: 'Vendor niet herkend' });

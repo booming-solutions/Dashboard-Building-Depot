@@ -98,29 +98,58 @@ export default function AutoMatchPage() {
         return q;
       });
 
-      const byVendor = {};
+      // Vendors + alias-groepen ophalen
+      const vendors = await fetchAllPaginated(() =>
+        supabase.from('ap_vendors').select('vendor_id, vendor_name, alias_group_id')
+      );
+      const vendorByIdLookup = {};
+      for (const v of vendors) vendorByIdLookup[String(v.vendor_id)] = v;
+
+      const { data: groupNames } = await supabase
+        .from('ap_vendor_alias_groups').select('id, name');
+      const aliasGroupName = {};
+      for (const g of (groupNames || [])) aliasGroupName[g.id] = g.name;
+
+      // Groepering: per alias_group_id (of vendor_id als geen alias)
+      const byGroup = {};
       for (const inv of openInvoices) {
-        if (!byVendor[inv.vendor_id]) {
-          byVendor[inv.vendor_id] = { id: inv.vendor_id, name: inv.vendor_name, invoices: [] };
+        const vRec = vendorByIdLookup[String(inv.vendor_id)];
+        const aliasId = vRec?.alias_group_id || null;
+        const groupKey = aliasId ? `alias:${aliasId}` : `vendor:${inv.vendor_id}`;
+        if (!byGroup[groupKey]) {
+          byGroup[groupKey] = {
+            key: groupKey,
+            isAlias: !!aliasId,
+            displayName: aliasId
+              ? (aliasGroupName[aliasId] || 'Alias groep')
+              : (vRec?.vendor_name || inv.vendor_name),
+            vendorIds: new Set(),
+            vendorNames: new Set(),
+            invoices: [],
+          };
         }
-        byVendor[inv.vendor_id].invoices.push(inv);
+        byGroup[groupKey].invoices.push(inv);
+        byGroup[groupKey].vendorIds.add(String(inv.vendor_id));
+        byGroup[groupKey].vendorNames.add(inv.vendor_name);
       }
 
-      const vendorsWithPairs = [];
-      for (const v of Object.values(byVendor)) {
-        const pairs = findPairsForVendor(v.invoices);
+      const groupsWithPairs = [];
+      for (const g of Object.values(byGroup)) {
+        const pairs = findPairsForVendor(g.invoices);
         if (pairs.length > 0) {
-          vendorsWithPairs.push({
-            id: v.id,
-            name: v.name,
+          groupsWithPairs.push({
+            id: g.key,
+            name: g.displayName,
+            isAlias: g.isAlias,
+            vendorCount: g.vendorIds.size,
+            vendorNames: Array.from(g.vendorNames),
             pairs,
             totalAmount: pairs.reduce((s, p) => s + Math.abs(p.amount), 0),
           });
         }
       }
-      vendorsWithPairs.sort((a, b) => b.totalAmount - a.totalAmount);
-
-      setVendors(vendorsWithPairs);
+      groupsWithPairs.sort((a, b) => b.totalAmount - a.totalAmount);
+      setVendors(groupsWithPairs);
     } catch (e) {
       setError(e.message || 'Onbekende fout');
     } finally {
@@ -344,7 +373,15 @@ function VendorCard({ vendor, vIdx, busyPair, donePair, onConfirmPair, onConfirm
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-base">📦</span>
-            <h3 className="text-[15px] font-bold text-[#1B3A5C]">{vendor.name}</h3>
+            <h3 className="text-[15px] font-bold text-[#1B3A5C] flex items-center gap-2 flex-wrap">
+              {vendor.name}
+              {vendor.isAlias && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-100 text-violet-700 cursor-help"
+                  title={`Alias-groep met ${vendor.vendorCount} vendors: ${vendor.vendorNames.join(', ')}`}>
+                  🔗 alias-groep · {vendor.vendorCount} vendors
+                </span>
+              )}
+            </h3>
             <span className="text-[11px] text-[#1B3A5C]/40 font-mono">#{vendor.id}</span>
           </div>
           <p className="text-[12px] text-[#1B3A5C]/60 mt-0.5">
@@ -390,8 +427,8 @@ function PairRow({ pair, done, busy, onConfirm }) {
   return (
     <div className={`rounded-lg border p-3 ${done ? 'bg-emerald-50 border-emerald-200' : 'bg-[#f8fafc] border-gray-200'} flex items-center gap-3 flex-wrap`}>
       <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <InvoiceRow label="+" inv={pair.positive} positive />
-        <InvoiceRow label="−" inv={pair.negative} positive={false} />
+        <InvoiceRow label="+" inv={pair.positive} positive showVendor={vendor.isAlias} />
+        <InvoiceRow label="−" inv={pair.negative} positive={false} showVendor={vendor.isAlias} />
       </div>
       <div className="flex-shrink-0">
         {done ? (
@@ -410,7 +447,7 @@ function PairRow({ pair, done, busy, onConfirm }) {
   );
 }
 
-function InvoiceRow({ label, inv, positive }) {
+function InvoiceRow({ label, inv, positive, showVendor }) {
   return (
     <div className="flex items-center gap-2 text-[12px]">
       <span className={`w-5 h-5 rounded flex items-center justify-center font-bold flex-shrink-0 ${positive ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
@@ -423,6 +460,7 @@ function InvoiceRow({ label, inv, positive }) {
         </p>
         <p className="text-[11px] text-[#1B3A5C]/60">
           {inv.type} · datum {fmtDate(inv.invoice_date)}
+          {showVendor && <span className="ml-1 italic">· {inv.vendor_name} (#{inv.vendor_id})</span>}
         </p>
       </div>
       <p className={`font-mono font-bold text-[13px] ${positive ? 'text-emerald-700' : 'text-rose-700'}`}>
