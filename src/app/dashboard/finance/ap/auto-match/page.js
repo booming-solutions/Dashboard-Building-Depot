@@ -363,6 +363,7 @@ function Stat({ label, value, isText, highlight, highlightLabel, color }) {
 
 function VendorCard({ vendor, vIdx, busyPair, donePair, onConfirmPair, onConfirmAll }) {
   const isAlias = !!vendor?.isAlias;
+  const pairs = vendor?.pairs || [];
   const allDone = vendor.pairs.every((_, i) => donePair[`${vIdx}-${i}`]);
   const someDone = vendor.pairs.some((_, i) => donePair[`${vIdx}-${i}`]);
   const someBusy = vendor.pairs.some((_, i) => busyPair[`${vIdx}-${i}`]);
