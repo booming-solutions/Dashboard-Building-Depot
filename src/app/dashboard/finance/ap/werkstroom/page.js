@@ -1,16 +1,13 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v9_2.js
+   BESTAND: ap_werkstroom_page_v10.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
 
-   PATCH v9.2: defensief — alle nieuwe match-code is omhuld met
-     null/undefined checks zodat een fout niet de hele pagina crasht.
-     Plus: fetch error van ap_match_candidates wordt gevangen en
-     gelogd, niet doorgegooid.
-
-   PATCH v9.1: InvoiceRow signature fix — matchCandidate prop en
-     SOURCE_LABELS_LOCAL ontbraken in v9 (veroorzaakte client-side
-     exception bij tab "Openstaand" met match-kandidaten).
+   v10: ROLLBACK match-indicator op tab "Openstaand" — gaf bij Jeroen
+     'ReferenceError: matchCandidate is not defined' in production build,
+     mogelijk door Vercel build-cache van eerdere bug.
+     Match-feature komt terug in latere versie (apart geïsoleerd).
+     Methode 4 (Markeer extern betaald) blijft behouden.
 
    WIJZIGINGEN T.O.V. v8:
    - "🎯 Match" badge op tab "Openstaand" voor facturen die een
@@ -126,7 +123,6 @@ export default function WerkstroomPage() {
   const [tabCounts, setTabCounts] = useState({});
   const [tabRows, setTabRows] = useState({});  // {status: [rows]}
   const [userNames, setUserNames] = useState({});
-  const [matchCandidates, setMatchCandidates] = useState({});  // invoice_id → best candidate
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingTab, setLoadingTab] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -224,30 +220,6 @@ export default function WerkstroomPage() {
           });
         }
       }
-      // Match candidates voor "open" tab — niet voor andere tabs.
-      // Gevangen in eigen try/catch zodat een fout hier de hele
-      // werkstroom niet onbruikbaar maakt.
-      if (statusKey === 'open') {
-        try {
-          const cands = await fetchAllPaginated(() =>
-            supabase.from('ap_match_candidates')
-              .select('invoice_id, source, matched_amount, matched_date, matched_currency, confidence, match_score, status')
-              .in('status', ['pending', 'confirmed'])
-          );
-          const byInv = {};
-          for (const c of (cands || [])) {
-            if (!c || !c.invoice_id) continue;
-            const existing = byInv[c.invoice_id];
-            if (!existing || (c.match_score || 0) > (existing.match_score || 0)) {
-              byInv[c.invoice_id] = c;
-            }
-          }
-          setMatchCandidates(byInv);
-        } catch (mcErr) {
-          console.warn('Match-kandidaten konden niet worden geladen:', mcErr);
-          setMatchCandidates({});
-        }
-      }
     } catch (e) {
       setError(e.message || 'Onbekende fout bij laden');
     } finally {
@@ -258,7 +230,6 @@ export default function WerkstroomPage() {
   // Initial + bij role-switch: counts + huidige tab
   useEffect(() => {
     setTabRows({});
-    setMatchCandidates({});
     loadCounts();
     loadTabRows(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -650,7 +621,6 @@ export default function WerkstroomPage() {
           allSelected={selectedIds.size > 0 && selectedIds.size === currentInvoices.length}
           tab={tab}
           userNames={userNames}
-          matchCandidates={matchCandidates}
         />
       )}
     </div>
@@ -843,11 +813,10 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, matchCandidates = {} }) {
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames }) {
   const showSubmitter = tab === 'approver_review';
   const showApprover = tab === 'approved' || tab === 'at_bank';
   const showRejectionIndicator = tab === 'open';
-  const showMatchIndicator = tab === 'open';
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
@@ -874,8 +843,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
             {invoices.map(inv => (
               <InvoiceRow key={inv.id} inv={inv} selected={selectedIds.has(inv.id)} onToggle={() => onToggle(inv.id)}
                 showSubmitter={showSubmitter} showApprover={showApprover} userNames={userNames}
-                showRejection={showRejectionIndicator}
-                matchCandidate={showMatchIndicator && matchCandidates ? matchCandidates[inv.id] : null} />
+                showRejection={showRejectionIndicator} />
             ))}
           </tbody>
         </table>
@@ -884,8 +852,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
   );
 }
 
-function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection, matchCandidate }) {
-  const SOURCE_LABELS_LOCAL = { pcs: 'PCS', bank_mcb: 'MCB', bank_rbc: 'RBC', vendor_statement: 'V.stmt', manual: 'Hand' };
+function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection }) {
   const bal = parseFloat(inv.balance);
   const isCredit = bal < 0;
   const daysUntil = daysUntilDue(inv.due_date);
@@ -913,22 +880,11 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
               ❗ Afgewezen
             </span>
           )}
-          {matchCandidate && matchCandidate.source && (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 cursor-help"
-              title={`Match uit ${SOURCE_LABELS_LOCAL[matchCandidate.source] || matchCandidate.source} | score ${Math.round(matchCandidate.match_score || 0)} | bedrag ${matchCandidate.matched_amount || '?'} ${matchCandidate.matched_currency || ''} | betaaldatum ${matchCandidate.matched_date || '?'} | status ${matchCandidate.status || '?'}`}>
-              🎯 {SOURCE_LABELS_LOCAL[matchCandidate.source] || matchCandidate.source} {Math.round(matchCandidate.match_score || 0)}
-            </span>
-          )}
         </div>
         <div className="text-[10px] text-[#1B3A5C]/40 font-mono">#{inv.vendor_id}</div>
         {rejection && (
           <div className="text-[10px] text-rose-700/80 mt-1 italic line-clamp-1" title={rejection.body}>
             &ldquo;{rejection.body}&rdquo;
-          </div>
-        )}
-        {matchCandidate && matchCandidate.source && !rejection && (
-          <div className="text-[10px] text-emerald-700/80 mt-1">
-            Hoogst waarschijnlijk al betaald op {matchCandidate.matched_date ? new Date(matchCandidate.matched_date).toLocaleDateString('nl-NL') : '?'}
           </div>
         )}
       </td>
