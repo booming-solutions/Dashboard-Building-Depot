@@ -506,6 +506,8 @@ export default function BankMatchPage() {
   const [importing, setImporting] = useState(false);
   const [selectedMatches, setSelectedMatches] = useState(new Set());
   const [visibleCount, setVisibleCount] = useState(200);
+  // Voor ambigue: per-tx welke kandidaat is gekozen (invoice_id of '__skip__')
+  const [ambigChoice, setAmbigChoice] = useState({});  // {txKey: invoice_id|'__skip__'}
   const [importDone, setImportDone] = useState(null);
   const [error, setError] = useState(null);
 
@@ -705,6 +707,14 @@ export default function BankMatchPage() {
         setVisibleCount(200);
         const defaultKeys = matches.filter(m => !m.isDupe).map(getMatchKey);
         setSelectedMatches(new Set(defaultKeys));
+        // Default ambig: kies top-kandidaat per tx
+        const ambigDefaults = {};
+        ambiguous.forEach((a, i) => {
+          const txKey = `ambig_${i}_${a.tx.bank}_${a.tx.date}_${Math.round(a.tx.amount * 100)}`;
+          ambigDefaults[txKey] = String(a.candidates[0].invoice.id);
+        });
+        setAmbigChoice(ambigDefaults);
+        console.log('[bank-match] ambig defaults set:', Object.keys(ambigDefaults).length);
       } catch (setErr) {
         console.error('[bank-match] setMatchResult failed:', setErr);
         setError(`UI fout bij weergeven resultaten: ${setErr.message}`);
@@ -720,8 +730,30 @@ export default function BankMatchPage() {
     setImporting(true);
     setError(null);
     try {
+      // 1. Unique matches (zoals voorheen)
       const toImport = matchResult.matchList.filter(m => !m.isDupe && selectedMatches.has(getMatchKey(m)));
-      const rows = toImport.map(m => ({
+
+      // 2. Ambigue waar gebruiker een kandidaat heeft gekozen (niet '__skip__')
+      const ambigToImport = [];
+      (matchResult.ambiguousList || []).forEach((a, i) => {
+        const txKey = `ambig_${i}_${a.tx.bank}_${a.tx.date}_${Math.round(a.tx.amount * 100)}`;
+        const choice = ambigChoice[txKey];
+        if (!choice || choice === '__skip__') return;
+        const cand = a.candidates.find(c => String(c.invoice.id) === choice);
+        if (!cand) return;
+        const sourceKey = a.tx.bank === 'mcb' ? 'bank_mcb' : 'bank_rbc';
+        const sourceRef = `${a.tx.date}_${Math.round(a.tx.amount * 100)}`;
+        ambigToImport.push({
+          tx: a.tx, vendorName: a.vendorName, reference: a.reference,
+          invoice: cand.invoice, score: cand.score, sourceRef, sourceKey,
+          vMethod: a.vMethod || 'manual_ambig_pick',
+          aliasInfo: a.aliasInfo,
+        });
+      });
+
+      console.log('[bank-match] importing:', { unique: toImport.length, ambig: ambigToImport.length });
+      const allImports = [...toImport, ...ambigToImport];
+      const rows = allImports.map(m => ({
         invoice_id: m.invoice.id,
         source: m.sourceKey,
         source_reference: m.sourceRef,
@@ -768,7 +800,7 @@ export default function BankMatchPage() {
         details: { imported, mcb: mcbCount, rbc: rbcCount, files: fileList },
       });
 
-      setImportDone({ imported, mcb: mcbCount, rbc: rbcCount });
+      setImportDone({ imported, mcb: mcbCount, rbc: rbcCount, fromAmbig: ambigToImport.length });
     } catch (e) {
       console.error(e);
       setError(`Import fout: ${e.message}`);
@@ -904,15 +936,28 @@ export default function BankMatchPage() {
             </span>
           </div>
 
-          {matchResult.matches === 0 && matchResult.total > 0 && (
+          {matchResult.matches === 0 && matchResult.ambiguous > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-[13px] text-blue-900">
+                Geen unique matches — maar {matchResult.ambiguous} ambigue transacties zijn klaar om te importeren
+                (top-kandidaat per regel). Bekijk hieronder, pas eventueel keuzes aan, en klik:
+              </p>
+              <button onClick={importMatches}
+                disabled={importing || Object.values(ambigChoice).filter(v => v && v !== '__skip__').length === 0}
+                className="px-4 py-2 rounded-lg bg-emerald-500 text-white text-[13px] font-semibold hover:bg-emerald-600 disabled:opacity-50">
+                {importing ? 'Importeren...' : `✓ Importeer ${Object.values(ambigChoice).filter(v => v && v !== '__skip__').length} ambigue keuzes`}
+              </button>
+            </div>
+          )}
+
+          {matchResult.matches === 0 && matchResult.ambiguous === 0 && matchResult.total > 0 && (
             <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-4">
               <p className="text-[13px] text-rose-900 mb-1">
-                <strong>Geen unique matches gevonden.</strong>
+                <strong>Geen matches en geen ambigue gevallen.</strong>
               </p>
               <p className="text-[12px] text-rose-800">
-                Alle transacties zijn óf ambigu (meerdere mogelijke facturen) óf geen match.
-                Bekijk de secties hieronder voor diagnose. Tip: probeer minder PDFs tegelijk,
-                of breid alias-groepen uit als specifieke vendors niet worden herkend.
+                Alle transacties vielen in &quot;geen match&quot;. Bekijk de redenen-breakdown hieronder.
+                Mogelijk worden bank-vendors niet herkend — uitbreiding van alias-groepen kan helpen.
               </p>
             </div>
           )}
@@ -920,6 +965,7 @@ export default function BankMatchPage() {
           {matchResult.matches > 0 && (() => {
             const allMatches = matchResult.matchList.filter(m => !m.isDupe);
             const selectedCount = allMatches.filter(m => selectedMatches.has(getMatchKey(m))).length;
+            const ambigPickedCount = Object.values(ambigChoice).filter(v => v && v !== '__skip__').length;
             const allSelected = selectedCount === allMatches.length;
             const someSelected = selectedCount > 0 && selectedCount < allMatches.length;
 
@@ -946,9 +992,9 @@ export default function BankMatchPage() {
                       Vink uit wat je niet wilt — alleen aangevinkte regels worden geïmporteerd.
                     </p>
                   </div>
-                  <button onClick={importMatches} disabled={importing || selectedCount === 0}
+                  <button onClick={importMatches} disabled={importing || (selectedCount === 0 && ambigPickedCount === 0)}
                     className="px-4 py-2 rounded-lg bg-emerald-500 text-white text-[13px] font-semibold hover:bg-emerald-600 disabled:opacity-50">
-                    {importing ? 'Importeren...' : `✓ Importeer ${selectedCount} ${selectedCount === 1 ? 'kandidaat' : 'kandidaten'}`}
+                    {importing ? 'Importeren...' : `✓ Importeer ${selectedCount + ambigPickedCount} ${(selectedCount + ambigPickedCount) === 1 ? 'kandidaat' : 'kandidaten'}`}
                   </button>
                 </div>
 
@@ -1000,12 +1046,23 @@ export default function BankMatchPage() {
             );
           })()}
 
-          {matchResult.ambiguous > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
-              <p className="text-[13px] text-blue-900 mb-2">
-                <strong>{fmtNum(matchResult.ambiguous)} betalingen ambigu</strong> — meerdere portal-facturen voldoen aan vendor + bedrag + tijdsvenster.
-                Niet auto-geïmporteerd. Handmatig oppakken via Werkstroom &quot;Markeer extern betaald&quot;.
-              </p>
+          {matchResult.ambiguous > 0 && matchResult.ambiguousList && (
+            <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-6 mb-4">
+              <div className="mb-3">
+                <h2 className="text-[16px] font-bold text-[#1B3A5C]">
+                  Ambigue transacties ({matchResult.ambiguous})
+                </h2>
+                <p className="text-[12px] text-[#1B3A5C]/60 mt-1">
+                  Voor deze transacties zijn meerdere portal-facturen mogelijk. Standaard staat
+                  de top-kandidaat geselecteerd; je kunt per regel een ander kiezen of skippen.
+                  Worden samen met de unique matches geïmporteerd.
+                </p>
+              </div>
+              <AmbigTable
+                ambigList={matchResult.ambiguousList}
+                ambigChoice={ambigChoice}
+                onChoice={(txKey, val) => setAmbigChoice(prev => ({ ...prev, [txKey]: val }))}
+              />
             </div>
           )}
 
@@ -1044,6 +1101,7 @@ export default function BankMatchPage() {
           </h2>
           <p className="text-[13px] text-emerald-900 mb-3">
             MCB: {fmtNum(importDone.mcb)} · RBC: {fmtNum(importDone.rbc)}
+            {importDone.fromAmbig > 0 && ` · ${fmtNum(importDone.fromAmbig)} uit ambigue keuzes`}
           </p>
           <Link href="/dashboard/finance/ap/match/worklist"
             className="inline-block px-4 py-2 rounded-lg bg-emerald-600 text-white text-[13px] font-semibold hover:bg-emerald-700">
@@ -1187,6 +1245,56 @@ function UnmatchedTable({ rows }) {
               </td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
+function AmbigTable({ ambigList, ambigChoice, onChoice }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-50">
+            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank</th>
+            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Datum</th>
+            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank vendor</th>
+            <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Bedrag</th>
+            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Kies portal-factuur</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ambigList.map((a, i) => {
+            const txKey = `ambig_${i}_${a.tx.bank}_${a.tx.date}_${Math.round(a.tx.amount * 100)}`;
+            const choice = ambigChoice[txKey] || '__skip__';
+            return (
+              <tr key={i} className={`border-b border-gray-100 ${choice !== '__skip__' ? 'bg-emerald-50/30' : 'bg-gray-50/30'}`}>
+                <td className="p-2">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    a.tx.bank === 'mcb' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                  }`}>{a.tx.bank?.toUpperCase()}</span>
+                </td>
+                <td className="p-2 text-[#1B3A5C]/70 whitespace-nowrap">{fmtDate(a.tx.date)}</td>
+                <td className="p-2 text-[11px] text-[#1B3A5C]/80" title={a.tx.description}>
+                  {a.vendorName}
+                </td>
+                <td className="p-2 text-right font-mono">{fmtMoney(a.tx.amount)}</td>
+                <td className="p-2">
+                  <select value={choice} onChange={e => onChoice(txKey, e.target.value)}
+                    className="px-2 py-1 rounded border border-gray-200 text-[11px] bg-white max-w-[420px]">
+                    <option value="__skip__">— skip (niet importeren)</option>
+                    {a.candidates.map((c, ci) => (
+                      <option key={ci} value={String(c.invoice.id)}>
+                        {c.invoice.invoice_number} · {fmtMoney(parseFloat(c.invoice.balance))} {c.invoice.currency || ''} · {c.invoice.invoice_date || '?'} · score {Math.round(c.score)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
