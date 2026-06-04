@@ -1,11 +1,17 @@
 /* ============================================================
-   BESTAND: ap_match_worklist_page_v1.js
+   BESTAND: ap_match_worklist_page_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/worklist/page.js
    (nieuwe folder: match/worklist/, hernoemen naar page.js)
 
-   Afletter-werklijst: toont alle match-kandidaten uit
-   verschillende bronnen (PCS, bank, vendor statement, manual)
-   en biedt bevestig/afwijs-acties per kandidaat of bulk.
+   Afletter-werklijst (PROJECT CLEAN UP):
+   - 4 tabs: Te bevestigen / Te verwerken / Verwerkt / Afgewezen
+   - Per-AP-Clerk filter (auto voor clerks, dropdown voor admin/cfo)
+   - Te bevestigen: candidate is gematched, AP clerk reviewt
+   - Te verwerken: candidate is bevestigd, invoice=paid, maar
+     boeking in Eagle moet nog gebeuren — werklijst voor AP clerk
+   - Verwerkt: AP clerk heeft de Eagle boeking gedaan, regel
+     kan weg uit aktieve werklijst (alleen archief)
+   - Afgewezen: candidate is afgewezen, was geen match
 
    Bij CONFIRM: 
      - candidate.status = 'confirmed', confirmed_at, confirmed_by
@@ -40,7 +46,8 @@ async function fetchAllPaginated(queryBuilder, batchSize = 1000) {
 
 const STATUS_TABS = [
   { key: 'pending',   label: 'Te bevestigen', color: 'amber' },
-  { key: 'confirmed', label: 'Bevestigd',     color: 'emerald' },
+  { key: 'confirmed', label: 'Te verwerken',  color: 'blue' },
+  { key: 'processed', label: 'Verwerkt',      color: 'emerald' },
   { key: 'rejected',  label: 'Afgewezen',     color: 'rose' },
 ];
 
@@ -54,6 +61,7 @@ const SOURCE_LABELS = {
 
 const TAB_BADGE = {
   amber: 'bg-amber-200 text-amber-800',
+  blue: 'bg-blue-200 text-blue-800',
   emerald: 'bg-emerald-200 text-emerald-800',
   rose: 'bg-rose-200 text-rose-800',
 };
@@ -77,14 +85,35 @@ export default function MatchWorklistPage() {
 
   const [tab, setTab] = useState('pending');
   const [counts, setCounts] = useState({});
-  const [rows, setRows] = useState({});  // {status: [candidate+invoice]}
+  const [rows, setRows] = useState({});
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingRows, setLoadingRows] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [sourceFilter, setSourceFilter] = useState('all');
+  const [clerkFilter, setClerkFilter] = useState('all');
+  const [apClerks, setApClerks] = useState([]);
   const [showRejectModal, setShowRejectModal] = useState(false);
+
+  // Voor AP clerks: filter automatisch op henzelf
+  const isClerkRole = effectiveRole === 'ap_clerk';
+  useEffect(() => {
+    if (isClerkRole) setClerkFilter(actualProfile.id);
+  }, [isClerkRole, actualProfile.id]);
+
+  // Lijst van AP Clerks ophalen voor filter dropdown (admin/cfo only)
+  useEffect(() => {
+    if (isClerkRole) return;
+    async function loadClerks() {
+      const { data } = await supabase.from('profiles')
+        .select('id, full_name')
+        .eq('role', 'ap_clerk')
+        .order('full_name');
+      setApClerks(data || []);
+    }
+    loadClerks();
+  }, [supabase, isClerkRole]);
 
   const loadCounts = useCallback(async () => {
     setLoadingCounts(true);
@@ -118,11 +147,11 @@ export default function MatchWorklistPage() {
         return;
       }
 
-      // Haal invoices op voor deze candidates
+      // Haal invoices op
       const invoiceIds = [...new Set(candidates.map(c => c.invoice_id))];
       const allInvoices = await fetchAllPaginated(() =>
         supabase.from('ap_invoices')
-          .select('id, vendor_id, vendor_name, invoice_number, voucher, balance, original_amount, currency, status, invoice_date, due_date, paid_at')
+          .select('id, vendor_id, vendor_name, invoice_number, voucher, balance, original_amount, currency, status, invoice_date, due_date, paid_at, assigned_ap_clerk')
       );
       const invSet = new Set(invoiceIds);
       const invMap = {};
@@ -130,12 +159,17 @@ export default function MatchWorklistPage() {
         if (invSet.has(inv.id)) invMap[inv.id] = inv;
       }
 
-      // Haal user names voor confirmed_by/rejected_by
+      // Haal user names op
       const userIds = new Set();
       for (const c of candidates) {
         if (c.confirmed_by) userIds.add(c.confirmed_by);
         if (c.rejected_by) userIds.add(c.rejected_by);
         if (c.created_by) userIds.add(c.created_by);
+        if (c.processed_by) userIds.add(c.processed_by);
+      }
+      // Plus alle assigned_ap_clerk IDs uit invoices
+      for (const inv of Object.values(invMap)) {
+        if (inv.assigned_ap_clerk) userIds.add(inv.assigned_ap_clerk);
       }
       let userMap = {};
       if (userIds.size > 0) {
@@ -143,13 +177,19 @@ export default function MatchWorklistPage() {
         if (profs) for (const p of profs) userMap[p.id] = p.full_name;
       }
 
-      const enriched = candidates.map(c => ({
-        ...c,
-        invoice: invMap[c.invoice_id] || null,
-        confirmed_by_name: c.confirmed_by ? userMap[c.confirmed_by] : null,
-        rejected_by_name: c.rejected_by ? userMap[c.rejected_by] : null,
-        created_by_name: c.created_by ? userMap[c.created_by] : null,
-      }));
+      const enriched = candidates.map(c => {
+        const inv = invMap[c.invoice_id] || null;
+        return {
+          ...c,
+          invoice: inv,
+          assigned_ap_clerk: inv?.assigned_ap_clerk || null,
+          assigned_ap_clerk_name: inv?.assigned_ap_clerk ? userMap[inv.assigned_ap_clerk] : null,
+          confirmed_by_name: c.confirmed_by ? userMap[c.confirmed_by] : null,
+          rejected_by_name: c.rejected_by ? userMap[c.rejected_by] : null,
+          processed_by_name: c.processed_by ? userMap[c.processed_by] : null,
+          created_by_name: c.created_by ? userMap[c.created_by] : null,
+        };
+      });
 
       setRows(prev => ({ ...prev, [statusKey]: enriched }));
     } catch (e) {
@@ -172,10 +212,17 @@ export default function MatchWorklistPage() {
   }, [tab]);
 
   const filteredRows = useMemo(() => {
-    const list = rows[tab] || [];
-    if (sourceFilter === 'all') return list;
-    return list.filter(r => r.source === sourceFilter);
-  }, [rows, tab, sourceFilter]);
+    let list = rows[tab] || [];
+    if (sourceFilter !== 'all') list = list.filter(r => r.source === sourceFilter);
+    if (clerkFilter !== 'all') {
+      if (clerkFilter === 'unassigned') {
+        list = list.filter(r => !r.assigned_ap_clerk);
+      } else {
+        list = list.filter(r => r.assigned_ap_clerk === clerkFilter);
+      }
+    }
+    return list;
+  }, [rows, tab, sourceFilter, clerkFilter]);
 
   function toggleSel(id) {
     const next = new Set(selectedIds);
@@ -299,6 +346,46 @@ export default function MatchWorklistPage() {
     }
   }
 
+  async function markProcessedSelected() {
+    setBusy(true); setError(null);
+    try {
+      const ids = Array.from(selectedIds);
+      if (ids.length === 0) throw new Error('Niets geselecteerd');
+
+      const now = new Date().toISOString();
+      const selectedCandidates = filteredRows.filter(r => selectedIds.has(r.id));
+
+      const { error: e1 } = await supabase.from('ap_match_candidates')
+        .update({ status: 'processed', processed_at: now, processed_by: actualProfile.id })
+        .in('id', ids);
+      if (e1) throw e1;
+
+      const auditRows = selectedCandidates.map(c => ({
+        action: 'match_processed',
+        entity_type: 'invoice',
+        entity_id: c.invoice_id,
+        user_id: actualProfile.id,
+        user_name: actualProfile.full_name,
+        user_role: actualProfile.role,
+        details: {
+          candidate_id: c.id,
+          source: c.source,
+          played_as: isPlayingRole ? effectiveName : null,
+        },
+      }));
+      if (auditRows.length > 0) await supabase.from('ap_audit_log').insert(auditRows);
+
+      setSelectedIds(new Set());
+      setRows({});
+      await loadCounts();
+      await loadRows(tab);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const selectedCount = selectedIds.size;
   const selectedTotal = useMemo(() =>
     filteredRows.filter(r => selectedIds.has(r.id))
@@ -326,6 +413,14 @@ export default function MatchWorklistPage() {
           <p className="text-[13px] text-red-800"><strong>Fout:</strong> {error}</p>
         </div>
       )}
+
+      {/* Tab uitleg */}
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4 text-[12px] text-[#1B3A5C]/80">
+        {tab === 'pending' && <p><strong>Te bevestigen:</strong> match-kandidaten uit PCS/bank/etc — review en bevestig (factuur gaat dan op &quot;betaald&quot;).</p>}
+        {tab === 'confirmed' && <p><strong>Te verwerken:</strong> bevestigde matches — factuur staat in portal op &quot;betaald&quot;, maar de boeking moet nog in Eagle worden gedaan. AP Clerks: pak deze op, markeer als verwerkt na boeking in Eagle.</p>}
+        {tab === 'processed' && <p><strong>Verwerkt:</strong> volledig afgerond — AP clerk heeft Eagle boeking gedaan. Archief.</p>}
+        {tab === 'rejected' && <p><strong>Afgewezen:</strong> matches die geen echte match bleken. Factuur staat nog steeds op oorspronkelijke status.</p>}
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-2 mb-4 flex-wrap">
@@ -360,12 +455,30 @@ export default function MatchWorklistPage() {
           <option value="vendor_statement">Vendor stmt</option>
           <option value="manual">Handmatig</option>
         </select>
+        {!isClerkRole && (
+          <>
+            <label className="text-[12px] text-[#1B3A5C]/60">AP Clerk:</label>
+            <select value={clerkFilter} onChange={e => setClerkFilter(e.target.value)}
+              className="px-2 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none cursor-pointer min-w-[180px]">
+              <option value="all">Alle clerks</option>
+              <option value="unassigned">Geen clerk toegewezen</option>
+              {apClerks.map(c => (
+                <option key={c.id} value={c.id}>{c.full_name}</option>
+              ))}
+            </select>
+          </>
+        )}
+        {isClerkRole && (
+          <span className="text-[11px] text-[#1B3A5C]/50 italic">
+            Filter: jouw toegewezen vendors
+          </span>
+        )}
         <div className="text-[11px] text-[#1B3A5C]/50 ml-auto">
           {fmtNum(filteredRows.length)} kandidaten
         </div>
       </div>
 
-      {/* Bulk actie bar */}
+      {/* Bulk actie bar - PENDING */}
       {selectedCount > 0 && tab === 'pending' && canConfirm && (
         <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
           <span className="text-[13px] font-semibold">
@@ -382,6 +495,24 @@ export default function MatchWorklistPage() {
             <button onClick={confirmSelected} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 disabled:opacity-50">
               {busy ? 'Bezig...' : '✓ Bevestig & markeer betaald'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk actie bar - CONFIRMED (te verwerken) */}
+      {selectedCount > 0 && tab === 'confirmed' && (
+        <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
+          <span className="text-[13px] font-semibold">
+            {fmtNum(selectedCount)} geselecteerd · XCG {fmtMoney(selectedTotal)}
+          </span>
+          <button onClick={deselectAll} className="text-[12px] text-white/70 hover:text-white underline">
+            deselecteer
+          </button>
+          <div className="ml-auto flex items-center gap-2 flex-wrap">
+            <button onClick={markProcessedSelected} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 disabled:opacity-50">
+              {busy ? 'Bezig...' : '✓ Markeer Eagle-boeking gedaan'}
             </button>
           </div>
         </div>
@@ -408,6 +539,7 @@ export default function MatchWorklistPage() {
         <CandidateTable
           rows={filteredRows}
           tab={tab}
+          showAssignedClerk={!isClerkRole}
           selectedIds={selectedIds}
           onToggle={toggleSel}
           onSelectAll={selectAllFiltered}
@@ -419,7 +551,13 @@ export default function MatchWorklistPage() {
   );
 }
 
-function CandidateTable({ rows, tab, selectedIds, onToggle, onSelectAll, onDeselect, allSelected }) {
+function CandidateTable({ rows, tab, showAssignedClerk, selectedIds, onToggle, onSelectAll, onDeselect, allSelected }) {
+  const showCheckbox = tab === 'pending' || tab === 'confirmed';
+  let actionLabel = '';
+  if (tab === 'confirmed') actionLabel = 'Toegewezen aan';
+  else if (tab === 'processed') actionLabel = 'Verwerkt door';
+  else if (tab === 'rejected') actionLabel = 'Afgewezen door';
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
@@ -427,7 +565,7 @@ function CandidateTable({ rows, tab, selectedIds, onToggle, onSelectAll, onDesel
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
               <th className="w-10 p-2">
-                {tab === 'pending' && (
+                {showCheckbox && (
                   <input type="checkbox" checked={allSelected}
                     onChange={() => allSelected ? onDeselect() : onSelectAll()}
                     className="cursor-pointer" />
@@ -440,10 +578,11 @@ function CandidateTable({ rows, tab, selectedIds, onToggle, onSelectAll, onDesel
               <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Portal bedrag</th>
               <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Betaaldatum</th>
               <th className="p-2 text-center font-semibold text-[#1B3A5C]/70">Score</th>
-              {tab !== 'pending' && (
-                <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">
-                  {tab === 'confirmed' ? 'Bevestigd door' : 'Afgewezen door'}
-                </th>
+              {showAssignedClerk && tab !== 'rejected' && (
+                <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">AP Clerk</th>
+              )}
+              {actionLabel && (
+                <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">{actionLabel}</th>
               )}
             </tr>
           </thead>
@@ -452,6 +591,7 @@ function CandidateTable({ rows, tab, selectedIds, onToggle, onSelectAll, onDesel
               <CandidateRow key={r.id}
                 row={r}
                 tab={tab}
+                showAssignedClerk={showAssignedClerk}
                 selected={selectedIds.has(r.id)}
                 onToggle={() => onToggle(r.id)} />
             ))}
@@ -462,7 +602,7 @@ function CandidateTable({ rows, tab, selectedIds, onToggle, onSelectAll, onDesel
   );
 }
 
-function CandidateRow({ row, tab, selected, onToggle }) {
+function CandidateRow({ row, tab, showAssignedClerk, selected, onToggle }) {
   const inv = row.invoice;
   const sourceColor = {
     pcs: 'bg-blue-50 text-blue-700',
@@ -475,13 +615,14 @@ function CandidateRow({ row, tab, selected, onToggle }) {
   const confColor = row.confidence === 'exact' ? 'bg-emerald-100 text-emerald-700'
     : row.confidence === 'fuzzy' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700';
 
+  const isClickable = tab === 'pending' || tab === 'confirmed';
   return (
-    <tr onClick={tab === 'pending' ? onToggle : undefined}
-      className={`border-b border-gray-100 transition-all ${tab === 'pending' ? 'cursor-pointer' : ''} ${
+    <tr onClick={isClickable ? onToggle : undefined}
+      className={`border-b border-gray-100 transition-all ${isClickable ? 'cursor-pointer' : ''} ${
         selected ? 'bg-blue-50/60' : 'hover:bg-gray-50/60'
       }`}>
       <td className="p-2" onClick={e => e.stopPropagation()}>
-        {tab === 'pending' && (
+        {isClickable && (
           <input type="checkbox" checked={selected} onChange={onToggle} className="cursor-pointer" />
         )}
       </td>
@@ -522,10 +663,21 @@ function CandidateRow({ row, tab, selected, onToggle }) {
           {row.match_score ? Math.round(row.match_score) : row.confidence}
         </span>
       </td>
+      {showAssignedClerk && tab !== 'rejected' && (
+        <td className="p-2 text-[#1B3A5C]/70 text-[11px]">
+          {row.assigned_ap_clerk_name || <span className="text-[#1B3A5C]/30 italic">geen toewijzing</span>}
+        </td>
+      )}
       {tab === 'confirmed' && (
         <td className="p-2 text-[#1B3A5C]/70 text-[11px]">
           {row.confirmed_by_name || '—'}
           {row.confirmed_at && <div className="text-[10px] text-[#1B3A5C]/40">{fmtDate(row.confirmed_at)}</div>}
+        </td>
+      )}
+      {tab === 'processed' && (
+        <td className="p-2 text-[#1B3A5C]/70 text-[11px]">
+          {row.processed_by_name || '—'}
+          {row.processed_at && <div className="text-[10px] text-[#1B3A5C]/40">{fmtDate(row.processed_at)}</div>}
         </td>
       )}
       {tab === 'rejected' && (

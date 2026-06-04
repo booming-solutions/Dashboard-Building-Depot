@@ -1,8 +1,15 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v8.js
+   BESTAND: ap_werkstroom_page_v9.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
 
+   WIJZIGINGEN T.O.V. v8:
+   - "🎯 Match" badge op tab "Openstaand" voor facturen die een
+     pending/confirmed match candidate hebben. Toont bron (PCS/MCB
+     etc) + score. AP Clerk ziet direct welke facturen waarschijnlijk
+     al betaald zijn.
+   - Hover op badge toont datum + bedrag van match.
+   
    WIJZIGINGEN T.O.V. v7:
    - Methode 4 toegevoegd: bulk-actie "Markeer extern betaald"
      voor admin/cfo op tab "Openstaand". Modal voor datum + reden.
@@ -110,6 +117,7 @@ export default function WerkstroomPage() {
   const [tabCounts, setTabCounts] = useState({});
   const [tabRows, setTabRows] = useState({});  // {status: [rows]}
   const [userNames, setUserNames] = useState({});
+  const [matchCandidates, setMatchCandidates] = useState({});  // invoice_id → best candidate
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingTab, setLoadingTab] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -207,6 +215,21 @@ export default function WerkstroomPage() {
           });
         }
       }
+      // Match candidates voor "open" tab — niet voor andere tabs
+      if (statusKey === 'open') {
+        const cands = await fetchAllPaginated(() =>
+          supabase.from('ap_match_candidates')
+            .select('invoice_id, source, matched_amount, matched_date, matched_currency, confidence, match_score, status')
+            .in('status', ['pending', 'confirmed'])
+        );
+        const byInv = {};
+        for (const c of cands) {
+          if (!byInv[c.invoice_id] || (c.match_score || 0) > (byInv[c.invoice_id].match_score || 0)) {
+            byInv[c.invoice_id] = c;
+          }
+        }
+        setMatchCandidates(byInv);
+      }
     } catch (e) {
       setError(e.message || 'Onbekende fout bij laden');
     } finally {
@@ -216,7 +239,8 @@ export default function WerkstroomPage() {
 
   // Initial + bij role-switch: counts + huidige tab
   useEffect(() => {
-    setTabRows({});  // Cache wissen bij role-switch
+    setTabRows({});
+    setMatchCandidates({});
     loadCounts();
     loadTabRows(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -608,6 +632,7 @@ export default function WerkstroomPage() {
           allSelected={selectedIds.size > 0 && selectedIds.size === currentInvoices.length}
           tab={tab}
           userNames={userNames}
+          matchCandidates={matchCandidates}
         />
       )}
     </div>
@@ -800,10 +825,11 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames }) {
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, matchCandidates }) {
   const showSubmitter = tab === 'approver_review';
   const showApprover = tab === 'approved' || tab === 'at_bank';
   const showRejectionIndicator = tab === 'open';
+  const showMatchIndicator = tab === 'open';
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
@@ -830,7 +856,8 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
             {invoices.map(inv => (
               <InvoiceRow key={inv.id} inv={inv} selected={selectedIds.has(inv.id)} onToggle={() => onToggle(inv.id)}
                 showSubmitter={showSubmitter} showApprover={showApprover} userNames={userNames}
-                showRejection={showRejectionIndicator} />
+                showRejection={showRejectionIndicator}
+                matchCandidate={showMatchIndicator ? matchCandidates[inv.id] : null} />
             ))}
           </tbody>
         </table>
@@ -867,11 +894,22 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
               ❗ Afgewezen
             </span>
           )}
+          {matchCandidate && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 cursor-help"
+              title={`Match uit ${SOURCE_LABELS_LOCAL[matchCandidate.source] || matchCandidate.source} · score ${Math.round(matchCandidate.match_score || 0)} · bedrag ${matchCandidate.matched_amount} ${matchCandidate.matched_currency || ''} · betaaldatum ${matchCandidate.matched_date || '?'} · status ${matchCandidate.status}`}>
+              🎯 {SOURCE_LABELS_LOCAL[matchCandidate.source] || matchCandidate.source} {Math.round(matchCandidate.match_score || 0)}
+            </span>
+          )}
         </div>
         <div className="text-[10px] text-[#1B3A5C]/40 font-mono">#{inv.vendor_id}</div>
         {rejection && (
           <div className="text-[10px] text-rose-700/80 mt-1 italic line-clamp-1" title={rejection.body}>
             &ldquo;{rejection.body}&rdquo;
+          </div>
+        )}
+        {matchCandidate && !rejection && (
+          <div className="text-[10px] text-emerald-700/80 mt-1">
+            Hoogst waarschijnlijk al betaald op {matchCandidate.matched_date ? new Date(matchCandidate.matched_date).toLocaleDateString('nl-NL') : '?'}
           </div>
         )}
       </td>

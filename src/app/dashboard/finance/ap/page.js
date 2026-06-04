@@ -50,6 +50,7 @@ export default function APDashboard() {
     eaglePending: null,
     selectedPending: null,
     pendingCandidates: null,
+    confirmedCandidates: null,
   });
 
   useEffect(() => {
@@ -132,6 +133,29 @@ export default function APDashboard() {
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending');
 
+      // Confirmed match candidates (te verwerken in Eagle)
+      let confirmedCandidates = 0;
+      if (isClerk) {
+        const { data: cfList } = await supabase
+          .from('ap_match_candidates')
+          .select('invoice_id')
+          .eq('status', 'confirmed');
+        if (cfList && cfList.length > 0) {
+          const invIds = cfList.map(r => r.invoice_id);
+          const { data: invsForClerk } = await supabase.from('ap_invoices')
+            .select('id')
+            .in('id', invIds)
+            .eq('assigned_ap_clerk', effectiveProfileId);
+          confirmedCandidates = invsForClerk ? invsForClerk.length : 0;
+        }
+      } else {
+        const { count: cf } = await supabase
+          .from('ap_match_candidates')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'confirmed');
+        confirmedCandidates = cf || 0;
+      }
+
       setStats({
         vendors: vc,
         invoices: ic,
@@ -142,6 +166,7 @@ export default function APDashboard() {
         eaglePending: ep || 0,
         selectedPending: sp || 0,
         pendingCandidates: pc || 0,
+        confirmedCandidates,
       });
     }
     loadStats();
@@ -273,7 +298,7 @@ export default function APDashboard() {
         </div>
       )}
 
-      {/* Snelkoppelingen */}
+      {/* Reguliere snelkoppelingen */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm mb-4">
         <h3 className="text-[14px] font-bold text-[#1B3A5C] mb-3">Snelkoppelingen</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -307,30 +332,68 @@ export default function APDashboard() {
             badge={stats.eaglePending > 0 ? `${stats.eaglePending}` : null}
             available
           />
-          <ActionCard
-            href="/dashboard/finance/ap/match/worklist"
-            icon="🎯"
-            label="Afletter werklijst"
-            desc="Match-kandidaten bevestigen of afwijzen"
-            badge={stats.pendingCandidates > 0 ? `${stats.pendingCandidates}` : null}
-            available
-          />
+          <ActionCard icon="📋" label="Audit log" desc="Volledig actie-spoor" />
+        </div>
+      </div>
+
+      {/* Project Clean Up - tijdelijke sectie */}
+      <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-xl p-5 shadow-sm mb-4">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h3 className="text-[14px] font-bold text-amber-900 flex items-center gap-2">
+              <span className="text-lg">🧹</span> Project Clean Up
+            </h3>
+            <p className="text-[11px] text-amber-800/70 mt-0.5">
+              Tijdelijke werklijst — oude facturen die in werkelijkheid al betaald zijn afletteren.
+              Sluit zodra alles is opgeruimd.
+            </p>
+          </div>
+          {(stats.pendingCandidates > 0 || stats.confirmedCandidates > 0) && (
+            <div className="text-right">
+              <div className="text-[10px] uppercase text-amber-800/60 font-semibold">Open werklijst</div>
+              <div className="text-[20px] font-bold text-amber-900">
+                {(stats.pendingCandidates || 0) + (stats.confirmedCandidates || 0)}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <ActionCard
             href="/dashboard/finance/ap/match/pcs"
             icon="📊"
             label="PCS Import"
             desc="Payment Control Sheet inlezen voor matching"
+            cleanup
             available
           />
-          <ActionCard icon="🏦" label="Bank-bestanden" desc="MCB + RBC parsing (binnenkort)" />
-          <ActionCard icon="📋" label="Audit log" desc="Volledig actie-spoor" />
+          <ActionCard
+            href="/dashboard/finance/ap/match/worklist"
+            icon="🎯"
+            label="Afletter werklijst"
+            desc="Te bevestigen + te verwerken in Eagle"
+            badge={(stats.pendingCandidates + stats.confirmedCandidates) > 0 ? `${stats.pendingCandidates + stats.confirmedCandidates}` : null}
+            cleanup
+            available
+          />
+          <ActionCard
+            icon="🏦"
+            label="Bank Statement Import"
+            desc="MCB + RBC parsing (binnenkort)"
+            cleanup
+          />
+          <ActionCard
+            icon="📨"
+            label="Vendor Statements"
+            desc="Aljoma e.a. statements (binnenkort)"
+            cleanup
+          />
         </div>
       </div>
 
       <div className="bg-[#1B3A5C]/5 rounded-xl border border-[#1B3A5C]/10 p-4">
         <p className="text-[12px] text-[#1B3A5C]/70">
-          <strong>Status:</strong> Data Upload werkt — Compass CSV's kunnen worden ingelezen.
-          De werkstroom-pagina's worden stap voor stap toegevoegd.
+          <strong>Status:</strong> Werkstroom + Auto-match + Eagle Sync werken voor nieuwe facturen.
+          Project Clean Up loopt voor oude betaalde facturen — sluit als de werklijst leeg is.
         </p>
       </div>
     </div>
@@ -349,17 +412,22 @@ function StatCard({ label, value, sublabel, isText }) {
   );
 }
 
-function ActionCard({ href, icon, label, desc, available, badge }) {
+function ActionCard({ href, icon, label, desc, available, badge, cleanup }) {
+  const bgClass = cleanup ? 'bg-white/70' : 'bg-[#f8fafc]';
+  const borderClass = cleanup ? 'border-amber-200 hover:border-amber-400' : 'border-gray-200 hover:border-[#1B3A5C]/30';
+  const labelClass = cleanup ? 'text-amber-900 group-hover:text-amber-950' : 'text-[#1B3A5C] group-hover:text-[#152e4a]';
+  const descClass = cleanup ? 'text-amber-800/60' : 'text-[#1B3A5C]/50';
+
   if (available && href) {
     return (
       <Link
         href={href}
-        className="flex items-start gap-3 p-3 bg-[#f8fafc] rounded-lg border border-gray-200 hover:border-[#1B3A5C]/30 hover:bg-white transition-all group relative"
+        className={`flex items-start gap-3 p-3 ${bgClass} rounded-lg border ${borderClass} hover:bg-white transition-all group relative`}
       >
         <span className="text-lg flex-shrink-0">{icon}</span>
         <div className="flex-1">
-          <p className="text-[13px] font-semibold text-[#1B3A5C] group-hover:text-[#152e4a]">{label}</p>
-          <p className="text-[11px] text-[#1B3A5C]/50">{desc}</p>
+          <p className={`text-[13px] font-semibold ${labelClass}`}>{label}</p>
+          <p className={`text-[11px] ${descClass}`}>{desc}</p>
         </div>
         {badge ? (
           <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
