@@ -460,10 +460,10 @@ function tryMatchInvoice(tx, groupIds, invoicesByVendor, claimedIds) {
   if (candidates.length === 0) return { type: 'no_match', candidates: [] };
   candidates.sort((a, b) => b.score - a.score);
 
-  // Auto-pick: bij meerdere kandidaten, als top duidelijk wint (gap >= 10)
+  // Auto-pick: bij meerdere kandidaten, als top wint met >=5 punten
   if (candidates.length === 1) return { type: 'unique', candidates };
   const gap = candidates[0].score - candidates[1].score;
-  if (gap >= 10) return { type: 'unique', candidates: [candidates[0]] };
+  if (gap >= 5) return { type: 'unique', candidates: [candidates[0]] };
   return { type: 'ambiguous', candidates };
 }
 
@@ -505,6 +505,7 @@ export default function BankMatchPage() {
   const [matchResult, setMatchResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const [selectedMatches, setSelectedMatches] = useState(new Set());
+  const [visibleCount, setVisibleCount] = useState(200);
   const [importDone, setImportDone] = useState(null);
   const [error, setError] = useState(null);
 
@@ -692,10 +693,22 @@ export default function BankMatchPage() {
         unmatched,
         reasonCounts,
       };
-      setMatchResult(result);
-      // Default: alle non-dupe matches geselecteerd
-      const defaultKeys = matches.filter(m => !m.isDupe).map(getMatchKey);
-      setSelectedMatches(new Set(defaultKeys));
+      console.log('[bank-match] result:', {
+        total: result.total,
+        matches: result.matches,
+        ambiguous: result.ambiguous,
+        unmatched: result.unmatchedCount,
+        duplicates: result.duplicates,
+      });
+      try {
+        setMatchResult(result);
+        setVisibleCount(200);
+        const defaultKeys = matches.filter(m => !m.isDupe).map(getMatchKey);
+        setSelectedMatches(new Set(defaultKeys));
+      } catch (setErr) {
+        console.error('[bank-match] setMatchResult failed:', setErr);
+        setError(`UI fout bij weergeven resultaten: ${setErr.message}`);
+      }
     } catch (e) {
       console.error(e);
       setError(`Matching fout: ${e.message}`);
@@ -859,6 +872,14 @@ export default function BankMatchPage() {
       {/* Resultaten */}
       {matchResult && !importDone && (
         <>
+          <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4 text-[12px] text-[#1B3A5C]/80">
+            <strong>Resultaat:</strong> {matchResult.total} uitgaande betalingen geanalyseerd —
+            {' '}{matchResult.matches} match,
+            {' '}{matchResult.ambiguous} ambigu,
+            {' '}{matchResult.unmatchedCount} geen match
+            {matchResult.duplicates > 0 && `, ${matchResult.duplicates} duplicaten`}.
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
             <StatCard label="Uitgaande betalingen" value={matchResult.total} color="gray" sub="na ruisfilter" />
             <StatCard label="Match" value={matchResult.matches} color="emerald" />
@@ -882,6 +903,19 @@ export default function BankMatchPage() {
               <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">45-54</span> bedrag 15-30% af (review nodig)
             </span>
           </div>
+
+          {matchResult.matches === 0 && matchResult.total > 0 && (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-4">
+              <p className="text-[13px] text-rose-900 mb-1">
+                <strong>Geen unique matches gevonden.</strong>
+              </p>
+              <p className="text-[12px] text-rose-800">
+                Alle transacties zijn óf ambigu (meerdere mogelijke facturen) óf geen match.
+                Bekijk de secties hieronder voor diagnose. Tip: probeer minder PDFs tegelijk,
+                of breid alias-groepen uit als specifieke vendors niet worden herkend.
+              </p>
+            </div>
+          )}
 
           {matchResult.matches > 0 && (() => {
             const allMatches = matchResult.matchList.filter(m => !m.isDupe);
@@ -943,13 +977,25 @@ export default function BankMatchPage() {
                 </div>
 
                 <MatchTable
-                  matches={allMatches}
+                  matches={allMatches.slice(0, visibleCount)}
                   selectedKeys={selectedMatches}
                   onToggle={toggleOne}
                   onToggleAll={toggleAll}
                   allSelected={allSelected}
                   someSelected={someSelected}
                 />
+                {allMatches.length > visibleCount && (
+                  <div className="mt-3 text-center">
+                    <button onClick={() => setVisibleCount(c => c + 200)}
+                      className="px-4 py-1.5 rounded-lg bg-blue-100 text-blue-800 text-[12px] font-semibold hover:bg-blue-200">
+                      Toon volgende 200 ({allMatches.length - visibleCount} verborgen)
+                    </button>
+                    <p className="text-[10px] text-[#1B3A5C]/40 mt-1">
+                      Niet-getoonde rijen zijn nog steeds geselecteerd voor import.
+                      Filter op score om de set te beperken.
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })()}
