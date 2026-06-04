@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_match_bank_page_v3.js
+   BESTAND: ap_match_bank_page_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/bank/page.js
    (nieuwe folder: match/bank/, hernoemen naar page.js)
 
@@ -10,6 +10,13 @@
    filtert uitgaande betalingen → matcht tegen openstaande
    facturen → toont resultaten → importeert kandidaten naar
    ap_match_candidates met source='bank_mcb' of 'bank_rbc'.
+
+   v4 WIJZIGINGEN:
+   - Per-rij checkbox bij te importeren kandidaten.
+     Default alle aangevinkt; lage scores kun je makkelijk uitvinken.
+   - Master checkbox + "vink alles uit / vink alles aan" knoppen.
+   - Snelle filters: alleen score >= 70 / 85 selecteren.
+   - Import knop gebruikt alleen aangevinkte kandidaten.
 
    v3 WIJZIGINGEN:
    - Tolerantie verhoogd tot 30% verschil (was 1% XCG / 6% FX).
@@ -40,7 +47,7 @@
    ============================================================ */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useApRole } from '../../layout';
 import Link from 'next/link';
@@ -72,6 +79,10 @@ function fmtDate(v) {
   return `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 }
 function fmtNum(n) { return new Intl.NumberFormat('nl-NL').format(n); }
+
+function getMatchKey(m) {
+  return `${m.tx.bank}_${m.sourceRef}_${m.invoice.id}`;
+}
 
 // Parse "6.811,51" → 6811.51 (NL/Curaçao notation)
 function parseMcbAmount(s) {
@@ -381,6 +392,7 @@ export default function BankMatchPage() {
   const [transactions, setTransactions] = useState([]);
   const [matchResult, setMatchResult] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [selectedMatches, setSelectedMatches] = useState(new Set());
   const [importDone, setImportDone] = useState(null);
   const [error, setError] = useState(null);
 
@@ -548,7 +560,7 @@ export default function BankMatchPage() {
         }
       }
 
-      setMatchResult({
+      const result = {
         total: txs.length,
         matches: matches.filter(m => !m.isDupe).length,
         duplicates: matches.filter(m => m.isDupe).length,
@@ -558,7 +570,11 @@ export default function BankMatchPage() {
         ambiguousList: ambiguous,
         unmatched,
         reasonCounts,
-      });
+      };
+      setMatchResult(result);
+      // Default: alle non-dupe matches geselecteerd
+      const defaultKeys = matches.filter(m => !m.isDupe).map(getMatchKey);
+      setSelectedMatches(new Set(defaultKeys));
     } catch (e) {
       console.error(e);
       setError(`Matching fout: ${e.message}`);
@@ -570,7 +586,7 @@ export default function BankMatchPage() {
     setImporting(true);
     setError(null);
     try {
-      const toImport = matchResult.matchList.filter(m => !m.isDupe);
+      const toImport = matchResult.matchList.filter(m => !m.isDupe && selectedMatches.has(getMatchKey(m)));
       const rows = toImport.map(m => ({
         invoice_id: m.invoice.id,
         source: m.sourceKey,
@@ -744,28 +760,76 @@ export default function BankMatchPage() {
             </span>
           </div>
 
-          {matchResult.matches > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
-              <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-                <div>
-                  <h2 className="text-[16px] font-bold text-[#1B3A5C]">Te importeren kandidaten</h2>
-                  <p className="text-[12px] text-[#1B3A5C]/60 mt-1">
-                    Worden toegevoegd aan de afletter-werklijst (status: te bevestigen).
-                  </p>
+          {matchResult.matches > 0 && (() => {
+            const allMatches = matchResult.matchList.filter(m => !m.isDupe);
+            const selectedCount = allMatches.filter(m => selectedMatches.has(getMatchKey(m))).length;
+            const allSelected = selectedCount === allMatches.length;
+            const someSelected = selectedCount > 0 && selectedCount < allMatches.length;
+
+            function toggleAll() {
+              if (allSelected || someSelected) setSelectedMatches(new Set());
+              else setSelectedMatches(new Set(allMatches.map(getMatchKey)));
+            }
+            function toggleOne(key) {
+              const next = new Set(selectedMatches);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              setSelectedMatches(next);
+            }
+            function selectByScore(minScore) {
+              setSelectedMatches(new Set(allMatches.filter(m => m.score >= minScore).map(getMatchKey)));
+            }
+
+            return (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                  <div>
+                    <h2 className="text-[16px] font-bold text-[#1B3A5C]">Te importeren kandidaten</h2>
+                    <p className="text-[12px] text-[#1B3A5C]/60 mt-1">
+                      Vink uit wat je niet wilt — alleen aangevinkte regels worden geïmporteerd.
+                    </p>
+                  </div>
+                  <button onClick={importMatches} disabled={importing || selectedCount === 0}
+                    className="px-4 py-2 rounded-lg bg-emerald-500 text-white text-[13px] font-semibold hover:bg-emerald-600 disabled:opacity-50">
+                    {importing ? 'Importeren...' : `✓ Importeer ${selectedCount} ${selectedCount === 1 ? 'kandidaat' : 'kandidaten'}`}
+                  </button>
                 </div>
-                <button onClick={importMatches} disabled={importing}
-                  className="px-4 py-2 rounded-lg bg-emerald-500 text-white text-[13px] font-semibold hover:bg-emerald-600 disabled:opacity-50">
-                  {importing ? 'Importeren...' : `✓ Importeer ${matchResult.matches} kandidaten`}
-                </button>
+
+                {/* Snelle selectie-knoppen */}
+                <div className="flex items-center gap-2 flex-wrap mb-3 text-[11px]">
+                  <span className="text-[#1B3A5C]/60">Snelle selectie:</span>
+                  <button onClick={() => setSelectedMatches(new Set(allMatches.map(getMatchKey)))}
+                    className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-[#1B3A5C]/80 font-semibold">
+                    Alles ({allMatches.length})
+                  </button>
+                  <button onClick={() => selectByScore(85)}
+                    className="px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-semibold">
+                    Alleen score 85+ ({allMatches.filter(m => m.score >= 85).length})
+                  </button>
+                  <button onClick={() => selectByScore(70)}
+                    className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 font-semibold">
+                    Score 70+ ({allMatches.filter(m => m.score >= 70).length})
+                  </button>
+                  <button onClick={() => setSelectedMatches(new Set())}
+                    className="px-2 py-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-800 font-semibold">
+                    Niets
+                  </button>
+                  <span className="ml-auto text-[#1B3A5C]/50">
+                    {selectedCount} van {allMatches.length} geselecteerd
+                  </span>
+                </div>
+
+                <MatchTable
+                  matches={allMatches}
+                  selectedKeys={selectedMatches}
+                  onToggle={toggleOne}
+                  onToggleAll={toggleAll}
+                  allSelected={allSelected}
+                  someSelected={someSelected}
+                />
               </div>
-              <MatchTable matches={matchResult.matchList.filter(m => !m.isDupe).slice(0, 30)} />
-              {matchResult.matches > 30 && (
-                <p className="text-[11px] text-[#1B3A5C]/50 mt-2 text-center">
-                  Eerste 30 getoond — alle {matchResult.matches} worden geïmporteerd.
-                </p>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {matchResult.ambiguous > 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
@@ -839,12 +903,19 @@ function StatCard({ label, value, color, sub }) {
   );
 }
 
-function MatchTable({ matches }) {
+function MatchTable({ matches, selectedKeys, onToggle, onToggleAll, allSelected, someSelected }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-[12px]">
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
+            <th className="w-10 p-2">
+              <input type="checkbox"
+                checked={allSelected}
+                ref={el => { if (el) el.indeterminate = !allSelected && someSelected; }}
+                onChange={onToggleAll}
+                className="cursor-pointer" />
+            </th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Datum</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bank vendor</th>
@@ -856,39 +927,49 @@ function MatchTable({ matches }) {
           </tr>
         </thead>
         <tbody>
-          {matches.map((m, i) => (
-            <tr key={i} className="border-b border-gray-100">
-              <td className="p-2">
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                  m.tx.bank === 'mcb' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-                }`}>{m.tx.bank?.toUpperCase()}</span>
-              </td>
-              <td className="p-2 text-[#1B3A5C]/70">{fmtDate(m.tx.date)}</td>
-              <td className="p-2 text-[11px] text-[#1B3A5C]/80" title={m.tx.description}>
-                {m.vendorName}
-                {m.reference && <div className="text-[10px] text-[#1B3A5C]/40 font-mono">ref: {m.reference}</div>}
-              </td>
-              <td className="p-2">
-                <div className="font-semibold text-[#1B3A5C]">{m.invoice.vendor_name}</div>
-                <div className="text-[10px] text-[#1B3A5C]/40 font-mono">#{m.invoice.vendor_id}</div>
-              </td>
-              <td className="p-2 font-mono text-[#1B3A5C]">{m.invoice.invoice_number}</td>
-              <td className="p-2 text-right font-mono">{fmtMoney(m.tx.amount)}</td>
-              <td className="p-2 text-right font-mono text-[#1B3A5C]/70">
-                {fmtMoney(parseFloat(m.invoice.original_amount) || Math.abs(parseFloat(m.invoice.balance)))}
-              </td>
-              <td className="p-2 text-center">
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                  m.score >= 85 ? 'bg-emerald-100 text-emerald-700' :
-                  m.score >= 70 ? 'bg-amber-100 text-amber-700' :
-                  m.score >= 55 ? 'bg-orange-100 text-orange-700' :
-                  'bg-rose-100 text-rose-700'
+          {matches.map((m, i) => {
+            const key = getMatchKey(m);
+            const checked = selectedKeys.has(key);
+            return (
+              <tr key={i} onClick={() => onToggle(key)}
+                className={`border-b border-gray-100 cursor-pointer transition-all ${
+                  checked ? 'bg-blue-50/40' : 'bg-gray-50/30 hover:bg-gray-50/60'
                 }`}>
-                  {Math.round(m.score)}
-                </span>
-              </td>
-            </tr>
-          ))}
+                <td className="p-2" onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" checked={checked} onChange={() => onToggle(key)} className="cursor-pointer" />
+                </td>
+                <td className="p-2">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    m.tx.bank === 'mcb' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                  }`}>{m.tx.bank?.toUpperCase()}</span>
+                </td>
+                <td className="p-2 text-[#1B3A5C]/70">{fmtDate(m.tx.date)}</td>
+                <td className="p-2 text-[11px] text-[#1B3A5C]/80" title={m.tx.description}>
+                  {m.vendorName}
+                  {m.reference && <div className="text-[10px] text-[#1B3A5C]/40 font-mono">ref: {m.reference}</div>}
+                </td>
+                <td className="p-2">
+                  <div className="font-semibold text-[#1B3A5C]">{m.invoice.vendor_name}</div>
+                  <div className="text-[10px] text-[#1B3A5C]/40 font-mono">#{m.invoice.vendor_id}</div>
+                </td>
+                <td className="p-2 font-mono text-[#1B3A5C]">{m.invoice.invoice_number}</td>
+                <td className="p-2 text-right font-mono">{fmtMoney(m.tx.amount)}</td>
+                <td className="p-2 text-right font-mono text-[#1B3A5C]/70">
+                  {fmtMoney(parseFloat(m.invoice.original_amount) || Math.abs(parseFloat(m.invoice.balance)))}
+                </td>
+                <td className="p-2 text-center">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    m.score >= 85 ? 'bg-emerald-100 text-emerald-700' :
+                    m.score >= 70 ? 'bg-amber-100 text-amber-700' :
+                    m.score >= 55 ? 'bg-orange-100 text-orange-700' :
+                    'bg-rose-100 text-rose-700'
+                  }`}>
+                    {Math.round(m.score)}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
