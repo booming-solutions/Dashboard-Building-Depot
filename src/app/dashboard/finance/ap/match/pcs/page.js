@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_match_pcs_page_v1.js
+   BESTAND: ap_match_pcs_page_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/pcs/page.js
    (nieuwe folders aanmaken: match/pcs/, hernoemen naar page.js)
 
@@ -8,6 +8,18 @@
    Functie: upload Payment Control Sheet Excel → parseert →
    matcht tegen openstaande facturen → toont resultaten →
    importeert kandidaten naar ap_match_candidates.
+
+   WIJZIGINGEN v2 (na lage match-rate 17/695 in v1):
+   - Vendor naam-matching aangescherpt: legal suffixes (B.V., LLC,
+     LTD, NV) gestript, punctuation genormaliseerd, whitespace
+     opgeschoond. Levert betere matches voor 339 PCS-rijen
+     zonder vendor nummer.
+   - Match ook tegen 'paid' invoices: PCS gaat juist om
+     al-betaalde facturen. Wordt nu gecategoriseerd als
+     "Al betaald in portal" ipv "geen match".
+   - Reden-counts in unmatched: groepering per type met aantallen
+     en cross-check (factuur wel bij ander vendor?).
+   - Float .0 stripping en betere invoice# normalisatie.
    ============================================================ */
 'use client';
 
@@ -56,6 +68,26 @@ function isoDate(v) {
 
 function normalizeStr(s) {
   return String(s || '').trim().toLowerCase();
+}
+
+function normalizeInvNum(v) {
+  if (v === null || v === undefined) return '';
+  let s = String(v).trim();
+  // Excel float coercion: "2026.0" → "2026", maar "2026.112" blijft
+  s = s.replace(/\.0+$/, '');
+  return s;
+}
+
+function normalizeName(s) {
+  if (!s) return '';
+  return String(s).trim().toLowerCase()
+    // Verwijder legal entity suffixes
+    .replace(/\b(b\.?v\.?|n\.?v\.?|ltd\.?|llc\.?|s\.?a\.?|inc\.?|corp\.?|co\.?|company|gmbh)\b/gi, '')
+    // Verwijder punctuation
+    .replace(/[.,\-'"\(\)&\/]/g, ' ')
+    // Collapse whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function computeMatchScore(pcsRow, invoice) {
@@ -128,33 +160,38 @@ export default function PcsMatchPage() {
   async function runMatching(rows) {
     setError(null);
     try {
-      // 1. Vendors en facturen ophalen
+      // 1. Vendors ophalen
       const vendors = await fetchAllPaginated(() =>
         supabase.from('ap_vendors').select('vendor_id, vendor_name')
       );
-      const vendorByName = {};
+      const vendorByName = {};  // genormaliseerde naam → vendor_id
       const vendorById = {};
       for (const v of vendors) {
-        vendorByName[normalizeStr(v.vendor_name)] = v.vendor_id;
+        const n = normalizeName(v.vendor_name);
+        if (n) vendorByName[n] = v.vendor_id;
         vendorById[String(v.vendor_id)] = v.vendor_name;
       }
+      const vendorNamesList = Object.entries(vendorByName);  // [naam, id]
 
-      // Niet-paid facturen (kandidaten voor afletter)
+      // 2. ALLE invoices ophalen (ook 'paid' — die zijn al gematched)
       const invoices = await fetchAllPaginated(() =>
         supabase.from('ap_invoices')
           .select('id, vendor_id, vendor_name, invoice_number, balance, original_amount, currency, status, invoice_date, due_date')
-          .neq('status', 'paid')
       );
 
-      // Lookup map: vendor_id → { invoice_number → invoice }
-      const invByVendInv = {};
+      // Lookup maps
+      const invByVendInv = {};  // vid → invNumKey → invoice
+      const invByInvOnly = {};  // invNumKey → [invoices]
       for (const inv of invoices) {
         const vid = String(inv.vendor_id);
+        const invNumKey = normalizeInvNum(inv.invoice_number);
         if (!invByVendInv[vid]) invByVendInv[vid] = {};
-        invByVendInv[vid][String(inv.invoice_number).trim()] = inv;
+        invByVendInv[vid][invNumKey] = inv;
+        if (!invByInvOnly[invNumKey]) invByInvOnly[invNumKey] = [];
+        invByInvOnly[invNumKey].push(inv);
       }
 
-      // Reeds bestaande candidates ophalen (om duplicates te skippen)
+      // Bestaande candidates (skip duplicates)
       const existing = await fetchAllPaginated(() =>
         supabase.from('ap_match_candidates')
           .select('invoice_id, source, source_reference, status')
@@ -166,63 +203,95 @@ export default function PcsMatchPage() {
       );
 
       const matches = [];
+      const alreadyPaid = [];
       const unmatched = [];
+      const reasonCounts = {};
+      function tally(reason) {
+        reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+      }
 
       for (const row of rows) {
         // Vendor lookup
         let vid = null;
+        let vendorMatchMethod = null;
         if (row.Nummer !== null && row.Nummer !== undefined && row.Nummer !== '') {
           vid = String(parseInt(row.Nummer));
+          vendorMatchMethod = 'id';
         }
         if (!vid && row.Naam) {
-          const naamLower = normalizeStr(row.Naam);
-          vid = vendorByName[naamLower];
-          if (!vid) {
-            // Substring match
-            for (const [name, id] of Object.entries(vendorByName)) {
-              if (name && (name.includes(naamLower) || naamLower.includes(name))) {
-                vid = id;
+          const naamNorm = normalizeName(row.Naam);
+          // Exact normalized name match
+          if (vendorByName[naamNorm]) {
+            vid = String(vendorByName[naamNorm]);
+            vendorMatchMethod = 'name_exact';
+          } else if (naamNorm.length >= 3) {
+            // Substring match — both directions
+            for (const [name, id] of vendorNamesList) {
+              if (name.length >= 3 && (name.includes(naamNorm) || naamNorm.includes(name))) {
+                vid = String(id);
+                vendorMatchMethod = 'name_fuzzy';
                 break;
               }
             }
           }
-          vid = vid ? String(vid) : null;
         }
+
+        const invNumKey = normalizeInvNum(row['Invoice#']);
+
         if (!vid) {
-          unmatched.push({ row, reason: 'Geen vendor herkend' });
+          // Cross-check: factuurnummer wel bij andere vendor?
+          const candidates = invByInvOnly[invNumKey];
+          if (candidates && candidates.length > 0) {
+            const reason = 'Vendor onbekend, factuur wel bij andere vendor';
+            tally(reason);
+            unmatched.push({ row, reason, hint: `${candidates[0].vendor_name} (#${candidates[0].vendor_id})` });
+          } else {
+            const reason = 'Vendor niet herkend';
+            tally(reason);
+            unmatched.push({ row, reason });
+          }
           continue;
         }
 
         const invoiceMap = invByVendInv[vid];
         if (!invoiceMap) {
-          unmatched.push({ row, reason: `Geen openstaande facturen voor vendor #${vid}`, vendor_id: vid });
+          const reason = 'Vendor herkend, maar geen facturen in portal';
+          tally(reason);
+          unmatched.push({ row, reason, vendor_id: vid });
           continue;
         }
 
-        const invNum = String(row['Invoice#']).trim();
-        const invoice = invoiceMap[invNum];
+        const invoice = invoiceMap[invNumKey];
         if (!invoice) {
-          unmatched.push({ row, reason: `Factuur ${invNum} niet gevonden voor #${vid}`, vendor_id: vid });
+          // Factuur niet bij deze vendor — check of bij andere vendor?
+          const otherVendor = invByInvOnly[invNumKey];
+          if (otherVendor && otherVendor.length > 0) {
+            const reason = `Factuur wel in portal maar bij andere vendor`;
+            tally(reason);
+            unmatched.push({ row, reason, vendor_id: vid, hint: `${otherVendor[0].vendor_name} (#${otherVendor[0].vendor_id})` });
+          } else {
+            const reason = 'Factuur niet in portal (niet geïmporteerd?)';
+            tally(reason);
+            unmatched.push({ row, reason, vendor_id: vid });
+          }
           continue;
         }
 
+        // We hebben een match. Status check:
+        if (invoice.status === 'paid') {
+          alreadyPaid.push({ pcsRow: row, invoice, vendorMatchMethod });
+          continue;
+        }
+
+        // Kandidaat voor afletter
         const score = computeMatchScore(row, invoice);
         const confidence = score >= 90 ? 'exact' : 'fuzzy';
         const sourceRef = String(row['Regel#'] || '');
         const dupeKey = `${invoice.id}|${sourceRef}`;
         const isDupe = existingKey.has(dupeKey);
-
-        matches.push({
-          pcsRow: row,
-          invoice,
-          score,
-          confidence,
-          sourceRef,
-          isDupe,
-        });
+        matches.push({ pcsRow: row, invoice, score, confidence, sourceRef, isDupe, vendorMatchMethod });
       }
 
-      // Sortering: exact eerst, dan fuzzy, binnen elk op score desc
       matches.sort((a, b) => b.score - a.score);
 
       setMatchResult({
@@ -230,9 +299,12 @@ export default function PcsMatchPage() {
         matchesExact: matches.filter(m => m.confidence === 'exact' && !m.isDupe).length,
         matchesFuzzy: matches.filter(m => m.confidence === 'fuzzy' && !m.isDupe).length,
         duplicates: matches.filter(m => m.isDupe).length,
+        alreadyPaid: alreadyPaid.length,
         unmatchedCount: unmatched.length,
         matches,
+        alreadyPaidRows: alreadyPaid,
         unmatched,
+        reasonCounts,
       });
     } catch (e) {
       setError(`Fout bij matching: ${e.message}`);
@@ -356,11 +428,12 @@ export default function PcsMatchPage() {
       {/* Resultaten */}
       {matchResult && !importDone && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
             <StatCard label="Totaal Paid rijen" value={matchResult.total} color="gray" />
             <StatCard label="Exact match" value={matchResult.matchesExact} color="emerald" />
             <StatCard label="Fuzzy match" value={matchResult.matchesFuzzy} color="amber" />
             <StatCard label="Duplicaten" value={matchResult.duplicates} color="blue" sub="al geïmporteerd" />
+            <StatCard label="Al betaald" value={matchResult.alreadyPaid} color="purple" sub="in portal" />
             <StatCard label="Geen match" value={matchResult.unmatchedCount} color="rose" />
           </div>
 
@@ -389,17 +462,43 @@ export default function PcsMatchPage() {
             )}
           </div>
 
+          {matchResult.alreadyPaid > 0 && (
+            <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-4">
+              <p className="text-[13px] text-purple-900">
+                <strong>{fmtNum(matchResult.alreadyPaid)} facturen</strong> uit PCS staan al op &quot;betaald&quot; in portal.
+                Geen actie nodig — ze zijn eerder afgeletterd.
+              </p>
+            </div>
+          )}
+
           {matchResult.unmatched.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
               <h2 className="text-[16px] font-bold text-[#1B3A5C] mb-3">
                 Geen match ({matchResult.unmatched.length})
               </h2>
-              <p className="text-[12px] text-[#1B3A5C]/60 mb-3">
-                PCS heeft deze als Paid maar er is geen openstaande factuur in de portal. Mogelijk al betaald via portal of de factuur is daar nog niet ingevoerd.
-              </p>
+
+              {/* Breakdown per reden */}
+              {Object.keys(matchResult.reasonCounts || {}).length > 0 && (
+                <div className="bg-gray-50 rounded-lg p-3 mb-4">
+                  <p className="text-[12px] font-semibold text-[#1B3A5C] mb-2">Verdeling per reden:</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {Object.entries(matchResult.reasonCounts)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([reason, count]) => (
+                        <div key={reason} className="flex items-center gap-2 text-[12px]">
+                          <span className="px-1.5 py-0.5 rounded font-mono font-bold bg-rose-100 text-rose-700 min-w-[2.5rem] text-center">
+                            {count}
+                          </span>
+                          <span className="text-[#1B3A5C]/70">{reason}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
               <UnmatchedTable rows={matchResult.unmatched.slice(0, 50)} />
               {matchResult.unmatched.length > 50 && (
-                <p className="text-[11px] text-[#1B3A5C]/50 mt-2 text-center">Eerste 50 getoond.</p>
+                <p className="text-[11px] text-[#1B3A5C]/50 mt-2 text-center">Eerste 50 getoond — alle redenen in breakdown hierboven.</p>
               )}
             </div>
           )}
@@ -430,6 +529,7 @@ function StatCard({ label, value, color, sub }) {
     emerald: 'bg-emerald-50 text-emerald-800 border-emerald-200',
     amber: 'bg-amber-50 text-amber-800 border-amber-200',
     blue: 'bg-blue-50 text-blue-800 border-blue-200',
+    purple: 'bg-purple-50 text-purple-800 border-purple-200',
     rose: 'bg-rose-50 text-rose-800 border-rose-200',
   };
   return (
@@ -496,7 +596,7 @@ function UnmatchedTable({ rows }) {
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Vendor</th>
             <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Factuur</th>
             <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Bedrag</th>
-            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Reden geen match</th>
+            <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Reden / hint</th>
           </tr>
         </thead>
         <tbody>
@@ -511,7 +611,10 @@ function UnmatchedTable({ rows }) {
               <td className="p-2 text-right font-mono text-[#1B3A5C]/70">
                 {fmtMoney(parseFloat(u.row.Totaalbedrag))} {u.row.Currency || ''}
               </td>
-              <td className="p-2 text-rose-700/80 text-[11px]">{u.reason}</td>
+              <td className="p-2 text-rose-700/80 text-[11px]">
+                {u.reason}
+                {u.hint && <div className="text-[10px] text-[#1B3A5C]/50 italic">→ {u.hint}</div>}
+              </td>
             </tr>
           ))}
         </tbody>
