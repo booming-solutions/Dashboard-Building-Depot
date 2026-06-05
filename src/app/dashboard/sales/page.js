@@ -403,7 +403,7 @@ export default function SalesDashboard(){
           priorFiltered.filter(p=>(p.effective_dept_code||p.dept_code)===r.dept_code&&p.effective_bum_group===r.bum&&p.year===priorYear&&p.month>dayFrac.month).forEach(p=>{lS-=parseFloat(p.net_sales);lG-=parseFloat(p.gross_margin)});
         }
       }
-      return{...r,dept_code_num:parseInt(r.dept_code)||999,ly:conv(lS),varPct:lS?((r.net_sales-lS)/Math.abs(lS)*100):0,gmPct:r.net_sales?r.gross_margin/r.net_sales*100:0,net_sales_conv:conv(r.net_sales),gm_conv:conv(r.gross_margin),budMargin:conv(bd.g),budGmPct:bd.s?bd.g/bd.s*100:0};
+      return{...r,dept_code_num:parseInt(r.dept_code)||999,ly:conv(lS),varPct:lS?((r.net_sales-lS)/Math.abs(lS)*100):0,gmPct:r.net_sales?r.gross_margin/r.net_sales*100:0,net_sales_conv:conv(r.net_sales),gm_conv:conv(r.gross_margin),budMargin:conv(bd.g),budGmPct:bd.s?bd.g/bd.s*100:0,budSales:conv(bd.s),varBudPct:bd.s?((r.net_sales-bd.s)/Math.abs(bd.s)*100):0};
     }).filter(r=>!search||r.dept.toLowerCase().includes(search.toLowerCase())||(r.bumLabel||'').toLowerCase().includes(search.toLowerCase()))
     .sort((a,b)=>{
       if(a.dept_code==='OT'&&b.dept_code!=='OT')return 1;
@@ -518,15 +518,17 @@ export default function SalesDashboard(){
         <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
           <table className="w-full border-collapse"><thead><tr>
             {[['Departement','dept'],['Afdeling','bum']].map(([l,k])=><th key={k} className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0">{l}</th>)}
-            {[['Omzet','net_sales_conv'],['LY','ly'],['Var %','varPct'],['BM','gm_conv'],['Bud BM','budMargin'],['BM %','gmPct'],['Bud BM %','budGmPct']].map(([l,k])=><th key={k} onClick={()=>toggleSort(k)} className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0 cursor-pointer hover:text-[#E84E1B] whitespace-nowrap">{l}{sortCol===k?(sortDir==='desc'?' ↓':' ↑'):''}</th>)}
+            {[['Omzet','net_sales_conv'],['LY','ly'],['Var %','varPct'],['Bud','budSales'],['Var % Bud','varBudPct'],['BM','gm_conv'],['Bud BM','budMargin'],['BM %','gmPct'],['Bud BM %','budGmPct']].map(([l,k])=><th key={k} onClick={()=>toggleSort(k)} className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] bg-white sticky top-0 cursor-pointer hover:text-[#E84E1B] whitespace-nowrap">{l}{sortCol===k?(sortDir==='desc'?' ↓':' ↑'):''}</th>)}
           </tr></thead><tbody>
-            {(function(){const tSales=tableData.reduce((s,r)=>s+r.net_sales_conv,0);const tLY=tableData.reduce((s,r)=>s+r.ly,0);const tGM=tableData.reduce((s,r)=>s+r.gm_conv,0);const tBudGM=tableData.reduce((s,r)=>s+r.budMargin,0);const tVarPct=tLY?((tSales-tLY)/Math.abs(tLY)*100):0;const tGmPct=tSales?tGM/tSales*100:0;const tBudGmPct=tSales?tBudGM/tSales*100:0;const tgc=tGmPct>=35?'#16a34a':tGmPct>=25?'#d97706':'#dc2626';const tbc=tBudGmPct>=35?'#16a34a':tBudGmPct>=25?'#d97706':'#dc2626';return(
+            {(function(){const tSales=tableData.reduce((s,r)=>s+r.net_sales_conv,0);const tLY=tableData.reduce((s,r)=>s+r.ly,0);const tBudS=tableData.reduce((s,r)=>s+r.budSales,0);const tGM=tableData.reduce((s,r)=>s+r.gm_conv,0);const tBudGM=tableData.reduce((s,r)=>s+r.budMargin,0);const tVarPct=tLY?((tSales-tLY)/Math.abs(tLY)*100):0;const tVarBudPct=tBudS?((tSales-tBudS)/Math.abs(tBudS)*100):0;const tGmPct=tSales?tGM/tSales*100:0;const tBudGmPct=tSales?tBudGM/tSales*100:0;const tgc=tGmPct>=35?'#16a34a':tGmPct>=25?'#d97706':'#dc2626';const tbc=tBudGmPct>=35?'#16a34a':tBudGmPct>=25?'#d97706':'#dc2626';return(
               <tr className="bg-[#faf7f4] font-bold">
                 <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3]">TOTAAL</td>
                 <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3]"></td>
                 <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tSales/1000))}</td>
                 <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tLY/1000))}</td>
                 <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono font-semibold" style={{color:tVarPct>=0?'#16a34a':'#dc2626'}}>{tVarPct>=0?'+':''}{fmtP(tVarPct)}</td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tBudS/1000))}</td>
+                <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono font-semibold" style={{color:tVarBudPct>=0?'#16a34a':'#dc2626'}}>{tVarBudPct>=0?'+':''}{fmtP(tVarBudPct)}</td>
                 <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tGM/1000))}</td>
                 <td className="p-2.5 text-[13px] border-b-2 border-[#c5bfb3] text-right font-mono">{fmt(Math.round(tBudGM/1000))}</td>
                 <td className="p-2.5 border-b-2 border-[#c5bfb3] text-right"><div className="flex items-center justify-end gap-2"><div className="w-[8px] h-[8px] rounded-full" style={{backgroundColor:tgc}}/><span className="font-mono text-[13px] font-semibold" style={{color:tgc}}>{fmtP(tGmPct)}</span></div></td>
@@ -539,6 +541,8 @@ export default function SalesDashboard(){
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.net_sales_conv/1000))}</td>
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.ly/1000))}</td>
                 <td className={`p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold`} style={isOther?rowStyle:{color:r.varPct>=0?'#16a34a':'#dc2626'}}>{r.varPct>=0?'+':''}{fmtP(r.varPct)}</td>
+                <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.budSales/1000))}</td>
+                <td className={`p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold`} style={isOther?rowStyle:{color:r.varBudPct>=0?'#16a34a':'#dc2626'}}>{r.varBudPct>=0?'+':''}{fmtP(r.varBudPct)}</td>
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.gm_conv/1000))}</td>
                 <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={rowStyle}>{fmt(Math.round(r.budMargin/1000))}</td>
                 <td className="p-2.5 border-b border-[#e5ddd4] text-right">{isOther?<span className="font-mono text-[13px]" style={rowStyle}>{fmtP(r.gmPct)}</span>:<div className="flex items-center justify-end gap-2"><div className="w-[8px] h-[8px] rounded-full" style={{backgroundColor:gc}}/><span className="font-mono text-[13px] font-semibold" style={{color:gc}}>{fmtP(r.gmPct)}</span></div>}</td>
