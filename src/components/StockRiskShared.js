@@ -16,6 +16,11 @@
    - Groep-header "Item" colSpan 4 → 5
    - TOTAAL rij colSpan 4 → 5
    - Empty state colSpan 16/18 → 17/19
+   - BUGFIX: ETA en PO tooltips toonden datum 1 dag te vroeg.
+     Oorzaak: new Date('2026-06-08') → UTC midnight, daarna
+     .getDate() in lokale Curaçao-tijd (UTC-4) = 7. Nu gebruik
+     ik consequent getUTCDate/UTCMonth/UTCFullYear voor PO datums.
+     De "isPast" check vergelijkt nu ook in UTC.
 
    Wijzigingen t.o.v. v8:
    - BUGFIX: BU-folder namen (HARDWARE, LIVING, etc) worden nu correct
@@ -1121,14 +1126,14 @@ export default function StockRiskShared({ bumFilter }) {
                             title={m.po_list && m.po_list.length > 0
                               ? 'Verwachte leveringen (totaal voor item):\n' + m.po_list.map(function(p) {
                                   var d = new Date(p.date);
-                                  return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
+                                  return 'PO ' + p.po + ' — ' + (d.getUTCDate() + '/' + (d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()) + ' — ' + p.qty + ' stuks';
                                 }).join('\n')
                               : 'Geen verwachte leveringen geregistreerd'}>{m.qoo_cur > 0 ? fmt(Math.round(m.qoo_cur)) : '-'}</td>
                         <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo_bon > 0 ? '#1B3A5C' : '#a08a74' }}
                             title={m.po_list && m.po_list.length > 0
                               ? 'Verwachte leveringen (totaal voor item):\n' + m.po_list.map(function(p) {
                                   var d = new Date(p.date);
-                                  return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
+                                  return 'PO ' + p.po + ' — ' + (d.getUTCDate() + '/' + (d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()) + ' — ' + p.qty + ' stuks';
                                 }).join('\n')
                               : 'Geen verwachte leveringen geregistreerd'}>{m.qoo_bon > 0 ? fmt(Math.round(m.qoo_bon)) : '-'}</td>
                       </Fragment>
@@ -1139,7 +1144,7 @@ export default function StockRiskShared({ bumFilter }) {
                             title={m.po_list && m.po_list.length > 0
                               ? 'Verwachte leveringen:\n' + m.po_list.map(function(p) {
                                   var d = new Date(p.date);
-                                  return 'PO ' + p.po + ' — ' + (d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear()) + ' — ' + p.qty + ' stuks';
+                                  return 'PO ' + p.po + ' — ' + (d.getUTCDate() + '/' + (d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()) + ' — ' + p.qty + ' stuks';
                                 }).join('\n')
                               : 'Geen verwachte leveringen geregistreerd'}>{m.qoo > 0 ? fmt(Math.round(m.qoo)) : '-'}</td>
                       </Fragment>
@@ -1153,10 +1158,14 @@ export default function StockRiskShared({ bumFilter }) {
                         ];
                       }
                       var d = new Date(m.next_eta);
-                      var today = new Date(); today.setHours(0, 0, 0, 0);
-                      var isPast = d < today;
-                      var dateStr = d.getDate() + '/' + (d.getMonth() + 1);
-                      var fullDateStr = d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
+                      // Vergelijk in UTC: "vandaag" als UTC midnight, anders shift in tijdzone
+                      // veroorzaakt false-positives (datum lijkt 1 dag eerder/later)
+                      var now = new Date();
+                      var todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+                      var isPast = d.getTime() < todayUtc;
+                      // UTC date components: anders shift Curaçao (UTC-4) de datum 1 dag vroeger
+                      var dateStr = d.getUTCDate() + '/' + (d.getUTCMonth() + 1);
+                      var fullDateStr = d.getUTCDate() + '/' + (d.getUTCMonth() + 1) + '/' + d.getUTCFullYear();
                       var tooltipExtra = m.po_list.length > 1 ? '  (' + m.po_list.length + ' leveringen verwacht — hover over QOO voor alle)' : '';
                       return [
                         <td key="eta" className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]"
