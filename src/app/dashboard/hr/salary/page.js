@@ -379,7 +379,7 @@ export default function SalaryDashboard() {
           <div style={{padding:'12px 16px', background:'#f5ebe0', borderRadius:8, fontSize:12, color:'#6b6960', lineHeight:1.6, marginTop:14}}>
             <strong>Data-bronnen:</strong> Loonkosten uit Celery C4 - Loonjournaalpost · Headcount/FTE uit Celery C16 - Werknemerslijst (snapshot {activeSnapshot?.snapshot_date}). 
             FTE-berekening: deeltijdpercentage van actieve medewerkers op einde periode (= peildatum). 
-            "Actief" = in dienst datum ≤ peildatum, en uit dienst datum leeg of > peildatum.
+            "Actief" = in dienst datum kleiner of gelijk aan peildatum, en uit dienst datum leeg of na peildatum.
           </div>
         </>
       )}
