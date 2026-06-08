@@ -44,6 +44,11 @@ const CELERY_BU_MAP = {
   'DT - Drive Thru': 'Logistiek',
   'TM ZEE - Transit en Magazijn Zeelandia': 'Logistiek',
   'TRANS10 - Magazijn Brievengat': 'Logistiek',
+  'TRANS14 - Vulploeg': 'Logistiek',
+  // Archived afdelingen — gemerged in nieuwe BU-structuur
+  'KD - Keuken Depot': 'BU Sanitair/Keuken',
+  'TRANS15 - Hardware': 'BU Hardware',
+  'MER - Merchandise': 'Store Support',
   // Kantoor
   'FIN ADM - Financieel Administratie': 'BU Kantoor',
   'HR - Human Resource': 'BU Kantoor',
