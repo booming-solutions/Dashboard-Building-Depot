@@ -9,6 +9,14 @@
        ALTER TABLE buying_data ADD COLUMN mfg_part_number text;
    - Detectie tolerant voor varianten: "MFG Part #", "MFG#",
      "Manufacturer Part", etc.
+   - BUGFIX processPoDeliveries: dateKey pattern matchte per ongeluk
+     op de "PO Detail" kolom omdat 'eta' substring is van 'detail'.
+     Pattern 'eta' verwijderd; alleen specifieke patterns als
+     'date expected' / 'expected date' / 'eta date' worden geaccepteerd.
+     Gevolg eerder: PO-nummer (bv. 17381) werd als jaartal opgeslagen
+     (date_expected = 17381-01-01) → "1/1" in UI.
+   - Extra: jaar-sanity-check 2020-2035 in processPoDeliveries.
+     Rijen met out-of-range jaar worden geskipt + gelogd.
    WIJZIGING v22:
    - processNosSnapshot schrijft naast nos_coverage_snapshots óók
      naar nieuwe tabel nos_coverage_snapshots_dept (per dept_code)
@@ -1163,7 +1171,7 @@ async function processPoDeliveries(json) {
   var poKey = findCol(keys, ['po detail', 'po number']);
   var itemKey = findCol(keys, ['item number']);
   var descKey = findCol(keys, ['item description', 'description']);
-  var dateKey = findCol(keys, ['date expected', 'eta', 'expected date']);
+  var dateKey = findCol(keys, ['date expected', 'expected date', 'eta date', 'estimated arrival']);
   var qtyKey = findCol(keys, ['qoo rounded quantity', 'quantity', 'qoo', 'qty']);
 
   if (!poKey || !itemKey || !dateKey || !qtyKey) {
@@ -1203,6 +1211,15 @@ async function processPoDeliveries(json) {
       dateStr = d.getUTCFullYear() + '-' +
                 String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
                 String(d.getUTCDate()).padStart(2, '0');
+    }
+
+    // Sanity check: jaartal moet in een redelijke range liggen.
+    // Voorkomt corrupte data zoals jaar=17381 (PO-nummer per ongeluk als datum gelezen).
+    var yearNum = parseInt(dateStr.substring(0, 4), 10);
+    if (yearNum < 2020 || yearNum > 2035) {
+      console.warn('PO deliveries: skipping row with invalid date year ' + yearNum + ' (po=' + po + ', item=' + item + ', raw=' + JSON.stringify(dateVal) + ')');
+      skipped++;
+      continue;
     }
 
     rows.push({
