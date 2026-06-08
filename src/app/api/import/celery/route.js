@@ -218,9 +218,10 @@ function parseC4(rows, filename) {
     const debet = num(r[idx.debet]);
     const credit = num(r[idx.credit]);
     const uren = idx.uren >= 0 ? num(r[idx.uren]) : 0;
-    // Bedrag = debet - credit (kostenposten staan in debet, mutaties in credit zijn negatief)
-    const bedrag = debet - credit;
-    if (bedrag === 0 && uren === 0) { skipped++; continue; }
+    // Bedrag = debet (werkelijke kost). Credit-rijen zijn meestal boekhoud-tegenboekingen
+    // en worden apart in `credit` opgeslagen voor eventuele audit.
+    const bedrag = debet;
+    if (bedrag === 0 && credit === 0 && uren === 0) { skipped++; continue; }
 
     records.push({
       period_year: period.year,
