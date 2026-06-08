@@ -12,6 +12,13 @@
        huidige BUM-mapping. Acceptabel voor dit doel.
      · BUM-filter wordt nu toegepast op zowel items-tabel, departments,
        bumGroups als trendData.
+   - Bij selBum === 'all': trendgrafiek toont nu stacked area met
+     5 lagen op Waarde (XCG) — één per BU.
+     · Lagen gesorteerd op grootte (grootste BU onderaan)
+     · BUM-kleurenpalet: PASCAL blauw, HENK paars, JOHN groen,
+       DANIEL oranje, GIJS cyaan
+     · Aantal items lijn blijft zichtbaar op y1
+   - Bij selBum !== 'all': oude 2-lijn weergave (gefilterd op die BU)
 
    Wijzigingen t.o.v. v13:
    - "Ovg locaties" kolom gesplitst in "Ovg CUR" + "Ovg BON"
@@ -52,6 +59,17 @@ var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : (a / 1e3).toFixed(0) + 'K'); };
 var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
+// Kleuren per BUM voor stacked area chart in trend
+var BUM_COLORS_NEG = {
+  PASCAL: { line: '#1B3A5C', fill: 'rgba(27,58,92,0.55)' },     // donkerblauw
+  HENK:   { line: '#7c3aed', fill: 'rgba(124,58,237,0.55)' },   // paars
+  JOHN:   { line: '#16a34a', fill: 'rgba(22,163,74,0.55)' },    // groen
+  DANIEL: { line: '#E84E1B', fill: 'rgba(232,78,27,0.55)' },    // oranje
+  GIJS:   { line: '#0891b2', fill: 'rgba(8,145,178,0.55)' },    // cyaan
+};
+function bumColor(bum) {
+  return BUM_COLORS_NEG[String(bum || '').toUpperCase()] || { line: '#888', fill: 'rgba(136,136,136,0.55)' };
+}
 
 function fmtDate(d) {
   if (!d) return '';
@@ -469,60 +487,135 @@ export default function NegativeInventoryPage() {
       .sort(function(a, b) { return a.date.localeCompare(b.date); });
   }, [snapshots, store, selDept, selBum, deptToBum]);
 
-  /* ── Render trend chart ── */
+  /* ── Trend per BUM (voor stacked area chart) ──
+     Berekent absolute (positieve) waarde per (datum × BUM).
+     Lagen worden gesorteerd op grootte: grootste BU onderaan = eerste
+     in dataset array (Chart.js stackt van eerste naar laatste). */
+  var trendDataPerBum = useMemo(function() {
+    var byDate = {};
+    var bumTotals = {};
+    snapshots.forEach(function(s) {
+      if (store === 'Curacao' && s.region !== 'Curacao') return;
+      if (store === 'Bonaire' && s.region !== 'Bonaire') return;
+      if (selDept !== '__total__' && s.department_code !== selDept) return;
+      var bum = deptToBum[s.department_code];
+      if (!bum) return; // dept zonder BUM-mapping → uit grafiek
+      var d = s.snapshot_date;
+      if (!byDate[d]) byDate[d] = {};
+      var val = Math.abs(parseFloat(s.total_negative_value) || 0);
+      byDate[d][bum] = (byDate[d][bum] || 0) + val;
+      bumTotals[bum] = (bumTotals[bum] || 0) + val;
+    });
+    var dates = Object.keys(byDate).sort();
+    // BUMs aanwezig in data, gesorteerd op totale grootte (grootste onderaan = eerste in array)
+    var bumsPresent = Object.keys(bumTotals);
+    bumsPresent.sort(function(a, b) { return bumTotals[b] - bumTotals[a]; });
+    return {
+      dates: dates,
+      bums: bumsPresent,
+      // Voor elke (date, bum) → value (0 als ontbreekt)
+      values: dates.map(function(d) {
+        var row = {};
+        bumsPresent.forEach(function(b) { row[b] = Math.round(byDate[d][b] || 0); });
+        return row;
+      }),
+    };
+  }, [snapshots, store, selDept, deptToBum]);
+
   useEffect(function() {
     if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
     if (view !== 'overview' || trendData.length < 2 || !trendRef.current) return;
     var raf = requestAnimationFrame(function() {
       if (!trendRef.current) return;
-      chartRef.current = new Chart(trendRef.current, {
+
+      // Twee modi:
+      // - selBum === 'all': stacked area op Waarde per BU + 'Aantal items' lijn op y1
+      // - andere: huidige 2-lijn weergave (Aantal items + Waarde)
+      var datasets = [];
+      datasets.push({
         type: 'line',
+        label: 'Aantal items',
+        yAxisID: 'y1',
+        data: trendData.map(function(d) { return d.items; }),
+        borderColor: '#1B3A5C',
+        backgroundColor: 'rgba(27,58,92,0.06)',
+        pointBackgroundColor: '#1B3A5C',
+        pointRadius: 3,
+        tension: 0.25,
+        fill: false,
+        borderWidth: 2,
+        order: 1,
+      });
+
+      var stacked = selBum === 'all' && trendDataPerBum.bums.length > 0;
+
+      if (stacked) {
+        // Chart.js stackt van eerste naar laatste dataset; eerste = onderaan.
+        // bums-array is gesorteerd op totale grootte (grootste eerst) → grootste onderaan.
+        trendDataPerBum.bums.forEach(function(bum) {
+          var c = bumColor(bum);
+          datasets.push({
+            type: 'line',
+            label: bum,
+            yAxisID: 'y2',
+            data: trendDataPerBum.values.map(function(row) { return row[bum] || 0; }),
+            borderColor: c.line,
+            backgroundColor: c.fill,
+            pointBackgroundColor: c.line,
+            pointRadius: 2,
+            tension: 0.25,
+            fill: true,
+            borderWidth: 1.5,
+            stack: 'value',
+            order: 2,
+          });
+        });
+      } else {
+        datasets.push({
+          type: 'line',
+          label: 'Waarde (XCG)',
+          yAxisID: 'y2',
+          data: trendData.map(function(d) { return d.value; }),
+          borderColor: '#E84E1B',
+          backgroundColor: 'rgba(232,78,27,0.08)',
+          pointBackgroundColor: '#E84E1B',
+          pointRadius: 4,
+          tension: 0.25,
+          fill: true,
+          borderWidth: 2.5,
+          order: 2,
+        });
+      }
+
+      chartRef.current = new Chart(trendRef.current, {
         data: {
           labels: trendData.map(function(d) { return fmtDate(d.date); }),
-          datasets: [
-            {
-              label: 'Aantal items',
-              yAxisID: 'y1',
-              data: trendData.map(function(d) { return d.items; }),
-              borderColor: '#1B3A5C',
-              backgroundColor: 'rgba(27,58,92,0.06)',
-              pointBackgroundColor: '#1B3A5C',
-              pointRadius: 4,
-              tension: 0.25,
-              fill: false,
-              borderWidth: 2,
-            },
-            {
-              label: 'Waarde (XCG)',
-              yAxisID: 'y2',
-              data: trendData.map(function(d) { return d.value; }),
-              borderColor: '#E84E1B',
-              backgroundColor: 'rgba(232,78,27,0.08)',
-              pointBackgroundColor: '#E84E1B',
-              pointRadius: 4,
-              tension: 0.25,
-              fill: true,
-              borderWidth: 2.5,
-            },
-          ],
+          datasets: datasets,
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
             legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } },
-            tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(Math.round(c.raw)); } } },
+            tooltip: {
+              callbacks: {
+                label: function(c) {
+                  var v = c.dataset.label === 'Aantal items' ? c.raw : Math.round(c.raw);
+                  return c.dataset.label + ': ' + fmt(v);
+                },
+              },
+            },
           },
           scales: {
-            y1: { type: 'linear', position: 'left', ticks: { callback: function(v) { return fmt(v); } }, grid: { color: '#f0ebe5' } },
-            y2: { type: 'linear', position: 'right', ticks: { callback: function(v) { return fmtK(v); } }, grid: { display: false } },
+            y1: { type: 'linear', position: 'left', ticks: { callback: function(v) { return fmt(v); } }, grid: { color: '#f0ebe5' }, stacked: false },
+            y2: { type: 'linear', position: 'right', ticks: { callback: function(v) { return fmtK(v); } }, grid: { display: false }, stacked: stacked },
             x: { grid: { display: false } },
           },
         },
       });
     });
     return function() { cancelAnimationFrame(raf); };
-  }, [trendData, view]);
+  }, [trendData, trendDataPerBum, view, selBum]);
 
   /* ── Detail items (sorted + searched) ── */
   var detailItems = useMemo(function() {
