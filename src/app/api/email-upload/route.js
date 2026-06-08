@@ -1,7 +1,14 @@
 /* ============================================================
-   BESTAND: route_email_v22.js
+   BESTAND: route_email_v23.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v23:
+   - processBuying leest nu de kolom "MFG Part #" en slaat op
+     in nieuwe buying_data.mfg_part_number kolom
+   - SQL vereist (vooraf draaien):
+       ALTER TABLE buying_data ADD COLUMN mfg_part_number text;
+   - Detectie tolerant voor varianten: "MFG Part #", "MFG#",
+     "Manufacturer Part", etc.
    WIJZIGING v22:
    - processNosSnapshot schrijft naast nos_coverage_snapshots óók
      naar nieuwe tabel nos_coverage_snapshots_dept (per dept_code)
@@ -710,6 +717,9 @@ async function processBuying(json) {
       qty_on_order: parseFloat(row[findCol(keys, ['quantity on order'])] || 0),
       vendor_code: String(row[findCol(keys, ['vendor code'])] || ''),
       vendor_name: String(row[findCol(keys, ['vendor name'])] || ''),
+      // v23: MFG Part # is het artikelnummer van de fabrikant (verschilt van onze SKU).
+      // Gebruikt in Stock Risk voor inkoop.
+      mfg_part_number: String(row[findCol(keys, ['mfg part', 'manufacturer part', 'mfg#', 'mfg part #'])] || '').trim(),
       replacement_cost: parseFloat(row[findCol(keys, ['replacement cost'])] || 0),
       inv_value_at_cost: parseFloat(row[findCol(keys, ['inventory value', 'inv value'])] || 0),
       bum: String(row[bumCol] || '').trim().toUpperCase(),

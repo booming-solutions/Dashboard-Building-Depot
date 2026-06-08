@@ -1,8 +1,21 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v9.js
+   BESTAND: StockRiskShared_v10.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.23
+   VERSIE: v3.28.25
+
+   Wijzigingen t.o.v. v9:
+   - Nieuwe kolom MFG# tussen Dept en Item in detail-tabel
+     · Sortable
+     · Toont fabrikant-artikelnummer (uit nieuwe buying_data.mfg_part_number)
+     · Tooltip bij hover toont volledige MFG Part #
+   - Vereist: SQL "ALTER TABLE buying_data ADD COLUMN mfg_part_number text;"
+   - Vereist: route_email_v23 die de "MFG Part #" kolom uitleest
+   - Excel-export: MFG# kolom toegevoegd
+   - Tabel min-width 1400 → 1500px (voor extra kolom)
+   - Groep-header "Item" colSpan 4 → 5
+   - TOTAAL rij colSpan 4 → 5
+   - Empty state colSpan 16/18 → 17/19
 
    Wijzigingen t.o.v. v8:
    - BUGFIX: BU-folder namen (HARDWARE, LIVING, etc) worden nu correct
@@ -581,10 +594,9 @@ export default function StockRiskShared({ bumFilter }) {
       if (!map[key]) {
         map[key] = {
           item: r.item_number, desc: r.item_description,
-          dept_code: r.effective_dept_code || r.dept_code,
-          dept_name: r.effective_dept_name || r.dept_name,
-          bum: r.effective_bum_group || '',
-          vendor: r.vendor_name || 'ONBEKEND',
+          mfg: r.mfg_part_number || '',
+          dept_code: r.dept_code, dept_name: r.dept_name,
+          bum: r.bum || '', vendor: r.vendor_name || 'ONBEKEND',
           nos: r.nos === 'N',
           // Lead time = transit-tijd van leverancier naar magazijn.
           // Compass labelt dit als 'Min Lead Time' (Eagle Vendor Code 3).
@@ -598,6 +610,8 @@ export default function StockRiskShared({ bumFilter }) {
         };
       }
       var m = map[key];
+      // mfg_part_number: pak eerste niet-lege waarde (kan per store verschillen, meestal niet)
+      if (!m.mfg && r.mfg_part_number) m.mfg = r.mfg_part_number;
       // Lead time: nemen we het maximum (worst case) over stores binnen regio
       var rlt = parseFloat(r.min_lead_time) || 0;
       if (rlt > m.min_lt) m.min_lt = rlt;
@@ -957,6 +971,7 @@ export default function StockRiskShared({ bumFilter }) {
                 rows: displayed.map(function(m) {
                   return {
                     'Dept': m.dept_code,
+                    'MFG#': m.mfg || '',
                     'Item': m.item,
                     'Omschrijving': m.desc,
                     'BUM': m.bum,
@@ -999,10 +1014,10 @@ export default function StockRiskShared({ bumFilter }) {
       {/* Main table */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
         <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
-          <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1400px' }}>
+          <table className="w-full border-collapse text-[11px]" style={{ minWidth: '1500px' }}>
             <thead className="sticky top-0 z-30">
               <tr className="bg-[#1B3A5C]">
-                <th colSpan={4} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
+                <th colSpan={5} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
                 <th colSpan={store === 'all' ? 8 : 6} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Verkoop</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2">Actie</th>
@@ -1013,6 +1028,7 @@ export default function StockRiskShared({ bumFilter }) {
                   var splitView = store === 'all';
                   var cols = [
                     ['Dept', 'dept_code', 'text-left min-w-[50px]'],
+                    ['MFG#', 'mfg', 'text-left min-w-[100px]'],
                     ['', 'item', 'text-left min-w-[80px]'],
                     ['Omschrijving', 'desc', 'text-left min-w-[180px]'],
                     ['Status', 'risk', 'text-center border-r border-[#e5ddd4]'],
@@ -1054,7 +1070,7 @@ export default function StockRiskShared({ bumFilter }) {
                 var splitView = store === 'all';
                 return (
                   <tr className="bg-[#faf7f4] sticky z-20" style={{ top: '60px' }}>
-                    <td colSpan={4} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">{'TOTAAL (' + displayed.length + ' items)'}</td>
+                    <td colSpan={5} className="p-2 text-[12px] font-bold border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]">{'TOTAAL (' + displayed.length + ' items)'}</td>
                     {splitView ? (
                       <Fragment>
                         <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQohCur))}</td>
@@ -1082,7 +1098,7 @@ export default function StockRiskShared({ bumFilter }) {
                 );
               })()}
               {displayed.length === 0 && (
-                <tr><td colSpan={store === 'all' ? 18 : 16} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
+                <tr><td colSpan={store === 'all' ? 19 : 17} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
               )}
               {displayed.slice(0, tableRows).map(function(m, i) {
                 var bg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
@@ -1090,6 +1106,7 @@ export default function StockRiskShared({ bumFilter }) {
                 return (
                   <tr key={m.item} className={bg + ' hover:bg-[#faf5f0]'}>
                     <td className="p-1.5 text-[10px] font-mono text-[#6b5240] border-b border-[#f0ebe5]">{m.dept_code}</td>
+                    <td className="p-1.5 text-[10px] font-mono text-[#6b5240] border-b border-[#f0ebe5]" title={m.mfg ? 'MFG Part #: ' + m.mfg : 'Geen MFG#'}>{m.mfg || '—'}</td>
                     <td className="p-1.5 text-[11px] font-mono text-[#6b5240] border-b border-[#f0ebe5]">{m.item}</td>
                     <td className="p-1.5 text-[11px] border-b border-[#f0ebe5] truncate max-w-[200px]" title={m.desc}>
                       {m.desc}
