@@ -27,6 +27,15 @@
      waarden gebruiken: cost = |inv_value| / |qoh|.
      Voorbeeld: MI2090891 qoh=-3, inv_value=-6,99 → cost=2,33/stk,
      28 stuks bestellen → waarde 65,21 (was 0).
+   - NIEUW: "Inkoopvoorstel per Leverancier" sectie naast Risico per
+     Afdeling (2-koloms layout).
+     · Aggregeert items met suggested_qty>0 per vendor
+     · Drempel-input (default XCG 25k) + quick-toggle 10k/25k/50k/100k
+     · Sortable kolommen (Leverancier / Items / Qty / Waarde)
+     · Default: bestelwaarde aflopend
+     · Klik +/− om items per vendor uit te klappen (item, MFG#,
+       omschrijving, qty, waarde)
+     · Totaal-rij onder de lijst
 
    Wijzigingen t.o.v. v8:
    - BUGFIX: BU-folder namen (HARDWARE, LIVING, etc) worden nu correct
@@ -478,6 +487,11 @@ export default function StockRiskShared({ bumFilter }) {
   // NEW v9: sort state voor Risico per Afdeling tabel (default oplopend op dept-code)
   var _deptSort = _s('code'), deptSortCol = _deptSort[0], setDeptSortCol = _deptSort[1];
   var _deptSortDir = _s('asc'), deptSortDir = _deptSortDir[0], setDeptSortDir = _deptSortDir[1];
+  // NEW v10: vendor purchase suggestion sectie
+  var _vThresh = _s(25000), vendorThreshold = _vThresh[0], setVendorThreshold = _vThresh[1];
+  var _vSort = _s('value'), vendorSortCol = _vSort[0], setVendorSortCol = _vSort[1];
+  var _vSortDir = _s('desc'), vendorSortDir = _vSortDir[0], setVendorSortDir = _vSortDir[1];
+  var _vExp = _s({}), expandedVendors = _vExp[0], setExpandedVendors = _vExp[1];
   var _rows = _s(100), tableRows = _rows[0], setTableRows = _rows[1];
   var _search = _s(''), search = _search[0], setSearch = _search[1];
 
@@ -808,6 +822,60 @@ export default function StockRiskShared({ bumFilter }) {
   }
   var deptArrow = function(col) { return deptSortCol === col ? (deptSortDir === 'desc' ? ' ↓' : ' ↑') : ''; };
 
+  // NEW v10: Vendor purchase suggestion list
+  // Aggregeer alle items met suggested_qty > 0 per vendor.
+  // Filter vendors met totaal_value >= vendorThreshold.
+  var vendorList = useMemo(function() {
+    var map = {};
+    (filteredBase || []).forEach(function(m) {
+      if (!m.suggested_qty || m.suggested_qty <= 0) return;
+      var v = m.vendor || 'ONBEKEND';
+      if (!map[v]) {
+        map[v] = { vendor: v, items: [], total_qty: 0, total_value: 0 };
+      }
+      map[v].items.push(m);
+      map[v].total_qty += m.suggested_qty;
+      map[v].total_value += m.suggested_value;
+    });
+    var arr = Object.values(map).filter(function(v) { return v.total_value >= vendorThreshold; });
+    // Sort
+    arr.sort(function(a, b) {
+      var av, bv;
+      if (vendorSortCol === 'vendor') {
+        av = String(a.vendor); bv = String(b.vendor);
+        return vendorSortDir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
+      }
+      if (vendorSortCol === 'count') { av = a.items.length; bv = b.items.length; }
+      else if (vendorSortCol === 'qty') { av = a.total_qty; bv = b.total_qty; }
+      else { av = a.total_value; bv = b.total_value; }
+      return vendorSortDir === 'asc' ? av - bv : bv - av;
+    });
+    // Sorteer items binnen elke vendor op suggested_value aflopend
+    arr.forEach(function(v) {
+      v.items.sort(function(a, b) { return (b.suggested_value || 0) - (a.suggested_value || 0); });
+    });
+    return arr;
+  }, [filteredBase, vendorThreshold, vendorSortCol, vendorSortDir]);
+
+  function toggleVendorSort(col) {
+    if (vendorSortCol === col) {
+      setVendorSortDir(function(d) { return d === 'asc' ? 'desc' : 'asc'; });
+    } else {
+      setVendorSortCol(col);
+      setVendorSortDir(col === 'vendor' ? 'asc' : 'desc');
+    }
+  }
+  var vendorArrow = function(col) { return vendorSortCol === col ? (vendorSortDir === 'desc' ? ' ↓' : ' ↑') : ''; };
+
+  function toggleVendorExpand(vendor) {
+    setExpandedVendors(function(prev) {
+      var next = Object.assign({}, prev);
+      if (next[vendor]) delete next[vendor];
+      else next[vendor] = true;
+      return next;
+    });
+  }
+
   function toggleSort(col) { if (sortCol === col) setSortDir(function(d) { return d === 'desc' ? 'asc' : 'desc'; }); else { setSortCol(col); setSortDir(col === 'months_cover' || col === 'stockout_months' ? 'asc' : 'desc'); } }
   var arrow = function(col) { return sortCol === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''; };
 
@@ -896,54 +964,164 @@ export default function StockRiskShared({ bumFilter }) {
         <NosTrendChart allSnapshots={nosSnapshots} deptSnapshots={deptSnapshots} store={store} bumFilter={bumFilter} />
       </div>
 
-      {/* Department risk overview */}
-      <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
-        <h3 className="text-[15px] font-bold mb-1">Risico per Afdeling</h3>
-        <p className="text-[12px] text-[#6b5240] mb-3">Klik op kolomnaam om te sorteren — klik op een afdeling om door te zoomen</p>
-        <div className="flex items-center gap-4 text-[10px] mb-3">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span> OK</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#d97706' }}></span> Aandacht</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#f97316' }}></span> Urgent</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span> Kritiek</span>
+      {/* Department risk + Vendor purchase suggestion side-by-side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+        {/* Department risk overview */}
+        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+          <h3 className="text-[15px] font-bold mb-1">Risico per Afdeling</h3>
+          <p className="text-[12px] text-[#6b5240] mb-3">Klik op kolomnaam om te sorteren — klik op een afdeling om door te zoomen</p>
+          <div className="flex items-center gap-4 text-[10px] mb-3 flex-wrap">
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16a34a' }}></span> OK</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#d97706' }}></span> Aandacht</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#f97316' }}></span> Urgent</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#dc2626' }}></span> Kritiek</span>
+          </div>
+          {/* Sort header row */}
+          <div className="flex items-center gap-2 text-[9px] font-bold uppercase text-[#6b5240] border-b border-[#e5ddd4] pb-1 mb-2 px-1">
+            <button onClick={function() { toggleDeptSort('code'); }} className="w-[140px] text-right hover:text-[#E84E1B] cursor-pointer">
+              {'Afdeling' + deptArrow('code')}
+            </button>
+            <button onClick={function() { toggleDeptSort('risk'); }} className="flex-1 text-center hover:text-[#E84E1B] cursor-pointer">
+              {'Risico-verdeling' + deptArrow('risk')}
+            </button>
+            <button onClick={function() { toggleDeptSort('critical'); }} className="w-[90px] text-right hover:text-[#E84E1B] cursor-pointer">
+              {'Kritiek / Urgent' + deptArrow('critical')}
+            </button>
+          </div>
+          <div className="space-y-2">
+            {deptRisk.map(function(d) {
+              var pOk = d.total ? ((d.ok + d.watch) / d.total * 100) : 0;
+              var pWatch = d.total ? (d.watch / d.total * 100) : 0;
+              var pUrg = d.total ? (d.urgent / d.total * 100) : 0;
+              var pCrit = d.total ? (d.critical / d.total * 100) : 0;
+              return (
+                <div key={d.code} className="flex items-center gap-2 cursor-pointer hover:bg-[#faf5f0] py-1 px-1 rounded" onClick={function() { setDept(d.code); setFilter('urgent'); }}>
+                  <div className="w-[140px] text-right text-[10px] text-[#1a0a04] truncate flex-shrink-0">
+                    <span className="font-mono text-[#6b5240] mr-1">{d.code}</span>{d.name ? d.name.replace(/^\d+\s*/, '') : ''}
+                  </div>
+                  <div className="flex-1 flex h-[18px] rounded-sm overflow-hidden bg-[#f0ebe5]">
+                    {pOk > 0 && <div style={{ width: (pOk - pWatch) + '%', backgroundColor: '#16a34a' }}></div>}
+                    {pWatch > 0 && <div style={{ width: pWatch + '%', backgroundColor: '#d97706' }}></div>}
+                    {pUrg > 0 && <div style={{ width: pUrg + '%', backgroundColor: '#f97316' }}></div>}
+                    {pCrit > 0 && <div style={{ width: pCrit + '%', backgroundColor: '#dc2626' }}></div>}
+                  </div>
+                  <div className="w-[90px] text-[10px] font-mono text-[#6b5240] text-right flex-shrink-0">
+                    {d.critical > 0 && <span style={{ color: '#dc2626' }}>{d.critical + 'K '}</span>}
+                    {d.urgent > 0 && <span style={{ color: '#f97316' }}>{d.urgent + 'U '}</span>}
+                    {d.critical === 0 && d.urgent === 0 && <span className="text-[#16a34a]">OK</span>}
+                    {d.nos_risk > 0 && <span className="text-[8px] px-1 py-0.5 rounded bg-blue-50 text-blue-600 font-bold ml-1">{d.nos_risk + ' NOS'}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        {/* Sort header row */}
-        <div className="flex items-center gap-2 text-[9px] font-bold uppercase text-[#6b5240] border-b border-[#e5ddd4] pb-1 mb-2 px-1">
-          <button onClick={function() { toggleDeptSort('code'); }} className="w-[140px] text-right hover:text-[#E84E1B] cursor-pointer">
-            {'Afdeling' + deptArrow('code')}
-          </button>
-          <button onClick={function() { toggleDeptSort('risk'); }} className="flex-1 text-center hover:text-[#E84E1B] cursor-pointer">
-            {'Risico-verdeling' + deptArrow('risk')}
-          </button>
-          <button onClick={function() { toggleDeptSort('critical'); }} className="w-[90px] text-right hover:text-[#E84E1B] cursor-pointer">
-            {'Kritiek / Urgent' + deptArrow('critical')}
-          </button>
-        </div>
-        <div className="space-y-2">
-          {deptRisk.map(function(d) {
-            var pOk = d.total ? ((d.ok + d.watch) / d.total * 100) : 0;
-            var pWatch = d.total ? (d.watch / d.total * 100) : 0;
-            var pUrg = d.total ? (d.urgent / d.total * 100) : 0;
-            var pCrit = d.total ? (d.critical / d.total * 100) : 0;
-            return (
-              <div key={d.code} className="flex items-center gap-2 cursor-pointer hover:bg-[#faf5f0] py-1 px-1 rounded" onClick={function() { setDept(d.code); setFilter('urgent'); }}>
-                <div className="w-[140px] text-right text-[10px] text-[#1a0a04] truncate flex-shrink-0">
-                  <span className="font-mono text-[#6b5240] mr-1">{d.code}</span>{d.name ? d.name.replace(/^\d+\s*/, '') : ''}
+
+        {/* NEW v10: Inkoopvoorstel per Leverancier */}
+        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+          <h3 className="text-[15px] font-bold mb-1">Inkoopvoorstel per Leverancier</h3>
+          <p className="text-[12px] text-[#6b5240] mb-3">Leveranciers met cumulatieve bestelwaarde boven de drempel — klik + voor details</p>
+          {/* Threshold control */}
+          <div className="flex items-center gap-3 mb-3 text-[11px]">
+            <label className="text-[#6b5240] font-semibold uppercase tracking-wide">Drempel (XCG):</label>
+            <input
+              type="number"
+              step="1000"
+              min="0"
+              value={vendorThreshold}
+              onChange={function(e) { setVendorThreshold(parseInt(e.target.value) || 0); }}
+              className="w-[100px] px-2 py-1 border border-[#e5ddd4] rounded-md text-right font-mono text-[12px] outline-none focus:border-[#E84E1B]"
+            />
+            <div className="flex gap-1">
+              {[10000, 25000, 50000, 100000].map(function(v) {
+                var active = vendorThreshold === v;
+                return (
+                  <button key={v} onClick={function() { setVendorThreshold(v); }}
+                    className={'px-2 py-1 rounded-md border text-[10px] font-semibold transition-colors ' +
+                      (active ? 'bg-[#1B3A5C] text-white border-[#1B3A5C]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#1B3A5C]')}>
+                    {(v / 1000) + 'k'}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {/* Sort header */}
+          <div className="flex items-center gap-2 text-[9px] font-bold uppercase text-[#6b5240] border-b border-[#e5ddd4] pb-1 mb-2 px-1">
+            <div className="w-[18px]"></div>
+            <button onClick={function() { toggleVendorSort('vendor'); }} className="flex-1 text-left hover:text-[#E84E1B] cursor-pointer">
+              {'Leverancier' + vendorArrow('vendor')}
+            </button>
+            <button onClick={function() { toggleVendorSort('count'); }} className="w-[50px] text-right hover:text-[#E84E1B] cursor-pointer">
+              {'Items' + vendorArrow('count')}
+            </button>
+            <button onClick={function() { toggleVendorSort('qty'); }} className="w-[55px] text-right hover:text-[#E84E1B] cursor-pointer">
+              {'Qty' + vendorArrow('qty')}
+            </button>
+            <button onClick={function() { toggleVendorSort('value'); }} className="w-[100px] text-right hover:text-[#E84E1B] cursor-pointer">
+              {'Waarde' + vendorArrow('value')}
+            </button>
+          </div>
+          <div className="space-y-1 overflow-y-auto" style={{ maxHeight: '380px' }}>
+            {vendorList.length === 0 && (
+              <p className="text-[12px] text-[#6b5240] italic py-4 text-center">Geen leveranciers boven drempel van {fmtC(vendorThreshold)}.</p>
+            )}
+            {vendorList.map(function(v) {
+              var isExp = !!expandedVendors[v.vendor];
+              return (
+                <div key={v.vendor}>
+                  <div className="flex items-center gap-2 py-1.5 px-1 rounded hover:bg-[#faf5f0] cursor-pointer"
+                       onClick={function() { toggleVendorExpand(v.vendor); }}>
+                    <div className="w-[18px] text-center font-mono text-[#E84E1B] font-bold text-[14px] leading-none flex-shrink-0">
+                      {isExp ? '−' : '+'}
+                    </div>
+                    <div className="flex-1 text-[11px] text-[#1a0a04] font-semibold truncate" title={v.vendor}>
+                      {v.vendor}
+                    </div>
+                    <div className="w-[50px] text-right text-[11px] font-mono text-[#6b5240]">
+                      {v.items.length}
+                    </div>
+                    <div className="w-[55px] text-right text-[11px] font-mono text-[#6b5240]">
+                      {fmt(v.total_qty)}
+                    </div>
+                    <div className="w-[100px] text-right text-[12px] font-mono font-semibold" style={{ color: '#E84E1B' }}>
+                      {fmtC(v.total_value)}
+                    </div>
+                  </div>
+                  {isExp && (
+                    <div className="ml-6 mb-2 mt-1 bg-[#faf7f4] rounded-md p-2 space-y-1">
+                      <div className="flex items-center gap-2 text-[9px] uppercase tracking-wide text-[#6b5240] font-bold border-b border-[#e5ddd4] pb-1">
+                        <div className="w-[90px]">Item</div>
+                        <div className="w-[80px]">MFG#</div>
+                        <div className="flex-1">Omschrijving</div>
+                        <div className="w-[45px] text-right">Qty</div>
+                        <div className="w-[80px] text-right">Waarde</div>
+                      </div>
+                      {v.items.map(function(it) {
+                        return (
+                          <div key={it.item} className="flex items-center gap-2 text-[10px] py-0.5">
+                            <div className="w-[90px] font-mono text-[#1B3A5C] truncate" title={it.item}>{it.item}</div>
+                            <div className="w-[80px] font-mono text-[#6b5240] truncate" title={it.mfg || '—'}>{it.mfg || '—'}</div>
+                            <div className="flex-1 truncate" title={it.desc}>{it.desc}</div>
+                            <div className="w-[45px] text-right font-mono font-semibold" style={{ color: '#E84E1B' }}>{fmt(it.suggested_qty)}</div>
+                            <div className="w-[80px] text-right font-mono">{fmtC(it.suggested_value)}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <div className="flex-1 flex h-[18px] rounded-sm overflow-hidden bg-[#f0ebe5]">
-                  {pOk > 0 && <div style={{ width: (pOk - pWatch) + '%', backgroundColor: '#16a34a' }}></div>}
-                  {pWatch > 0 && <div style={{ width: pWatch + '%', backgroundColor: '#d97706' }}></div>}
-                  {pUrg > 0 && <div style={{ width: pUrg + '%', backgroundColor: '#f97316' }}></div>}
-                  {pCrit > 0 && <div style={{ width: pCrit + '%', backgroundColor: '#dc2626' }}></div>}
-                </div>
-                <div className="w-[90px] text-[10px] font-mono text-[#6b5240] text-right flex-shrink-0">
-                  {d.critical > 0 && <span style={{ color: '#dc2626' }}>{d.critical + 'K '}</span>}
-                  {d.urgent > 0 && <span style={{ color: '#f97316' }}>{d.urgent + 'U '}</span>}
-                  {d.critical === 0 && d.urgent === 0 && <span className="text-[#16a34a]">OK</span>}
-                  {d.nos_risk > 0 && <span className="text-[8px] px-1 py-0.5 rounded bg-blue-50 text-blue-600 font-bold ml-1">{d.nos_risk + ' NOS'}</span>}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+          {vendorList.length > 0 && (
+            <div className="border-t border-[#e5ddd4] mt-2 pt-2 flex items-center gap-2 text-[11px] font-bold px-1">
+              <div className="w-[18px]"></div>
+              <div className="flex-1 text-[#1a0a04]">TOTAAL ({vendorList.length} leveranciers)</div>
+              <div className="w-[50px] text-right font-mono text-[#6b5240]">{fmt(vendorList.reduce(function(s, v) { return s + v.items.length; }, 0))}</div>
+              <div className="w-[55px] text-right font-mono text-[#6b5240]">{fmt(vendorList.reduce(function(s, v) { return s + v.total_qty; }, 0))}</div>
+              <div className="w-[100px] text-right font-mono" style={{ color: '#E84E1B' }}>{fmtC(vendorList.reduce(function(s, v) { return s + v.total_value; }, 0))}</div>
+            </div>
+          )}
         </div>
       </div>
 
