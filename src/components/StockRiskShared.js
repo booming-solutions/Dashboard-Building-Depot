@@ -21,6 +21,12 @@
      .getDate() in lokale Curaçao-tijd (UTC-4) = 7. Nu gebruik
      ik consequent getUTCDate/UTCMonth/UTCFullYear voor PO datums.
      De "isPast" check vergelijkt nu ook in UTC.
+   - BUGFIX: bestelwaarde (suggested_value) was 0 voor items met
+     negatieve QOH. Oorzaak: cost berekening gebruikte conditie
+     m.qoh > 0 (sloeg negatieve voorraad over). Fix: absolute
+     waarden gebruiken: cost = |inv_value| / |qoh|.
+     Voorbeeld: MI2090891 qoh=-3, inv_value=-6,99 → cost=2,33/stk,
+     28 stuks bestellen → waarde 65,21 (was 0).
 
    Wijzigingen t.o.v. v8:
    - BUGFIX: BU-folder namen (HARDWARE, LIVING, etc) worden nu correct
@@ -637,7 +643,11 @@ export default function StockRiskShared({ bumFilter }) {
     var list = Object.values(map);
 
     list.forEach(function(m) {
-      m.cost = m.qoh > 0 ? m.inv_value / m.qoh : 0;
+      // Cost per stuk: gebruik absolute waarden zodat ook items met
+      // negatieve QOH (en daarmee negatieve inv_value_at_cost) een
+      // correcte unit cost opleveren. Voorbeeld: qoh=-3, inv_value=-6,99
+      // → cost = 6,99 / 3 = 2,33 per stuk.
+      m.cost = m.qoh !== 0 ? Math.abs(m.inv_value) / Math.abs(m.qoh) : 0;
       m.salesChrono = m.sales.slice().reverse();
 
       var nonZero = m.sales.filter(function(s) { return s > 0; });
