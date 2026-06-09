@@ -1,7 +1,14 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v12.js
+   BESTAND: ap_werkstroom_page_v13.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   v13 WIJZIGINGEN:
+   - ALLE tabel-kolommen klikbaar om te sorteren (was: 4 van 11).
+     Factuur, Referentie, PO Nummer, Type, Origineel bedrag,
+     Ingediend door en Goedgekeurd door komen erbij.
+   - Tweede klik op een actieve kolom draait de sortering om.
+   - Voor "Origineel" / "Saldo": default groot→klein.
 
    v12 WIJZIGINGEN:
    - Datum-filter prominenter: eigen blok onder de filters,
@@ -290,18 +297,46 @@ export default function WerkstroomPage() {
     }
     return [...filtered].sort((a, b) => {
       let cmp = 0;
-      if (sortBy === 'due_date') {
-        cmp = (a.due_date || '9999').localeCompare(b.due_date || '9999');
-      } else if (sortBy === 'invoice_date') {
-        cmp = (a.invoice_date || '9999').localeCompare(b.invoice_date || '9999');
-      } else if (sortBy === 'amount') {
-        cmp = Math.abs(parseFloat(a.balance)) - Math.abs(parseFloat(b.balance));
-      } else if (sortBy === 'vendor') {
-        cmp = (a.vendor_name || '').localeCompare(b.vendor_name || '');
+      switch (sortBy) {
+        case 'vendor':
+          cmp = (a.vendor_name || '').localeCompare(b.vendor_name || '');
+          break;
+        case 'invoice_number':
+          cmp = (a.invoice_number || '').localeCompare(b.invoice_number || '');
+          break;
+        case 'invoice_date':
+          cmp = (a.invoice_date || '9999').localeCompare(b.invoice_date || '9999');
+          break;
+        case 'reference':
+          cmp = (a.reference || '').localeCompare(b.reference || '');
+          break;
+        case 'po_number':
+          cmp = (a.po_number || '').localeCompare(b.po_number || '');
+          break;
+        case 'type':
+          cmp = (a.type || '').localeCompare(b.type || '');
+          break;
+        case 'original_amount':
+          cmp = Math.abs(parseFloat(a.original_amount) || 0) - Math.abs(parseFloat(b.original_amount) || 0);
+          break;
+        case 'amount':
+          cmp = Math.abs(parseFloat(a.balance) || 0) - Math.abs(parseFloat(b.balance) || 0);
+          break;
+        case 'due_date':
+          cmp = (a.due_date || '9999').localeCompare(b.due_date || '9999');
+          break;
+        case 'submitted_by':
+          cmp = (userNames[a.submitted_by] || '').localeCompare(userNames[b.submitted_by] || '');
+          break;
+        case 'approved_by':
+          cmp = (userNames[a.approved_by] || '').localeCompare(userNames[b.approved_by] || '');
+          break;
+        default:
+          break;
       }
       return sortDesc ? -cmp : cmp;
     });
-  }, [tabRows, tab, debouncedSearch, vendorSelected, sortBy, sortDesc, dateField, dateFrom, dateTo]);
+  }, [tabRows, tab, debouncedSearch, vendorSelected, sortBy, sortDesc, dateField, dateFrom, dateTo, userNames]);
 
   const hasFilters = vendorSelected.size > 0 || searchInput.trim() || dateFrom || dateTo;
   function clearFilters() {
@@ -352,8 +387,8 @@ export default function WerkstroomPage() {
       setSortDesc(!sortDesc);
     } else {
       setSortBy(field);
-      // Standaard: bedrag groot→klein, anderen klein→groot
-      setSortDesc(field === 'amount');
+      // Bedragen default desc (groot→klein), datums + tekst default asc
+      setSortDesc(field === 'amount' || field === 'original_amount');
     }
   }
 
@@ -953,16 +988,16 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
                 <input type="checkbox" checked={allSelected} onChange={() => allSelected ? onDeselectAll() : onSelectAll()} className="cursor-pointer" />
               </th>
               <SortableHeader field="vendor" label="Vendor" current={sortBy} desc={sortDesc} onSort={onSort} />
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Factuur</th>
+              <SortableHeader field="invoice_number" label="Factuur" current={sortBy} desc={sortDesc} onSort={onSort} />
               <SortableHeader field="invoice_date" label="Factuurdatum" current={sortBy} desc={sortDesc} onSort={onSort} />
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Referentie</th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">PO Nummer</th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Type</th>
-              <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Origineel</th>
+              <SortableHeader field="reference" label="Referentie" current={sortBy} desc={sortDesc} onSort={onSort} />
+              <SortableHeader field="po_number" label="PO Nummer" current={sortBy} desc={sortDesc} onSort={onSort} />
+              <SortableHeader field="type" label="Type" current={sortBy} desc={sortDesc} onSort={onSort} />
+              <SortableHeader field="original_amount" label="Origineel" current={sortBy} desc={sortDesc} onSort={onSort} align="right" />
               <SortableHeader field="amount" label="Saldo" current={sortBy} desc={sortDesc} onSort={onSort} align="right" />
               <SortableHeader field="due_date" label="Vervaldatum" current={sortBy} desc={sortDesc} onSort={onSort} />
-              {showSubmitter && <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Ingediend door</th>}
-              {showApprover && <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Goedgekeurd door</th>}
+              {showSubmitter && <SortableHeader field="submitted_by" label="Ingediend door" current={sortBy} desc={sortDesc} onSort={onSort} />}
+              {showApprover && <SortableHeader field="approved_by" label="Goedgekeurd door" current={sortBy} desc={sortDesc} onSort={onSort} />}
             </tr>
           </thead>
           <tbody>
