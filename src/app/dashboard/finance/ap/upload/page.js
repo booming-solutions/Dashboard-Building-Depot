@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_upload_page_v4.js
+   BESTAND: ap_upload_page_v4_1.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/upload/page.js
    (overschrijft v2, hernoemen naar page.js bij upload)
 
@@ -37,6 +37,21 @@ import Link from 'next/link';
 const TYPE_ANCHORS = new Set(['REGULAR TRX', 'CREDIT MEMO', 'DEBIT MEMO']);
 const TYPE_COL_INDEX = 13;
 const EXPECTED_COL_COUNT = 28;
+
+async function fetchAllPaginated(queryBuilder, batchSize = 1000) {
+  let allRows = [];
+  let from = 0;
+  while (true) {
+    const q = queryBuilder().range(from, from + batchSize - 1);
+    const { data, error } = await q;
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    allRows = allRows.concat(data);
+    if (data.length < batchSize) break;
+    from += batchSize;
+  }
+  return allRows;
+}
 
 function parseCSVLine(line) {
   const fields = [];
