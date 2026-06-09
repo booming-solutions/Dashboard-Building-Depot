@@ -588,6 +588,7 @@ export default function NegativeInventoryPage() {
       }
 
       chartRef.current = new Chart(trendRef.current, {
+        type: 'line',
         data: {
           labels: trendData.map(function(d) { return fmtDate(d.date); }),
           datasets: datasets,
