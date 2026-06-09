@@ -3,6 +3,17 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN V27.13:
+   - Finance menu toegevoegd (Accounts Payable suite). Zichtbaar
+     voor admin/cfo/ap_approver/ap_clerk. Submenu's:
+     · Accounts Payable (dashboard)
+     · Werkstroom
+     · Data Upload
+     · Auto-match
+     · Eagle Sync
+     · Project Clean Up (PCS / Bank / Werklijst)
+   - Versie naar V27.13
+
    WIJZIGINGEN V27.12:
    - Admin menu: Salaris Import (Celery C4 + C16) toegevoegd
    - Versie naar V27.12
@@ -25,7 +36,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.12';
+const APP_VERSION = 'V27.13';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -274,6 +285,19 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
   ];
 
+  // Finance menu — Accounts Payable suite
+  const isFinance = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(profile?.role);
+  const financeItems = [
+    { href: '/dashboard/finance/ap', label: 'AP Dashboard' },
+    { href: '/dashboard/finance/ap/werkstroom', label: 'Werkstroom' },
+    { href: '/dashboard/finance/ap/upload', label: 'Data Upload' },
+    { href: '/dashboard/finance/ap/auto-match', label: 'Auto-match' },
+    { href: '/dashboard/finance/ap/eagle-sync', label: 'Eagle Sync' },
+    { href: '/dashboard/finance/ap/match/worklist', label: 'Afletter Werklijst' },
+    { href: '/dashboard/finance/ap/match/pcs', label: 'PCS Import', badge: '(clean-up)' },
+    { href: '/dashboard/finance/ap/match/bank', label: 'Bank Statement Import', badge: '(clean-up)' },
+  ];
+
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const hrItems = hrItemsAll.filter(item => {
@@ -308,6 +332,7 @@ export default function DashboardLayout({ children }) {
             {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {isFinance && <NavDropdown icon="💼" label="Finance" items={financeItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>
           {isAdmin && (
             <div className="mt-6 pt-4 border-t border-[#c5d4e6]">
