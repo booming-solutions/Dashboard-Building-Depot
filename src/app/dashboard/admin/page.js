@@ -1,10 +1,13 @@
 /* ============================================================
-   BESTAND: page_admin_v9.js
+   BESTAND: page_admin_v10.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGING t.o.v. v8:
-   - Price Changes (inventory_price_changes) toegevoegd
+   WIJZIGING t.o.v. v9:
+   - Finance/AP rapporten toegevoegd:
+     * AP Dashboard (finance_ap)
+     * AP Sandbox (finance_sandbox_ap)
+     * Finance Rapportages (finance_reports)
    ============================================================ */
 'use client';
 
@@ -25,6 +28,9 @@ var REPORTS = [
   { id: 'hr_urenplanning', label: 'Uren Planning', group: 'HR', icon: '🗓️' },
   { id: 'hr_urenplanning_overview', label: 'Uren Planning Overzicht', group: 'HR', icon: '📋' },
   { id: 'hr_urentarget', label: 'Uren Target', group: 'HR', icon: '🎯' },
+  { id: 'finance_ap', label: 'AP Dashboard', group: 'Finance', icon: '💼' },
+  { id: 'finance_sandbox_ap', label: 'AP Sandbox', group: 'Finance', icon: '🧪' },
+  { id: 'finance_reports', label: 'Finance Rapportages', group: 'Finance', icon: '📑' },
   { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },
   { id: 'files', label: 'Bestanden', group: 'Algemeen', icon: '📁' },
 ];
