@@ -1,13 +1,10 @@
 /* ============================================================
-   BESTAND: page_admin_v10.js
+   BESTAND: page_admin_v11.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGING t.o.v. v9:
-   - Finance/AP rapporten toegevoegd:
-     * AP Dashboard (finance_ap)
-     * AP Sandbox (finance_sandbox_ap)
-     * Finance Rapportages (finance_reports)
+   WIJZIGING t.o.v. v10:
+   - Kortingen (sales_discounts) toegevoegd onder Omzet
    ============================================================ */
 'use client';
 
@@ -18,6 +15,7 @@ var REPORTS = [
   { id: 'sales', label: 'Omzet en Marge', group: 'Omzet', icon: '📊' },
   { id: 'sales_index', label: 'Index Rapport', group: 'Omzet', icon: '📈' },
   { id: 'sales_traffic', label: 'Bezoekers & Conversie', group: 'Omzet', icon: '👥' },
+  { id: 'sales_discounts', label: 'Kortingen', group: 'Omzet', icon: '🏷️' },
   { id: 'inventory_budget', label: 'Voorraad vs Budget', group: 'Voorraad', icon: '📦' },
   { id: 'inventory_buying', label: 'Inkoopvoorstel', group: 'Voorraad', icon: '🛒' },
   { id: 'inventory_negative', label: 'Negatieve Voorraad', group: 'Voorraad', icon: '⚠️' },
