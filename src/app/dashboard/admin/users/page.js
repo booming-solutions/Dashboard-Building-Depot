@@ -1,15 +1,13 @@
 /* ============================================================
-   BESTAND: page_admin_v8.js
+   BESTAND: page_admin_v10.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGING t.o.v. v7:
-   - Alle ontbrekende rapporten toegevoegd aan REPORTS lijst:
-     * Rapportages (reports)
-     * Bestanden (files)
-     * Uren Planning (hr_urenplanning)
-     * Uren Planning Overzicht (hr_urenplanning_overview)
-     * Uren Target (hr_urentarget)
+   WIJZIGING t.o.v. v9:
+   - Finance/AP rapporten toegevoegd:
+     * AP Dashboard (finance_ap)
+     * AP Sandbox (finance_sandbox_ap)
+     * Finance Rapportages (finance_reports)
    ============================================================ */
 'use client';
 
@@ -25,10 +23,14 @@ var REPORTS = [
   { id: 'inventory_negative', label: 'Negatieve Voorraad', group: 'Voorraad', icon: '⚠️' },
   { id: 'inventory_stockrisk', label: 'Stock Risk Alert', group: 'Voorraad', icon: '🚨' },
   { id: 'inventory_health', label: 'Gezondheid Voorraden', group: 'Voorraad', icon: '🏥' },
+  { id: 'inventory_price_changes', label: 'Price Changes', group: 'Voorraad', icon: '💱' },
   { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
   { id: 'hr_urenplanning', label: 'Uren Planning', group: 'HR', icon: '🗓️' },
   { id: 'hr_urenplanning_overview', label: 'Uren Planning Overzicht', group: 'HR', icon: '📋' },
   { id: 'hr_urentarget', label: 'Uren Target', group: 'HR', icon: '🎯' },
+  { id: 'finance_ap', label: 'AP Dashboard', group: 'Finance', icon: '💼' },
+  { id: 'finance_sandbox_ap', label: 'AP Sandbox', group: 'Finance', icon: '🧪' },
+  { id: 'finance_reports', label: 'Finance Rapportages', group: 'Finance', icon: '📑' },
   { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },
   { id: 'files', label: 'Bestanden', group: 'Algemeen', icon: '📁' },
 ];
