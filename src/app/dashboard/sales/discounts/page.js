@@ -1,19 +1,16 @@
 /* ============================================================
-   BESTAND: page.js (Kortingen)
+   BESTAND: page.js (Kortingen Analyse)
    KOPIEER NAAR: src/app/dashboard/sales/discounts/page.js
-   (NIEUWE map maken: discounts)
-   VERSIE: v1.0
+   VERSIE: v2.0
 
-   Toont:
-   - KPIs: totaal omzet, totaal korting, gem korting%, laatste week
-   - Wekelijkse trend met 6-weeks moving average
-   - Toggle Cash/Account/Beide
-   - Toggle Abs/% voor metrics
-   - Top clerks tabel
-   - Top accounts tabel (met running year omzet)
-   - Filters: date range, clerk multi-select
-
-   Data bron: discount_data tabel (importeer eerst CSV)
+   Wijzigingen v2.0:
+   - Land filter (Curaçao / Bonaire / Multimart, default Curaçao, geen Alle)
+   - Territory filter (Store / B2B / Blank, default Alle)
+   - Salesperson multi-select filter
+   - Volgorde filters: Land → Territory → Klant → Salesperson → Clerk → Periode
+   - Default periode: 1-1-2025 t/m laatste data
+   - Valuta label rechtsboven (XCG / US$)
+   - Sortable tabel-kolommen voor clerks/salesperson/accounts tabs
    ============================================================ */
 'use client';
 
@@ -27,7 +24,10 @@ const fmt = n => (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, ma
 const fmtK = n => { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(2) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : fmt(a)); };
 const fmtP = n => (n || 0).toFixed(2) + '%';
 
-// ISO weeknummer berekening (Maandag = start van de week)
+const STORE_LABEL = { '1': 'Curaçao', 'B': 'Bonaire', 'M': 'Multimart' };
+const STORE_CURRENCY = { '1': 'XCG', 'B': 'US$', 'M': 'XCG' };
+
+// ISO weeknummer (Maandag = start)
 function isoWeek(d) {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = date.getUTCDay() || 7;
@@ -41,7 +41,6 @@ function weekKey(d) {
   return year + '-W' + String(week).padStart(2, '0');
 }
 function weekStart(yearWeek) {
-  // Eerste maandag van betreffende ISO-week
   const [y, w] = yearWeek.split('-W').map(Number);
   const jan4 = new Date(Date.UTC(y, 0, 4));
   const jan4Day = jan4.getUTCDay() || 7;
@@ -55,7 +54,7 @@ function weekStart(yearWeek) {
 function Pill({ label, active, onClick }) {
   return (
     <button onClick={onClick}
-      className={`px-3 py-1.5 rounded-full text-[12px] font-semibold transition-colors ${active ? 'bg-[#E84E1B] text-white' : 'bg-white text-[#6b5240] border border-[#e5ddd4] hover:bg-[#faf5f0]'}`}>
+      className={`px-3 py-1.5 rounded-full text-[12px] font-semibold transition-colors whitespace-nowrap ${active ? 'bg-[#E84E1B] text-white' : 'bg-white text-[#6b5240] border border-[#e5ddd4] hover:bg-[#faf5f0]'}`}>
       {label}
     </button>
   );
@@ -72,16 +71,35 @@ function KPI({ label, value, sub }) {
   );
 }
 
+// Sortable tabel header cell
+function ThSort({ label, col, sortCol, sortDir, onSort, align = 'right' }) {
+  const active = sortCol === col;
+  return (
+    <th onClick={() => onSort(col)} className={`text-${align} p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4] cursor-pointer hover:text-[#E84E1B] whitespace-nowrap select-none`}>
+      {label}{active ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}
+    </th>
+  );
+}
+
 export default function KortingenPage() {
   const supabase = createClient();
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [customerFilter, setCustomerFilter] = useState('all');  // all|cash|account
-  const [metricMode, setMetricMode] = useState('pct');  // pct|abs
-  const [selClerks, setSelClerks] = useState([]);  // multi-select; leeg = alle
+  // Filters
+  const [store, setStore] = useState('1');                        // default Curaçao, geen Alle
+  const [territory, setTerritory] = useState('all');              // all|STORE|B2B|BLANK|...
+  const [customerFilter, setCustomerFilter] = useState('all');    // all|cash|account
+  const [selSales, setSelSales] = useState([]);                   // multi-select salesperson
+  const [selClerks, setSelClerks] = useState([]);                 // multi-select clerk
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [tab, setTab] = useState('trend');  // trend|clerks|accounts
+  const [metricMode, setMetricMode] = useState('pct');            // pct|abs
+  const [tab, setTab] = useState('trend');
+  // Sort state per tab
+  const [clerkSort, setClerkSort] = useState({ col: 'discount', dir: 'desc' });
+  const [salesSort, setSalesSort] = useState({ col: 'discount', dir: 'desc' });
+  const [accSort, setAccSort] = useState({ col: 'discount', dir: 'desc' });
+
   const trendRef = useRef(null);
   const clerkRef = useRef(null);
   const chartsRef = useRef({});
@@ -99,13 +117,10 @@ export default function KortingenPage() {
     }
     setData(all);
     setLoading(false);
-    // Default date range: laatste 52 weken
     if (all.length) {
+      // Default periode: 1-1-2025 t/m laatste datum
       const dates = all.map(r => r.sale_date).sort();
-      const last = new Date(dates[dates.length - 1]);
-      const first = new Date(last);
-      first.setDate(first.getDate() - 52 * 7);
-      setDateFrom(first.toISOString().slice(0, 10));
+      setDateFrom('2025-01-01');
       setDateTo(dates[dates.length - 1]);
     }
   }
@@ -116,35 +131,40 @@ export default function KortingenPage() {
     return data.filter(r => {
       // Outliers eruit: discount% > 100 (data fout bij kleine bedragen)
       if (Math.abs(parseFloat(r.discount_pct) || 0) > 100) return false;
-      // Customer type filter
+      // Store filter (geen 'all', altijd één specifieke)
+      if (r.store_number !== store) return false;
+      // Territory
+      if (territory !== 'all' && (r.territory || 'BLANK') !== territory) return false;
+      // Customer
       if (customerFilter === 'cash' && !r.is_cash) return false;
       if (customerFilter === 'account' && r.is_cash) return false;
+      // Salesperson multi-select
+      if (selSales.length && !selSales.includes(r.salesperson_name || 'BLANK')) return false;
+      // Clerk multi-select
+      if (selClerks.length && !selClerks.includes(r.clerk || 'BLANK')) return false;
       // Date range
       if (dateFrom && r.sale_date < dateFrom) return false;
       if (dateTo && r.sale_date > dateTo) return false;
-      // Clerk multi-select
-      if (selClerks.length && !selClerks.includes(r.clerk)) return false;
       return true;
     });
-  }, [data, customerFilter, dateFrom, dateTo, selClerks]);
+  }, [data, store, territory, customerFilter, selSales, selClerks, dateFrom, dateTo]);
 
   // Aggregeer naar week
   const weekly = useMemo(() => {
     const map = {};
     filtered.forEach(r => {
       const k = weekKey(new Date(r.sale_date));
-      if (!map[k]) map[k] = { week: k, sales: 0, discount: 0, transactions: 0, date: weekStart(k) };
+      if (!map[k]) map[k] = { week: k, sales: 0, discount: 0, transactions: 0 };
       map[k].sales += parseFloat(r.sales_amount) || 0;
       map[k].discount += parseFloat(r.discount_amount) || 0;
       map[k].transactions += 1;
     });
     const arr = Object.values(map).sort((a, b) => a.week.localeCompare(b.week));
-    // Discount % per week = discount / (sales + discount) * 100 (op brutoprijs)
     arr.forEach(w => {
       const gross = w.sales + w.discount;
       w.pct = gross ? w.discount / gross * 100 : 0;
     });
-    // Moving average 6 weken
+    // Moving avg 6 weken
     arr.forEach((w, i) => {
       const start = Math.max(0, i - 5);
       const slice = arr.slice(start, i + 1);
@@ -157,7 +177,6 @@ export default function KortingenPage() {
     return arr;
   }, [filtered]);
 
-  // KPIs
   const kpis = useMemo(() => {
     if (!filtered.length) return null;
     const totSales = filtered.reduce((s, r) => s + (parseFloat(r.sales_amount) || 0), 0);
@@ -169,23 +188,48 @@ export default function KortingenPage() {
     return { totSales, totDisc, avgPct, lastWeek, ma6, weeks: weekly.length, txn: filtered.length };
   }, [filtered, weekly]);
 
-  // Clerks aggregatie + running year sales (alle data laatste 52 weken voor die clerk)
+  // Aggregaties + sortering per tab
+  function sortBy(arr, col, dir) {
+    const m = dir === 'desc' ? -1 : 1;
+    return [...arr].sort((a, b) => {
+      const av = a[col], bv = b[col];
+      if (typeof av === 'string') return m * av.localeCompare(bv);
+      return m * ((av || 0) - (bv || 0));
+    });
+  }
+
   const clerks = useMemo(() => {
     const map = {};
     filtered.forEach(r => {
       const c = r.clerk || 'BLANK';
-      if (!map[c]) map[c] = { clerk: c, sales: 0, discount: 0, transactions: 0 };
+      if (!map[c]) map[c] = { name: c, sales: 0, discount: 0, transactions: 0 };
       map[c].sales += parseFloat(r.sales_amount) || 0;
       map[c].discount += parseFloat(r.discount_amount) || 0;
       map[c].transactions += 1;
     });
-    return Object.values(map).map(c => {
+    const arr = Object.values(map).map(c => {
       const gross = c.sales + c.discount;
       return { ...c, pct: gross ? c.discount / gross * 100 : 0 };
-    }).sort((a, b) => b.discount - a.discount);
-  }, [filtered]);
+    });
+    return sortBy(arr, clerkSort.col, clerkSort.dir);
+  }, [filtered, clerkSort]);
 
-  // Accounts aggregatie (alleen account klanten, voor de tabel)
+  const salesreps = useMemo(() => {
+    const map = {};
+    filtered.forEach(r => {
+      const c = r.salesperson_name || 'BLANK';
+      if (!map[c]) map[c] = { name: c, sales: 0, discount: 0, transactions: 0 };
+      map[c].sales += parseFloat(r.sales_amount) || 0;
+      map[c].discount += parseFloat(r.discount_amount) || 0;
+      map[c].transactions += 1;
+    });
+    const arr = Object.values(map).map(c => {
+      const gross = c.sales + c.discount;
+      return { ...c, pct: gross ? c.discount / gross * 100 : 0 };
+    });
+    return sortBy(arr, salesSort.col, salesSort.dir);
+  }, [filtered, salesSort]);
+
   const accounts = useMemo(() => {
     const map = {};
     filtered.filter(r => !r.is_cash).forEach(r => {
@@ -195,20 +239,34 @@ export default function KortingenPage() {
       map[k].discount += parseFloat(r.discount_amount) || 0;
       map[k].transactions += 1;
     });
-    return Object.values(map).map(a => {
+    const arr = Object.values(map).map(a => {
       const gross = a.sales + a.discount;
       return { ...a, pct: gross ? a.discount / gross * 100 : 0 };
-    }).sort((a, b) => b.discount - a.discount).slice(0, 30);
-  }, [filtered]);
+    });
+    return sortBy(arr, accSort.col, accSort.dir).slice(0, 50);
+  }, [filtered, accSort]);
 
-  // Beschikbare clerks voor filter
-  const allClerks = useMemo(() => {
+  // Beschikbare territories/salespersons/clerks voor filter (per store)
+  const availTerritories = useMemo(() => {
     const s = new Set();
-    data.forEach(r => { if (r.clerk) s.add(r.clerk); });
+    data.filter(r => r.store_number === store).forEach(r => { s.add(r.territory || 'BLANK'); });
     return [...s].sort();
-  }, [data]);
+  }, [data, store]);
+  const availSales = useMemo(() => {
+    const s = new Set();
+    data.filter(r => r.store_number === store).forEach(r => { if (r.salesperson_name) s.add(r.salesperson_name); });
+    return [...s].sort();
+  }, [data, store]);
+  const availClerks = useMemo(() => {
+    const s = new Set();
+    data.filter(r => r.store_number === store).forEach(r => { if (r.clerk) s.add(r.clerk); });
+    return [...s].sort();
+  }, [data, store]);
 
-  // Render trend chart
+  // Reset multi-selects als store wisselt zodat we geen onbeschikbare waarden vasthouden
+  useEffect(() => { setSelSales([]); setSelClerks([]); setTerritory('all'); }, [store]);
+
+  // Charts renderen
   useEffect(() => {
     if (loading || !weekly.length) return;
     Object.values(chartsRef.current).forEach(c => c?.destroy());
@@ -216,13 +274,14 @@ export default function KortingenPage() {
     if (trendRef.current) {
       const lb = weekly.map(w => w.week);
       const showPct = metricMode === 'pct';
+      const curr = STORE_CURRENCY[store];
       chartsRef.current.trend = new Chart(trendRef.current, {
         type: 'bar',
         data: {
           labels: lb,
           datasets: [
             {
-              label: showPct ? 'Korting % per week' : 'Korting bedrag per week',
+              label: showPct ? 'Korting % per week' : `Korting ${curr} per week`,
               data: weekly.map(w => showPct ? w.pct : w.discount),
               backgroundColor: 'rgba(232, 78, 27, 0.25)',
               borderColor: '#E84E1B',
@@ -245,36 +304,29 @@ export default function KortingenPage() {
           ],
         },
         options: {
-          responsive: true,
-          maintainAspectRatio: false,
+          responsive: true, maintainAspectRatio: false,
           plugins: {
             legend: { position: 'top', labels: { usePointStyle: true, font: { size: 11 } } },
-            tooltip: {
-              callbacks: {
-                label: c => showPct ? `${c.dataset.label}: ${(c.raw || 0).toFixed(2)}%` : `${c.dataset.label}: ${fmt(Math.round(c.raw || 0))}`,
-              },
-            },
+            tooltip: { callbacks: { label: c => showPct ? `${c.dataset.label}: ${(c.raw || 0).toFixed(2)}%` : `${c.dataset.label}: ${fmt(Math.round(c.raw || 0))}` } },
           },
           scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) },
-              grid: { color: '#f0ebe5' },
-            },
+            y: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } },
             x: { ticks: { maxRotation: 90, minRotation: 60, font: { size: 9 } }, grid: { display: false } },
           },
         },
       });
     }
     if (clerkRef.current) {
+      // Top 15 op huidige sortering
       const top = clerks.slice(0, 15);
       const showPct = metricMode === 'pct';
+      const curr = STORE_CURRENCY[store];
       chartsRef.current.clerk = new Chart(clerkRef.current, {
         type: 'bar',
         data: {
-          labels: top.map(c => c.clerk.split(' ')[0]),
+          labels: top.map(c => c.name.split(' ')[0]),
           datasets: [{
-            label: showPct ? 'Korting %' : 'Korting (XCG)',
+            label: showPct ? 'Korting %' : `Korting ${curr}`,
             data: top.map(c => showPct ? c.pct : c.discount),
             backgroundColor: 'rgba(232, 78, 27, 0.6)',
             borderColor: '#E84E1B',
@@ -282,60 +334,51 @@ export default function KortingenPage() {
           }],
         },
         options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
+          indexAxis: 'y', responsive: true, maintainAspectRatio: false,
           plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => showPct ? `${(c.raw || 0).toFixed(2)}%` : fmt(Math.round(c.raw || 0)) } } },
-          scales: {
-            x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } },
-            y: { grid: { display: false }, ticks: { font: { size: 10 } } },
-          },
+          scales: { x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
         },
       });
     }
     return () => { Object.values(chartsRef.current).forEach(c => c?.destroy()); chartsRef.current = {}; };
-  }, [weekly, clerks, metricMode, loading]);
+  }, [weekly, clerks, metricMode, loading, store]);
 
-  function toggleClerk(c) {
-    setSelClerks(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
+  function toggleSort(setSort) {
+    return col => setSort(prev => prev.col === col ? { col, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { col, dir: 'desc' });
   }
+  function toggleSales(v) { setSelSales(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]); }
+  function toggleClerk(v) { setSelClerks(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]); }
 
   function buildExportSheets() {
+    const cl = STORE_LABEL[store];
+    const curr = STORE_CURRENCY[store];
     return [
-      {
-        name: 'Wekelijks',
-        rows: weekly.map(w => ({ 'Week': w.week, 'Omzet (XCG)': Math.round(w.sales), 'Korting (XCG)': Math.round(w.discount), 'Korting %': w.pct.toFixed(2), '6w gem %': w.ma6_pct.toFixed(2), 'Transacties': w.transactions })),
-      },
-      {
-        name: 'Per Clerk',
-        rows: clerks.map(c => ({ 'Clerk': c.clerk, 'Omzet': Math.round(c.sales), 'Korting': Math.round(c.discount), 'Korting %': c.pct.toFixed(2), 'Transacties': c.transactions })),
-      },
-      {
-        name: 'Top Accounts',
-        rows: accounts.map(a => ({ 'Customer': a.customer_number, 'Naam': a.customer_name, 'Omzet': Math.round(a.sales), 'Korting': Math.round(a.discount), 'Korting %': a.pct.toFixed(2), 'Transacties': a.transactions })),
-      },
+      { name: `${cl}_Wekelijks`, rows: weekly.map(w => ({ 'Week': w.week, [`Omzet ${curr}`]: Math.round(w.sales), [`Korting ${curr}`]: Math.round(w.discount), 'Korting %': w.pct.toFixed(2), '6w gem %': w.ma6_pct.toFixed(2), 'Transacties': w.transactions })) },
+      { name: 'Per Clerk', rows: clerks.map(c => ({ 'Clerk': c.name, [`Omzet ${curr}`]: Math.round(c.sales), [`Korting ${curr}`]: Math.round(c.discount), 'Korting %': c.pct.toFixed(2), 'Transacties': c.transactions })) },
+      { name: 'Per Salesperson', rows: salesreps.map(c => ({ 'Salesperson': c.name, [`Omzet ${curr}`]: Math.round(c.sales), [`Korting ${curr}`]: Math.round(c.discount), 'Korting %': c.pct.toFixed(2), 'Transacties': c.transactions })) },
+      { name: 'Top Accounts', rows: accounts.map(a => ({ 'Customer': a.customer_number, 'Naam': a.customer_name, [`Omzet ${curr}`]: Math.round(a.sales), [`Korting ${curr}`]: Math.round(a.discount), 'Korting %': a.pct.toFixed(2), 'Transacties': a.transactions })) },
     ];
   }
 
   if (loading) return <LoadingLogo text="Kortingen laden..." />;
-  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen kortingen data beschikbaar. Importeer eerst de discount_data tabel.</p></div>;
+  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen kortingen data beschikbaar.</p></div>;
 
   const showPct = metricMode === 'pct';
+  const storeLabel = STORE_LABEL[store];
+  const currency = STORE_CURRENCY[store];
 
   return (
     <div className="max-w-[1600px] mx-auto py-6 px-5">
       <div className="flex justify-between items-start mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Kortingen Analyse</h1>
-          <p className="text-[13px] text-[#6b5240]">Wekelijkse trend in kortingen — Curaçao</p>
+          <p className="text-[13px] text-[#6b5240]">Wekelijkse trend in kortingen — {storeLabel}</p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeLabel} · {currency}</div>
           <ExcelExportButton
-            filename={(() => {
-              const d = new Date(); const pad = n => n < 10 ? '0' + n : '' + n;
-              return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_kortingen_analyse';
-            })()}
-            reportTitle="Kortingen Analyse — Curaçao"
+            filename={(() => { const d = new Date(); const pad = n => n < 10 ? '0' + n : '' + n; return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_kortingen_' + storeLabel.toLowerCase().replace(/ç/g, 'c'); })()}
+            reportTitle={`Kortingen Analyse — ${storeLabel}`}
             sheets={buildExportSheets}
             className="px-4 py-1.5 rounded-lg text-[12px] font-semibold border bg-white text-[#E84E1B] border-[#E84E1B] hover:bg-[#faf5f0] transition-colors"
           />
@@ -345,49 +388,62 @@ export default function KortingenPage() {
       {/* Filters */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 shadow-sm space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Klant</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Land</span>
+          <Pill label="Curaçao" active={store === '1'} onClick={() => setStore('1')}/>
+          <Pill label="Bonaire" active={store === 'B'} onClick={() => setStore('B')}/>
+          <Pill label="Multimart" active={store === 'M'} onClick={() => setStore('M')}/>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Territory</span>
+          <Pill label="Alle" active={territory === 'all'} onClick={() => setTerritory('all')}/>
+          {availTerritories.map(t => <Pill key={t} label={t} active={territory === t} onClick={() => setTerritory(t)}/>)}
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Klant</span>
           <Pill label="Alle" active={customerFilter === 'all'} onClick={() => setCustomerFilter('all')}/>
-          <Pill label="Cash (*5)" active={customerFilter === 'cash'} onClick={() => setCustomerFilter('cash')}/>
+          <Pill label="Cash" active={customerFilter === 'cash'} onClick={() => setCustomerFilter('cash')}/>
           <Pill label="Account" active={customerFilter === 'account'} onClick={() => setCustomerFilter('account')}/>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Weergave</span>
-          <Pill label="Percentage" active={metricMode === 'pct'} onClick={() => setMetricMode('pct')}/>
-          <Pill label="Bedrag (XCG)" active={metricMode === 'abs'} onClick={() => setMetricMode('abs')}/>
+        <div className="flex items-start gap-3 flex-wrap">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24 mt-1">Salesperson</span>
+          <div className="flex-1 flex flex-wrap gap-1">
+            {selSales.length > 0 && <button onClick={() => setSelSales([])} className="px-2 py-1 rounded text-[11px] bg-[#faf5f0] text-[#6b5240] hover:bg-[#f0e8de]">Wis {selSales.length}</button>}
+            <select onChange={e => { if (e.target.value && !selSales.includes(e.target.value)) toggleSales(e.target.value); e.target.value = ''; }} className="border border-[#e5ddd4] rounded px-2 py-1 text-[12px]">
+              <option value="">+ Voeg salesperson toe...</option>
+              {availSales.filter(c => !selSales.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {selSales.map(c => <span key={c} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[#E84E1B] text-white">{c}<button onClick={() => toggleSales(c)} className="hover:opacity-70">×</button></span>)}
+          </div>
+        </div>
+        <div className="flex items-start gap-3 flex-wrap">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24 mt-1">Clerk</span>
+          <div className="flex-1 flex flex-wrap gap-1">
+            {selClerks.length > 0 && <button onClick={() => setSelClerks([])} className="px-2 py-1 rounded text-[11px] bg-[#faf5f0] text-[#6b5240] hover:bg-[#f0e8de]">Wis {selClerks.length}</button>}
+            <select onChange={e => { if (e.target.value && !selClerks.includes(e.target.value)) toggleClerk(e.target.value); e.target.value = ''; }} className="border border-[#e5ddd4] rounded px-2 py-1 text-[12px]">
+              <option value="">+ Voeg clerk toe...</option>
+              {availClerks.filter(c => !selClerks.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {selClerks.map(c => <span key={c} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[#E84E1B] text-white">{c}<button onClick={() => toggleClerk(c)} className="hover:opacity-70">×</button></span>)}
+          </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Periode</span>
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Periode</span>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="border border-[#e5ddd4] rounded px-2 py-1 text-[12px]"/>
           <span className="text-[12px] text-[#6b5240]">tot</span>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="border border-[#e5ddd4] rounded px-2 py-1 text-[12px]"/>
         </div>
-        <div className="flex items-start gap-3 flex-wrap">
-          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20 mt-1">Clerk</span>
-          <div className="flex-1 flex flex-wrap gap-1">
-            {selClerks.length > 0 && (
-              <button onClick={() => setSelClerks([])} className="px-2 py-1 rounded text-[11px] bg-[#faf5f0] text-[#6b5240] hover:bg-[#f0e8de]">
-                Wis {selClerks.length} filter{selClerks.length === 1 ? '' : 's'}
-              </button>
-            )}
-            <select onChange={e => { if (e.target.value && !selClerks.includes(e.target.value)) toggleClerk(e.target.value); e.target.value = ''; }} className="border border-[#e5ddd4] rounded px-2 py-1 text-[12px]">
-              <option value="">+ Voeg clerk toe...</option>
-              {allClerks.filter(c => !selClerks.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            {selClerks.map(c => (
-              <span key={c} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[#E84E1B] text-white">
-                {c}
-                <button onClick={() => toggleClerk(c)} className="hover:opacity-70">×</button>
-              </span>
-            ))}
-          </div>
+        <div className="flex items-center gap-3 flex-wrap pt-2 border-t border-[#f0ebe5]">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Weergave</span>
+          <Pill label="Percentage" active={metricMode === 'pct'} onClick={() => setMetricMode('pct')}/>
+          <Pill label={`Bedrag (${currency})`} active={metricMode === 'abs'} onClick={() => setMetricMode('abs')}/>
         </div>
       </div>
 
       {/* KPIs */}
       {kpis && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-          <KPI label="Totaal Omzet" value={fmtK(kpis.totSales)} sub={`${kpis.txn.toLocaleString('nl-NL')} transacties`}/>
-          <KPI label="Totaal Korting" value={fmtK(kpis.totDisc)} sub={`${fmtP(kpis.avgPct)} gemiddeld`}/>
+          <KPI label={`Totaal Omzet (${currency})`} value={fmtK(kpis.totSales)} sub={`${kpis.txn.toLocaleString('nl-NL')} transacties`}/>
+          <KPI label={`Totaal Korting (${currency})`} value={fmtK(kpis.totDisc)} sub={`${fmtP(kpis.avgPct)} gemiddeld`}/>
           <KPI label="Gem. Korting %" value={fmtP(kpis.avgPct)} sub={`Over ${kpis.weeks} weken`}/>
           <KPI label="Laatste 6w gem." value={fmtP(kpis.ma6)} sub={kpis.lastWeek ? `t/m ${kpis.lastWeek.week}` : ''}/>
         </div>
@@ -397,6 +453,7 @@ export default function KortingenPage() {
       <div className="flex gap-1 mb-4 border-b-2 border-[#e5ddd4]">
         <button onClick={() => setTab('trend')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'trend' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Wekelijkse Trend</button>
         <button onClick={() => setTab('clerks')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'clerks' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Per Clerk</button>
+        <button onClick={() => setTab('sales')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'sales' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Per Salesperson</button>
         <button onClick={() => setTab('accounts')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'accounts' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Top Accounts</button>
       </div>
 
@@ -410,7 +467,7 @@ export default function KortingenPage() {
       {tab === 'clerks' && (
         <>
           <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
-            <h3 className="text-[14px] font-bold text-[#1a0a04] mb-3">Top 15 Clerks ({showPct ? 'op korting %' : 'op korting bedrag'})</h3>
+            <h3 className="text-[14px] font-bold text-[#1a0a04] mb-3">Top 15 Clerks ({showPct ? 'op korting %' : `op korting ${currency}`})</h3>
             <div style={{ height: '500px' }}><canvas ref={clerkRef}/></div>
           </div>
           <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
@@ -420,17 +477,17 @@ export default function KortingenPage() {
             <table className="w-full border-collapse">
               <thead>
                 <tr className="bg-[#faf7f4]">
-                  <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Clerk</th>
-                  <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Omzet</th>
-                  <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Korting</th>
-                  <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">%</th>
-                  <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Transacties</th>
+                  <ThSort label="Clerk" col="name" sortCol={clerkSort.col} sortDir={clerkSort.dir} onSort={toggleSort(setClerkSort)} align="left"/>
+                  <ThSort label={`Omzet ${currency}`} col="sales" sortCol={clerkSort.col} sortDir={clerkSort.dir} onSort={toggleSort(setClerkSort)}/>
+                  <ThSort label={`Korting ${currency}`} col="discount" sortCol={clerkSort.col} sortDir={clerkSort.dir} onSort={toggleSort(setClerkSort)}/>
+                  <ThSort label="%" col="pct" sortCol={clerkSort.col} sortDir={clerkSort.dir} onSort={toggleSort(setClerkSort)}/>
+                  <ThSort label="Transacties" col="transactions" sortCol={clerkSort.col} sortDir={clerkSort.dir} onSort={toggleSort(setClerkSort)}/>
                 </tr>
               </thead>
               <tbody>
                 {clerks.map(c => (
-                  <tr key={c.clerk} className="hover:bg-[#faf5f0]">
-                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4]">{c.clerk}</td>
+                  <tr key={c.name} className="hover:bg-[#faf5f0]">
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4]">{c.name}</td>
                     <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.sales))}</td>
                     <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.discount))}</td>
                     <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: c.pct >= 15 ? '#dc2626' : c.pct >= 11 ? '#d97706' : '#16a34a' }}>{fmtP(c.pct)}</td>
@@ -443,20 +500,50 @@ export default function KortingenPage() {
         </>
       )}
 
-      {tab === 'accounts' && (
+      {tab === 'sales' && (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
           <div className="p-3 bg-[#faf7f4] border-b border-[#e5ddd4]">
-            <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">Top 30 Accounts naar Korting (alleen account klanten, geen cash)</p>
+            <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">Alle Salespersons ({salesreps.length})</p>
           </div>
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-[#faf7f4]">
-                <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Customer #</th>
-                <th className="text-left p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Naam</th>
-                <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Omzet</th>
-                <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Korting</th>
-                <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">%</th>
-                <th className="text-right p-3 text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b border-[#e5ddd4]">Transacties</th>
+                <ThSort label="Salesperson" col="name" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)} align="left"/>
+                <ThSort label={`Omzet ${currency}`} col="sales" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
+                <ThSort label={`Korting ${currency}`} col="discount" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
+                <ThSort label="%" col="pct" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
+                <ThSort label="Transacties" col="transactions" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
+              </tr>
+            </thead>
+            <tbody>
+              {salesreps.map(c => (
+                <tr key={c.name} className="hover:bg-[#faf5f0]">
+                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4]">{c.name}</td>
+                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.sales))}</td>
+                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.discount))}</td>
+                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: c.pct >= 15 ? '#dc2626' : c.pct >= 11 ? '#d97706' : '#16a34a' }}>{fmtP(c.pct)}</td>
+                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono text-[#6b5240]">{fmt(c.transactions)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === 'accounts' && (
+        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
+          <div className="p-3 bg-[#faf7f4] border-b border-[#e5ddd4]">
+            <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">Top 50 Accounts</p>
+          </div>
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="bg-[#faf7f4]">
+                <ThSort label="Customer #" col="customer_number" sortCol={accSort.col} sortDir={accSort.dir} onSort={toggleSort(setAccSort)} align="left"/>
+                <ThSort label="Naam" col="customer_name" sortCol={accSort.col} sortDir={accSort.dir} onSort={toggleSort(setAccSort)} align="left"/>
+                <ThSort label={`Omzet ${currency}`} col="sales" sortCol={accSort.col} sortDir={accSort.dir} onSort={toggleSort(setAccSort)}/>
+                <ThSort label={`Korting ${currency}`} col="discount" sortCol={accSort.col} sortDir={accSort.dir} onSort={toggleSort(setAccSort)}/>
+                <ThSort label="%" col="pct" sortCol={accSort.col} sortDir={accSort.dir} onSort={toggleSort(setAccSort)}/>
+                <ThSort label="Transacties" col="transactions" sortCol={accSort.col} sortDir={accSort.dir} onSort={toggleSort(setAccSort)}/>
               </tr>
             </thead>
             <tbody>
@@ -475,7 +562,7 @@ export default function KortingenPage() {
         </div>
       )}
 
-      <p className="text-[10px] text-[#a08a74] mt-4">Outliers met &gt;100% korting zijn uitgesloten van de berekeningen (data-correcties bij kleine bedragen). Korting % = korting / (omzet + korting) × 100.</p>
+      <p className="text-[10px] text-[#a08a74] mt-4">Outliers met &gt;100% korting zijn uitgesloten van de berekeningen. Korting % = korting / (omzet + korting) × 100. Klik kolom-headers in de tabellen om te sorteren.</p>
     </div>
   );
 }
