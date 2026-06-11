@@ -3,6 +3,14 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN V27.14:
+   - Omzet/Index: badge (concept) toegevoegd.
+   - Voorraad/Price Changes: tijdelijk verwijderd uit menu
+     (fout zit erin, Jeroen lost eerst op voor terugplaatsing).
+   - Finance: 'Rapportages' link toegevoegd.
+   - Finance: 'AP Sandbox' toegevoegd als uitvouwbaar submenu.
+   - Versie naar V27.14
+
    WIJZIGINGEN V27.13:
    - Finance menu toegevoegd (Accounts Payable suite). Zichtbaar
      voor admin/cfo/ap_approver/ap_clerk. Submenu's:
@@ -36,7 +44,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.13';
+const APP_VERSION = 'V27.14';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -255,7 +263,7 @@ export default function DashboardLayout({ children }) {
   const omzetItemsAll = [
     { href: '/dashboard/sales', label: 'Actuals' },
     { href: '/dashboard/sales/forecast', label: 'Forecast', badge: '(concept)' },
-    { href: '/dashboard/sales/index', label: 'Index' },
+    { href: '/dashboard/sales/index', label: 'Index', badge: '(concept)' },
     { href: '/dashboard/sales/traffic', label: 'Bezoekers en Conversie' },
   ];
   const voorraadItemsAll = [
@@ -269,7 +277,6 @@ export default function DashboardLayout({ children }) {
       { href: '/dashboard/inventory/stockrisk/sanitair-keukens', label: 'Sanitair & Keukens' },
     ]},
     { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
-    { href: '/dashboard/inventory/price-changes', label: 'Price Changes' },
     { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
       { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
       { href: '/dashboard/inventory/health/appliances-houseware', label: 'Appliances & Houseware' },
@@ -296,6 +303,10 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/finance/ap/match/worklist', label: 'Afletter Werklijst' },
     { href: '/dashboard/finance/ap/match/pcs', label: 'PCS Import', badge: '(clean-up)' },
     { href: '/dashboard/finance/ap/match/bank', label: 'Bank Statement Import', badge: '(clean-up)' },
+    { href: '/dashboard/finance/reports', label: 'Rapportages' },
+    { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)', children: [
+      { href: '/dashboard/finance/sandbox-ap', label: 'Sandbox Dashboard' },
+    ]},
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
