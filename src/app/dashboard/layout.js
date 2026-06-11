@@ -257,6 +257,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/sales': 'sales',
     '/dashboard/sales/forecast': 'sales',
     '/dashboard/sales/index': 'sales_index',
+    '/dashboard/sales/discounts': 'sales_discounts',
     '/dashboard/sales/traffic': 'sales_traffic',
     '/dashboard/inventory/budget': 'inventory_budget',
     '/dashboard/inventory/buying': 'inventory_buying',
@@ -274,6 +275,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/sales', label: 'Actuals' },
     { href: '/dashboard/sales/forecast', label: 'Forecast', badge: '(concept)' },
     { href: '/dashboard/sales/index', label: 'Index', badge: '(concept)' },
+    { href: '/dashboard/sales/discounts', label: 'Kortingen' },
     { href: '/dashboard/sales/traffic', label: 'Bezoekers en Conversie' },
   ];
   const voorraadItemsAll = [
