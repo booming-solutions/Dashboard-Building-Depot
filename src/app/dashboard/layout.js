@@ -3,6 +3,16 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN V27.15:
+   - Finance menu vereenvoudigd tot 3 hoofdlinks:
+     · AP Dashboard  (van hieruit verder navigeren)
+     · AP Sandbox    (van hieruit verder navigeren)
+     · Rapportages
+     Alle sub-pagina's (Werkstroom, Upload, Auto-match, Eagle Sync,
+     Worklist, PCS Import, Bank Import) zijn nu alleen bereikbaar
+     via de tegels op de dashboards zelf.
+   - Versie naar V27.15
+
    WIJZIGINGEN V27.14:
    - Omzet/Index: badge (concept) toegevoegd.
    - Voorraad/Price Changes: tijdelijk verwijderd uit menu
@@ -44,7 +54,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.14';
+const APP_VERSION = 'V27.15';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -296,17 +306,8 @@ export default function DashboardLayout({ children }) {
   const isFinance = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(profile?.role);
   const financeItems = [
     { href: '/dashboard/finance/ap', label: 'AP Dashboard' },
-    { href: '/dashboard/finance/ap/werkstroom', label: 'Werkstroom' },
-    { href: '/dashboard/finance/ap/upload', label: 'Data Upload' },
-    { href: '/dashboard/finance/ap/auto-match', label: 'Auto-match' },
-    { href: '/dashboard/finance/ap/eagle-sync', label: 'Eagle Sync' },
-    { href: '/dashboard/finance/ap/match/worklist', label: 'Afletter Werklijst' },
-    { href: '/dashboard/finance/ap/match/pcs', label: 'PCS Import', badge: '(clean-up)' },
-    { href: '/dashboard/finance/ap/match/bank', label: 'Bank Statement Import', badge: '(clean-up)' },
+    { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)' },
     { href: '/dashboard/finance/reports', label: 'Rapportages' },
-    { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)', children: [
-      { href: '/dashboard/finance/sandbox-ap', label: 'Sandbox Dashboard' },
-    ]},
   ];
 
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
