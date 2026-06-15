@@ -24,8 +24,8 @@ const fmt = n => (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, ma
 const fmtK = n => { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(2) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : fmt(a)); };
 const fmtP = n => (n || 0).toFixed(2) + '%';
 
-const STORE_LABEL = { '1': 'Curaçao', 'B': 'Bonaire', 'M': 'Multimart' };
-const STORE_CURRENCY = { '1': 'XCG', 'B': 'US$', 'M': 'XCG' };
+const STORE_LABEL = { '1': 'Curaçao', 'B': 'Bonaire', 'M': 'Multimart', 'R': 'Repair' };
+const STORE_CURRENCY = { '1': 'XCG', 'B': 'US$', 'M': 'XCG', 'R': 'XCG' };
 
 // ISO weeknummer (Maandag = start)
 function isoWeek(d) {
@@ -99,9 +99,12 @@ export default function KortingenPage() {
   const [clerkSort, setClerkSort] = useState({ col: 'discount', dir: 'desc' });
   const [salesSort, setSalesSort] = useState({ col: 'discount', dir: 'desc' });
   const [accSort, setAccSort] = useState({ col: 'discount', dir: 'desc' });
+  const [deptSort, setDeptSort] = useState({ col: 'discount', dir: 'desc' });
 
   const trendRef = useRef(null);
   const clerkRef = useRef(null);
+  const salesRef = useRef(null);
+  const deptRef = useRef(null);
   const chartsRef = useRef({});
 
   useEffect(() => { loadData(); }, []);
@@ -230,6 +233,22 @@ export default function KortingenPage() {
     return sortBy(arr, salesSort.col, salesSort.dir);
   }, [filtered, salesSort]);
 
+  const departments = useMemo(() => {
+    const map = {};
+    filtered.forEach(r => {
+      const code = r.dept_code || '??';
+      if (!map[code]) map[code] = { dept_code: code, dept_name: r.dept_name || '', sales: 0, discount: 0, transactions: 0 };
+      map[code].sales += parseFloat(r.sales_amount) || 0;
+      map[code].discount += parseFloat(r.discount_amount) || 0;
+      map[code].transactions += 1;
+    });
+    const arr = Object.values(map).map(d => {
+      const gross = d.sales + d.discount;
+      return { ...d, pct: gross ? d.discount / gross * 100 : 0 };
+    });
+    return sortBy(arr, deptSort.col, deptSort.dir);
+  }, [filtered, deptSort]);
+
   const accounts = useMemo(() => {
     const map = {};
     filtered.filter(r => !r.is_cash).forEach(r => {
@@ -345,6 +364,62 @@ export default function KortingenPage() {
     return () => { if (chartsRef.current.clerk) { chartsRef.current.clerk.destroy(); chartsRef.current.clerk = null; } };
   }, [clerks, metricMode, loading, store, tab]);
 
+  // Salesperson top-15 chart — alleen renderen wanneer 'sales' tab actief is
+  useEffect(() => {
+    if (loading || tab !== 'sales' || !salesreps.length || !salesRef.current) return;
+    if (chartsRef.current.sales) { chartsRef.current.sales.destroy(); chartsRef.current.sales = null; }
+    const top = salesreps.slice(0, 15);
+    const showPct = metricMode === 'pct';
+    const curr = STORE_CURRENCY[store];
+    chartsRef.current.sales = new Chart(salesRef.current, {
+      type: 'bar',
+      data: {
+        labels: top.map(c => c.name.split(' ')[0]),
+        datasets: [{
+          label: showPct ? 'Korting %' : `Korting ${curr}`,
+          data: top.map(c => showPct ? c.pct : c.discount),
+          backgroundColor: 'rgba(232, 78, 27, 0.6)',
+          borderColor: '#E84E1B',
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => showPct ? `${(c.raw || 0).toFixed(2)}%` : fmt(Math.round(c.raw || 0)) } } },
+        scales: { x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      },
+    });
+    return () => { if (chartsRef.current.sales) { chartsRef.current.sales.destroy(); chartsRef.current.sales = null; } };
+  }, [salesreps, metricMode, loading, store, tab]);
+
+  // Department top-15 chart — alleen renderen wanneer 'departments' tab actief is
+  useEffect(() => {
+    if (loading || tab !== 'departments' || !departments.length || !deptRef.current) return;
+    if (chartsRef.current.dept) { chartsRef.current.dept.destroy(); chartsRef.current.dept = null; }
+    const top = departments.slice(0, 15);
+    const showPct = metricMode === 'pct';
+    const curr = STORE_CURRENCY[store];
+    chartsRef.current.dept = new Chart(deptRef.current, {
+      type: 'bar',
+      data: {
+        labels: top.map(d => d.dept_code + ' — ' + (d.dept_name || '').replace(/^\d+\s*/, '').slice(0, 25)),
+        datasets: [{
+          label: showPct ? 'Korting %' : `Korting ${curr}`,
+          data: top.map(d => showPct ? d.pct : d.discount),
+          backgroundColor: 'rgba(232, 78, 27, 0.6)',
+          borderColor: '#E84E1B',
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => showPct ? `${(c.raw || 0).toFixed(2)}%` : fmt(Math.round(c.raw || 0)) } } },
+        scales: { x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      },
+    });
+    return () => { if (chartsRef.current.dept) { chartsRef.current.dept.destroy(); chartsRef.current.dept = null; } };
+  }, [departments, metricMode, loading, store, tab]);
+
   function toggleSort(setSort) {
     return col => setSort(prev => prev.col === col ? { col, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { col, dir: 'desc' });
   }
@@ -358,6 +433,7 @@ export default function KortingenPage() {
       { name: `${cl}_Wekelijks`, rows: weekly.map(w => ({ 'Week': w.week, [`Omzet ${curr}`]: Math.round(w.sales), [`Korting ${curr}`]: Math.round(w.discount), 'Korting %': w.pct.toFixed(2), '6w gem %': w.ma6_pct.toFixed(2), 'Transacties': w.transactions })) },
       { name: 'Per Clerk', rows: clerks.map(c => ({ 'Clerk': c.name, [`Omzet ${curr}`]: Math.round(c.sales), [`Korting ${curr}`]: Math.round(c.discount), 'Korting %': c.pct.toFixed(2), 'Transacties': c.transactions })) },
       { name: 'Per Salesperson', rows: salesreps.map(c => ({ 'Salesperson': c.name, [`Omzet ${curr}`]: Math.round(c.sales), [`Korting ${curr}`]: Math.round(c.discount), 'Korting %': c.pct.toFixed(2), 'Transacties': c.transactions })) },
+      { name: 'Per Department', rows: departments.map(d => ({ 'Dept Code': d.dept_code, 'Department': d.dept_name, [`Omzet ${curr}`]: Math.round(d.sales), [`Korting ${curr}`]: Math.round(d.discount), 'Korting %': d.pct.toFixed(2), 'Transacties': d.transactions })) },
       { name: 'Top Accounts', rows: accounts.map(a => ({ 'Customer': a.customer_number, 'Naam': a.customer_name, [`Omzet ${curr}`]: Math.round(a.sales), [`Korting ${curr}`]: Math.round(a.discount), 'Korting %': a.pct.toFixed(2), 'Transacties': a.transactions })) },
     ];
   }
@@ -407,6 +483,7 @@ export default function KortingenPage() {
           <Pill label="Curaçao" active={store === '1'} onClick={() => setStore('1')}/>
           <Pill label="Bonaire" active={store === 'B'} onClick={() => setStore('B')}/>
           <Pill label="Multimart" active={store === 'M'} onClick={() => setStore('M')}/>
+          <Pill label="Repair" active={store === 'R'} onClick={() => setStore('R')}/>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Territory</span>
@@ -469,6 +546,7 @@ export default function KortingenPage() {
         <button onClick={() => setTab('trend')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'trend' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Wekelijkse Trend</button>
         <button onClick={() => setTab('clerks')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'clerks' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Per Clerk</button>
         <button onClick={() => setTab('sales')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'sales' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Per Salesperson</button>
+        <button onClick={() => setTab('departments')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'departments' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Per Department</button>
         <button onClick={() => setTab('accounts')} className={`px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] ${tab === 'accounts' ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent'}`}>Top Accounts</button>
       </div>
 
@@ -516,33 +594,77 @@ export default function KortingenPage() {
       )}
 
       {tab === 'sales' && (
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
-          <div className="p-3 bg-[#faf7f4] border-b border-[#e5ddd4]">
-            <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">Alle Salespersons ({salesreps.length})</p>
+        <>
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
+            <h3 className="text-[14px] font-bold text-[#1a0a04] mb-3">Top 15 Salespersons ({showPct ? 'op korting %' : `op korting ${currency}`})</h3>
+            {salesreps.length ? <div style={{ height: '500px' }}><canvas ref={salesRef}/></div> : <p className="text-center py-12 text-[#6b5240]">Geen data.</p>}
           </div>
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-[#faf7f4]">
-                <ThSort label="Salesperson" col="name" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)} align="left"/>
-                <ThSort label={`Omzet ${currency}`} col="sales" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
-                <ThSort label={`Korting ${currency}`} col="discount" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
-                <ThSort label="%" col="pct" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
-                <ThSort label="Transacties" col="transactions" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
-              </tr>
-            </thead>
-            <tbody>
-              {salesreps.map(c => (
-                <tr key={c.name} className="hover:bg-[#faf5f0]">
-                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4]">{c.name}</td>
-                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.sales))}</td>
-                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.discount))}</td>
-                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: c.pct >= 15 ? '#dc2626' : c.pct >= 11 ? '#d97706' : '#16a34a' }}>{fmtP(c.pct)}</td>
-                  <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono text-[#6b5240]">{fmt(c.transactions)}</td>
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
+            <div className="p-3 bg-[#faf7f4] border-b border-[#e5ddd4]">
+              <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">Alle Salespersons ({salesreps.length})</p>
+            </div>
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-[#faf7f4]">
+                  <ThSort label="Salesperson" col="name" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)} align="left"/>
+                  <ThSort label={`Omzet ${currency}`} col="sales" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
+                  <ThSort label={`Korting ${currency}`} col="discount" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
+                  <ThSort label="%" col="pct" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
+                  <ThSort label="Transacties" col="transactions" sortCol={salesSort.col} sortDir={salesSort.dir} onSort={toggleSort(setSalesSort)}/>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {salesreps.map(c => (
+                  <tr key={c.name} className="hover:bg-[#faf5f0]">
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4]">{c.name}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.sales))}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(c.discount))}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: c.pct >= 15 ? '#dc2626' : c.pct >= 11 ? '#d97706' : '#16a34a' }}>{fmtP(c.pct)}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono text-[#6b5240]">{fmt(c.transactions)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {tab === 'departments' && (
+        <>
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
+            <h3 className="text-[14px] font-bold text-[#1a0a04] mb-3">Top 15 Departments ({showPct ? 'op korting %' : `op korting ${currency}`})</h3>
+            {departments.length ? <div style={{ height: '500px' }}><canvas ref={deptRef}/></div> : <p className="text-center py-12 text-[#6b5240]">Geen data.</p>}
+          </div>
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
+            <div className="p-3 bg-[#faf7f4] border-b border-[#e5ddd4]">
+              <p className="text-[11px] font-bold text-[#6b5240] uppercase tracking-wide">Alle Departments ({departments.length})</p>
+            </div>
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-[#faf7f4]">
+                  <ThSort label="Code" col="dept_code" sortCol={deptSort.col} sortDir={deptSort.dir} onSort={toggleSort(setDeptSort)} align="left"/>
+                  <ThSort label="Department" col="dept_name" sortCol={deptSort.col} sortDir={deptSort.dir} onSort={toggleSort(setDeptSort)} align="left"/>
+                  <ThSort label={`Omzet ${currency}`} col="sales" sortCol={deptSort.col} sortDir={deptSort.dir} onSort={toggleSort(setDeptSort)}/>
+                  <ThSort label={`Korting ${currency}`} col="discount" sortCol={deptSort.col} sortDir={deptSort.dir} onSort={toggleSort(setDeptSort)}/>
+                  <ThSort label="%" col="pct" sortCol={deptSort.col} sortDir={deptSort.dir} onSort={toggleSort(setDeptSort)}/>
+                  <ThSort label="Transacties" col="transactions" sortCol={deptSort.col} sortDir={deptSort.dir} onSort={toggleSort(setDeptSort)}/>
+                </tr>
+              </thead>
+              <tbody>
+                {departments.map(d => (
+                  <tr key={d.dept_code} className="hover:bg-[#faf5f0]">
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] font-mono">{d.dept_code}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4]">{(d.dept_name || '').replace(/^\d+\s*/, '')}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(d.sales))}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono">{fmt(Math.round(d.discount))}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: d.pct >= 15 ? '#dc2626' : d.pct >= 11 ? '#d97706' : '#16a34a' }}>{fmtP(d.pct)}</td>
+                    <td className="p-2.5 text-[12px] border-b border-[#e5ddd4] text-right font-mono text-[#6b5240]">{fmt(d.transactions)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {tab === 'accounts' && (
