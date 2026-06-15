@@ -196,6 +196,16 @@ export default function KortingenPage() {
     const m = dir === 'desc' ? -1 : 1;
     return [...arr].sort((a, b) => {
       const av = a[col], bv = b[col];
+      // dept_code: numeriek sorteren (1, 2, 11, niet 1, 11, 2)
+      if (col === 'dept_code') {
+        return m * ((parseInt(av) || 0) - (parseInt(bv) || 0));
+      }
+      // customer_number ook numeriek waar mogelijk (start met * voor cash, anders nummer)
+      if (col === 'customer_number') {
+        const an = parseInt(av), bn = parseInt(bv);
+        if (!isNaN(an) && !isNaN(bn)) return m * (an - bn);
+        return m * String(av).localeCompare(String(bv));
+      }
       if (typeof av === 'string') return m * av.localeCompare(bv);
       return m * ((av || 0) - (bv || 0));
     });
