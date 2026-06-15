@@ -267,81 +267,83 @@ export default function KortingenPage() {
   useEffect(() => { setSelSales([]); setSelClerks([]); setTerritory('all'); }, [store]);
 
   // Charts renderen
+  // Trend chart — alleen renderen wanneer 'trend' tab actief is
   useEffect(() => {
-    if (loading || !weekly.length) return;
-    Object.values(chartsRef.current).forEach(c => c?.destroy());
-    chartsRef.current = {};
-    if (trendRef.current) {
-      const lb = weekly.map(w => w.week);
-      const showPct = metricMode === 'pct';
-      const curr = STORE_CURRENCY[store];
-      chartsRef.current.trend = new Chart(trendRef.current, {
-        type: 'bar',
-        data: {
-          labels: lb,
-          datasets: [
-            {
-              label: showPct ? 'Korting % per week' : `Korting ${curr} per week`,
-              data: weekly.map(w => showPct ? w.pct : w.discount),
-              backgroundColor: 'rgba(232, 78, 27, 0.25)',
-              borderColor: '#E84E1B',
-              borderWidth: 1,
-              borderRadius: 3,
-              order: 2,
-            },
-            {
-              label: '6-weeks gem.',
-              data: weekly.map(w => showPct ? w.ma6_pct : w.ma6_abs),
-              type: 'line',
-              borderColor: '#1B3A5C',
-              backgroundColor: '#1B3A5C',
-              borderWidth: 2,
-              pointRadius: 3,
-              tension: 0.3,
-              fill: false,
-              order: 1,
-            },
-          ],
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: {
-            legend: { position: 'top', labels: { usePointStyle: true, font: { size: 11 } } },
-            tooltip: { callbacks: { label: c => showPct ? `${c.dataset.label}: ${(c.raw || 0).toFixed(2)}%` : `${c.dataset.label}: ${fmt(Math.round(c.raw || 0))}` } },
-          },
-          scales: {
-            y: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } },
-            x: { ticks: { maxRotation: 90, minRotation: 60, font: { size: 9 } }, grid: { display: false } },
-          },
-        },
-      });
-    }
-    if (clerkRef.current) {
-      // Top 15 op huidige sortering
-      const top = clerks.slice(0, 15);
-      const showPct = metricMode === 'pct';
-      const curr = STORE_CURRENCY[store];
-      chartsRef.current.clerk = new Chart(clerkRef.current, {
-        type: 'bar',
-        data: {
-          labels: top.map(c => c.name.split(' ')[0]),
-          datasets: [{
-            label: showPct ? 'Korting %' : `Korting ${curr}`,
-            data: top.map(c => showPct ? c.pct : c.discount),
-            backgroundColor: 'rgba(232, 78, 27, 0.6)',
+    if (loading || tab !== 'trend' || !weekly.length || !trendRef.current) return;
+    if (chartsRef.current.trend) { chartsRef.current.trend.destroy(); chartsRef.current.trend = null; }
+    const lb = weekly.map(w => w.week);
+    const showPct = metricMode === 'pct';
+    const curr = STORE_CURRENCY[store];
+    chartsRef.current.trend = new Chart(trendRef.current, {
+      type: 'bar',
+      data: {
+        labels: lb,
+        datasets: [
+          {
+            label: showPct ? 'Korting % per week' : `Korting ${curr} per week`,
+            data: weekly.map(w => showPct ? w.pct : w.discount),
+            backgroundColor: 'rgba(232, 78, 27, 0.25)',
             borderColor: '#E84E1B',
             borderWidth: 1,
-          }],
+            borderRadius: 3,
+            order: 2,
+          },
+          {
+            label: '6-weeks gem.',
+            data: weekly.map(w => showPct ? w.ma6_pct : w.ma6_abs),
+            type: 'line',
+            borderColor: '#1B3A5C',
+            backgroundColor: '#1B3A5C',
+            borderWidth: 2,
+            pointRadius: 3,
+            tension: 0.3,
+            fill: false,
+            order: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', labels: { usePointStyle: true, font: { size: 11 } } },
+          tooltip: { callbacks: { label: c => showPct ? `${c.dataset.label}: ${(c.raw || 0).toFixed(2)}%` : `${c.dataset.label}: ${fmt(Math.round(c.raw || 0))}` } },
         },
-        options: {
-          indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => showPct ? `${(c.raw || 0).toFixed(2)}%` : fmt(Math.round(c.raw || 0)) } } },
-          scales: { x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } },
+          x: { ticks: { maxRotation: 90, minRotation: 60, font: { size: 9 } }, grid: { display: false } },
         },
-      });
-    }
-    return () => { Object.values(chartsRef.current).forEach(c => c?.destroy()); chartsRef.current = {}; };
-  }, [weekly, clerks, metricMode, loading, store]);
+      },
+    });
+    return () => { if (chartsRef.current.trend) { chartsRef.current.trend.destroy(); chartsRef.current.trend = null; } };
+  }, [weekly, metricMode, loading, store, tab]);
+
+  // Clerk top-15 chart — alleen renderen wanneer 'clerks' tab actief is
+  useEffect(() => {
+    if (loading || tab !== 'clerks' || !clerks.length || !clerkRef.current) return;
+    if (chartsRef.current.clerk) { chartsRef.current.clerk.destroy(); chartsRef.current.clerk = null; }
+    const top = clerks.slice(0, 15);
+    const showPct = metricMode === 'pct';
+    const curr = STORE_CURRENCY[store];
+    chartsRef.current.clerk = new Chart(clerkRef.current, {
+      type: 'bar',
+      data: {
+        labels: top.map(c => c.name.split(' ')[0]),
+        datasets: [{
+          label: showPct ? 'Korting %' : `Korting ${curr}`,
+          data: top.map(c => showPct ? c.pct : c.discount),
+          backgroundColor: 'rgba(232, 78, 27, 0.6)',
+          borderColor: '#E84E1B',
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => showPct ? `${(c.raw || 0).toFixed(2)}%` : fmt(Math.round(c.raw || 0)) } } },
+        scales: { x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      },
+    });
+    return () => { if (chartsRef.current.clerk) { chartsRef.current.clerk.destroy(); chartsRef.current.clerk = null; } };
+  }, [clerks, metricMode, loading, store, tab]);
 
   function toggleSort(setSort) {
     return col => setSort(prev => prev.col === col ? { col, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { col, dir: 'desc' });
@@ -367,12 +369,24 @@ export default function KortingenPage() {
   const storeLabel = STORE_LABEL[store];
   const currency = STORE_CURRENCY[store];
 
+  // Bereken laatste upload datum (gebruik max uploaded_at uit alle rijen)
+  const lastUpload = useMemo(() => {
+    if (!data.length) return null;
+    let max = '';
+    data.forEach(r => { if (r.uploaded_at && r.uploaded_at > max) max = r.uploaded_at; });
+    if (!max) return null;
+    const d = new Date(max);
+    if (isNaN(d.getTime())) return null;
+    const MN = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+    return `${d.getDate()} ${MN[d.getMonth()]} ${d.getFullYear()}`;
+  }, [data]);
+
   return (
     <div className="max-w-[1600px] mx-auto py-6 px-5">
       <div className="flex justify-between items-start mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Kortingen Analyse</h1>
-          <p className="text-[13px] text-[#6b5240]">Wekelijkse trend in kortingen — {storeLabel}</p>
+          <p className="text-[13px] text-[#6b5240]">Wekelijkse trend in kortingen — {storeLabel}{lastUpload ? ` · Update t/m ${lastUpload}` : ''}</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="border-2 border-[#E84E1B] text-[#E84E1B] px-4 py-1.5 rounded-full text-[13px] font-bold">{storeLabel} · {currency}</div>
