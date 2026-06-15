@@ -362,14 +362,8 @@ export default function KortingenPage() {
     ];
   }
 
-  if (loading) return <LoadingLogo text="Kortingen laden..." />;
-  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen kortingen data beschikbaar.</p></div>;
-
-  const showPct = metricMode === 'pct';
-  const storeLabel = STORE_LABEL[store];
-  const currency = STORE_CURRENCY[store];
-
   // Bereken laatste upload datum (gebruik max uploaded_at uit alle rijen)
+  // BELANGRIJK: useMemo MOET boven conditional returns staan (React hook regel)
   const lastUpload = useMemo(() => {
     if (!data.length) return null;
     let max = '';
@@ -380,6 +374,13 @@ export default function KortingenPage() {
     const MN = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
     return `${d.getDate()} ${MN[d.getMonth()]} ${d.getFullYear()}`;
   }, [data]);
+
+  if (loading) return <LoadingLogo text="Kortingen laden..." />;
+  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen kortingen data beschikbaar.</p></div>;
+
+  const showPct = metricMode === 'pct';
+  const storeLabel = STORE_LABEL[store];
+  const currency = STORE_CURRENCY[store];
 
   return (
     <div className="max-w-[1600px] mx-auto py-6 px-5">
