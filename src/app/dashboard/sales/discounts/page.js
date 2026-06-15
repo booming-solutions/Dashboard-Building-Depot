@@ -99,7 +99,7 @@ export default function KortingenPage() {
   const [clerkSort, setClerkSort] = useState({ col: 'discount', dir: 'desc' });
   const [salesSort, setSalesSort] = useState({ col: 'discount', dir: 'desc' });
   const [accSort, setAccSort] = useState({ col: 'discount', dir: 'desc' });
-  const [deptSort, setDeptSort] = useState({ col: 'discount', dir: 'desc' });
+  const [deptSort, setDeptSort] = useState({ col: 'dept_code', dir: 'asc' });
 
   const trendRef = useRef(null);
   const clerkRef = useRef(null);
@@ -402,20 +402,21 @@ export default function KortingenPage() {
     return () => { if (chartsRef.current.sales) { chartsRef.current.sales.destroy(); chartsRef.current.sales = null; } };
   }, [salesreps, metricMode, loading, store, tab]);
 
-  // Department top-15 chart — alleen renderen wanneer 'departments' tab actief is
+  // Department chart — alle departments tonen, gesorteerd op code (oplopend)
   useEffect(() => {
     if (loading || tab !== 'departments' || !departments.length || !deptRef.current) return;
     if (chartsRef.current.dept) { chartsRef.current.dept.destroy(); chartsRef.current.dept = null; }
-    const top = departments.slice(0, 15);
+    // Sorteer altijd op dept_code voor chart (consistent overzicht, niet afhankelijk van tabel sort)
+    const sortedByCode = [...departments].sort((a, b) => (parseInt(a.dept_code) || 0) - (parseInt(b.dept_code) || 0));
     const showPct = metricMode === 'pct';
     const curr = STORE_CURRENCY[store];
     chartsRef.current.dept = new Chart(deptRef.current, {
       type: 'bar',
       data: {
-        labels: top.map(d => d.dept_code + ' — ' + (d.dept_name || '').replace(/^\d+\s*/, '').slice(0, 25)),
+        labels: sortedByCode.map(d => d.dept_code + ' ' + (d.dept_name || '').replace(/^\d+\s*/, '').slice(0, 25)),
         datasets: [{
           label: showPct ? 'Korting %' : `Korting ${curr}`,
-          data: top.map(d => showPct ? d.pct : d.discount),
+          data: sortedByCode.map(d => showPct ? d.pct : d.discount),
           backgroundColor: 'rgba(232, 78, 27, 0.6)',
           borderColor: '#E84E1B',
           borderWidth: 1,
@@ -424,7 +425,7 @@ export default function KortingenPage() {
       options: {
         indexAxis: 'y', responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => showPct ? `${(c.raw || 0).toFixed(2)}%` : fmt(Math.round(c.raw || 0)) } } },
-        scales: { x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+        scales: { x: { beginAtZero: true, ticks: { callback: v => showPct ? v.toFixed(1) + '%' : fmtK(v) }, grid: { color: '#f0ebe5' } }, y: { grid: { display: false }, ticks: { font: { size: 9 }, autoSkip: false } } },
       },
     });
     return () => { if (chartsRef.current.dept) { chartsRef.current.dept.destroy(); chartsRef.current.dept = null; } };
@@ -642,8 +643,8 @@ export default function KortingenPage() {
       {tab === 'departments' && (
         <>
           <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
-            <h3 className="text-[14px] font-bold text-[#1a0a04] mb-3">Top 15 Departments ({showPct ? 'op korting %' : `op korting ${currency}`})</h3>
-            {departments.length ? <div style={{ height: '500px' }}><canvas ref={deptRef}/></div> : <p className="text-center py-12 text-[#6b5240]">Geen data.</p>}
+            <h3 className="text-[14px] font-bold text-[#1a0a04] mb-3">Departments ({showPct ? 'op korting %' : `op korting ${currency}`}) — gesorteerd op code</h3>
+            {departments.length ? <div style={{ height: Math.max(400, departments.length * 18) + 'px' }}><canvas ref={deptRef}/></div> : <p className="text-center py-12 text-[#6b5240]">Geen data.</p>}
           </div>
           <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
             <div className="p-3 bg-[#faf7f4] border-b border-[#e5ddd4]">
