@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: sandbox_ap_upload_v2.js
+   BESTAND: sandbox_ap_upload_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/upload/page.js
    (overschrijft v2, hernoemen naar page.js bij upload)
 
@@ -24,7 +24,6 @@
    - Nieuwe vendors automatisch toevoegen aan sandbox_ap_vendors
    - Bevestig → uitvoering + audit logging
    ============================================================ */
-// 🧪 SANDBOX BESTAND — werkt op sandbox_ap_* tabellen, geen impact op live data.
 'use client';
 
 import { useState, useCallback } from 'react';
@@ -54,6 +53,14 @@ async function fetchAllPaginated(queryBuilder, batchSize = 1000) {
   return allRows;
 }
 
+// V6 FIXES:
+//   1. computeDiff fetcht nu ALLE actieve facturen via fetchAllPaginated
+//      ipv default 1000 cap — vroeger werden bij >1000 records alle
+//      records erboven gezien als 'nieuw', wat batch-inserts kapot maakte.
+//   2. Batch insert valt terug op rij-voor-rij retry als hele batch faalt.
+//      Eén UNIQUE constraint conflict trekt nu niet meer de hele batch
+//      van 500 mee de afgrond in.
+//
 // V5: ondersteunt zowel comma- als tab-gescheiden bestanden.
 // Eagle exporteert soms TSV ("nieuw" 2025 formaat) en soms CSV.
 // Detectie per regel op basis van delimiter-frequentie.
@@ -210,11 +217,19 @@ async function computeDiff(supabase, parsedInvoices) {
   // Voucher is Eagle's natuurlijke unieke key
   // Haal alle actieve én auto_matched rijen op (auto_matched moet ook gechecked
   // worden of Eagle ze inmiddels heeft afgewerkt)
-  const { data: existing, error } = await supabase
-    .from('sandbox_ap_invoices')
-    .select('id, vendor_id, invoice_number, voucher, balance, status, assigned_ap_clerk')
-    .not('status', 'in', '(paid,disappeared_from_export)');
-  if (error) throw new Error(`Kan bestaande facturen niet laden: ${error.message}`);
+  // V6 FIX: PAGINATED ophalen — anders cap je default op 1000 rijen
+  // en miss je bij >1000 actieve facturen alles erboven.
+  let existing;
+  try {
+    existing = await fetchAllPaginated(() =>
+      supabase
+        .from('sandbox_ap_invoices')
+        .select('id, vendor_id, invoice_number, voucher, balance, status, assigned_ap_clerk')
+        .not('status', 'in', '(paid,disappeared_from_export)')
+    );
+  } catch (e) {
+    throw new Error(`Kan bestaande facturen niet laden: ${e.message}`);
+  }
 
   // Splitsen: actieve werkstroom-rijen vs auto_matched rijen
   const activeRows = existing.filter(r => r.status !== 'auto_matched');
@@ -342,7 +357,7 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
   }
 
   const { data: uploadRow, error: uploadErr } = await supabase
-    .from('ap_uploads')
+    .from('sandbox_ap_uploads')
     .insert({
       filename,
       uploaded_by: currentUser.id,
@@ -391,10 +406,34 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
       };
     });
     const BATCH = 500;
+    let totalInserted = 0;
+    let totalFailed = 0;
     for (let i = 0; i < newRows.length; i += BATCH) {
       const batch = newRows.slice(i, i + BATCH);
-      const { error } = await supabase.from('sandbox_ap_invoices').insert(batch);
-      if (error) errors.push(`Invoice insert batch ${Math.floor(i / BATCH) + 1}: ${error.message}`);
+      const { error, count } = await supabase.from('sandbox_ap_invoices').insert(batch, { count: 'exact' });
+      if (error) {
+        // V6 FIX: hele batch faalde — probeer rij-voor-rij om welke regels wel kunnen
+        let perRowOk = 0;
+        let perRowFail = 0;
+        const failSamples = [];
+        for (const row of batch) {
+          const { error: rowErr } = await supabase.from('sandbox_ap_invoices').insert([row]);
+          if (rowErr) {
+            perRowFail++;
+            if (failSamples.length < 3) failSamples.push(`voucher=${row.voucher}: ${rowErr.message}`);
+          } else {
+            perRowOk++;
+          }
+        }
+        totalInserted += perRowOk;
+        totalFailed += perRowFail;
+        errors.push(`Batch ${Math.floor(i / BATCH) + 1} (${batch.length} rijen): ${perRowOk} OK, ${perRowFail} fail. Voorbeelden: ${failSamples.join(' | ')}`);
+      } else {
+        totalInserted += batch.length;
+      }
+    }
+    if (totalFailed > 0) {
+      errors.push(`TOTAAL: ${totalInserted} ingeschoten, ${totalFailed} mislukt. Zie batch-meldingen hierboven voor reden.`);
     }
   }
 
