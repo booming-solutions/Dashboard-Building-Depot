@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_upload_page_v4_1.js
+   BESTAND: ap_upload_page_v5.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/upload/page.js
    (overschrijft v2, hernoemen naar page.js bij upload)
 
@@ -53,7 +53,18 @@ async function fetchAllPaginated(queryBuilder, batchSize = 1000) {
   return allRows;
 }
 
-function parseCSVLine(line) {
+// V5: ondersteunt zowel comma- als tab-gescheiden bestanden.
+// Eagle exporteert soms TSV ("nieuw" 2025 formaat) en soms CSV.
+// Detectie per regel op basis van delimiter-frequentie.
+function detectDelimiter(line) {
+  const tabs = (line.match(/\t/g) || []).length;
+  const commas = (line.match(/,/g) || []).length;
+  return tabs > commas ? '\t' : ',';
+}
+
+function parseCSVLine(line, delim) {
+  // delim is verplicht in v5; default ',' voor backwards compat
+  const d = delim || ',';
   const fields = [];
   let current = '';
   let inQuotes = false;
@@ -68,7 +79,7 @@ function parseCSVLine(line) {
       }
     } else {
       if (c === '"') inQuotes = true;
-      else if (c === ',') { fields.push(current); current = ''; }
+      else if (c === d) { fields.push(current); current = ''; }
       else current += c;
     }
   }
@@ -98,12 +109,16 @@ function parseCompassCSV(text) {
     return { rows: [], warnings: ['Bestand bevat geen data-regels'], stats: {} };
   }
 
+  // Detecteer delimiter op basis van eerste data-regel (na header)
+  const delim = detectDelimiter(lines[Math.min(1, lines.length - 1)]);
+  const delimLabel = delim === '\t' ? 'TAB' : 'COMMA';
+
   const rows = [];
   const warnings = [];
   let shiftFixCount = 0;
 
   for (let i = 1; i < lines.length; i++) {
-    const rawFields = parseCSVLine(lines[i]);
+    const rawFields = parseCSVLine(lines[i], delim);
     if (rawFields.length < 14) {
       warnings.push(`Regel ${i + 1}: te weinig velden (${rawFields.length}) — overgeslagen`);
       continue;
@@ -177,6 +192,7 @@ function parseCompassCSV(text) {
     rows,
     warnings,
     stats: {
+      delimiter: delimLabel,
       total_parsed: rows.length,
       total_balance: totalBalance,
       type_count: typeCount,
