@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: sandbox_ap_upload_v3.js
+   BESTAND: sandbox_ap_upload_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/upload/page.js
    (overschrijft v2, hernoemen naar page.js bij upload)
 
@@ -24,6 +24,7 @@
    - Nieuwe vendors automatisch toevoegen aan sandbox_ap_vendors
    - Bevestig → uitvoering + audit logging
    ============================================================ */
+// 🧪 SANDBOX BESTAND — werkt op sandbox_ap_* tabellen, geen impact op live data.
 'use client';
 
 import { useState, useCallback } from 'react';
@@ -68,6 +69,16 @@ function detectDelimiter(line) {
   const tabs = (line.match(/\t/g) || []).length;
   const commas = (line.match(/,/g) || []).length;
   return tabs > commas ? '\t' : ',';
+}
+
+// V7: Eagle exporteert soms een gecorrumpeerde "Current Balance" kolom
+// waarbij een digit uit elke duizend-groep wegvalt: "14,77.7" voor 14.077,70.
+// We detecteren dat patroon en vallen terug op de "Original Amt" kolom
+// (positie 8) die altijd correcte format heeft.
+function isCorruptBalance(str) {
+  // Matched bij: 1+ digit(s), comma, 1-2 digits, non-digit. Bv "14,77.7", "36,45.1"
+  // Niet matched bij valide format zoals "14,077.70", "660.36", "9,394.61"
+  return /^-?\d+,\d{1,2}[^\d]/.test(String(str || '').trim());
 }
 
 function parseCSVLine(line, delim) {
@@ -124,6 +135,7 @@ function parseCompassCSV(text) {
   const rows = [];
   const warnings = [];
   let shiftFixCount = 0;
+  let corruptBalanceCount = 0;
 
   for (let i = 1; i < lines.length; i++) {
     const rawFields = parseCSVLine(lines[i], delim);
@@ -165,8 +177,19 @@ function parseCompassCSV(text) {
       continue;
     }
 
-    const balanceStr = String(row[0] || '').replace(/,/g, '');
-    const balance = parseFloat(balanceStr);
+    // V7: detecteer Eagle corrupted Current Balance kolom
+    const col0 = String(row[0] || '').trim();
+    const col8 = String(row[8] || '').trim();
+    let balance;
+    let balanceSource = 'col0';
+    if (isCorruptBalance(col0)) {
+      // Eagle export bug — gebruik Original Amt kolom als bron
+      balance = parseFloat(col8.replace(/,/g, ''));
+      balanceSource = 'col8_fallback';
+      corruptBalanceCount++;
+    } else {
+      balance = parseFloat(col0.replace(/,/g, ''));
+    }
     if (!Number.isFinite(balance)) {
       warnings.push(`Regel ${i + 1}: ongeldige balance — overgeslagen`);
       continue;
@@ -196,12 +219,17 @@ function parseCompassCSV(text) {
   const typeCount = {};
   for (const r of rows) typeCount[r.type] = (typeCount[r.type] || 0) + 1;
 
+  if (corruptBalanceCount > 0) {
+    warnings.push(`Eagle export bevatte ${corruptBalanceCount} facturen met corrupte balance-formattering — automatisch hersteld via Original Amt kolom.`);
+  }
+
   return {
     rows,
     warnings,
     stats: {
       delimiter: delimLabel,
       total_parsed: rows.length,
+      corrupt_balance_fixed: corruptBalanceCount,
       total_balance: totalBalance,
       type_count: typeCount,
       shift_fix_count: shiftFixCount,
@@ -357,7 +385,7 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
   }
 
   const { data: uploadRow, error: uploadErr } = await supabase
-    .from('sandbox_ap_uploads')
+    .from('ap_uploads')
     .insert({
       filename,
       uploaded_by: currentUser.id,

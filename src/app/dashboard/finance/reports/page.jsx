@@ -1,5 +1,5 @@
 // ============================================================================
-//  BESTEMMING:  src/app/dashboard/finance/statements/page.jsx
+//  BESTEMMING:  src/app/dashboard/finance/reports/page.jsx
 //  Data-import:  src/data/statements-data.json   (account-level + budget 2026)
 //  Building Depot — Financiële Overzichten  (W&V · Balans · Kasstroom)  v2
 // ============================================================================
@@ -88,6 +88,8 @@ export default function StatementsDashboard(){
   const [chartC2,setChartC2]=useState('Personnel expenses (including management)');
   const [chartC1,setChartC1]=useState('');
   const [chartGL,setChartGL]=useState('');
+  const [balOpen,setBalOpen]=useState({});
+  const [balOpenY,setBalOpenY]=useState({});
 
   const maxP=PERIODS[year]||12;
   const p=Math.min(period,maxP);
@@ -187,28 +189,62 @@ export default function StatementsDashboard(){
     pnlRows.push(<DataRow key="ov" label="Overige" mA={-mAct.overige} yA={-yAct.overige} mB={mBud?-mBud.overige:null} yB={yBud?-yBud.overige:null} mV={mVj?-mVj.overige:null} yV={yVj?-yVj.overige:null}/>);
   pnlRows.push(<DataRow key="res" label="Resultaat" mA={mAct.resultaat} yA={yAct.resultaat} mB={mBud?.resultaat} yB={yBud?.resultaat} mV={mVj?.resultaat} yV={yVj?.resultaat} o={{tot:1}}/>);
 
-  /* ---- Balans ---- */
+  /* ---- Balans (stand per laatst bekende maand + uitklapbaar verloop per jaar/maand) ---- */
   const rs=L.pool(entity);
-  const balVal=(h)=>{let s=0;for(const r of rs)if(r.t==='B'&&r.h===h)s+=L.val(r,year,p,'ytd');return s;};
+  // stand (eindwaarde) van een balanspost in een specifieke maand van een specifiek jaar
+  const balValAt=(h,y,pp)=>{let s=0;const ys=String(y);for(const r of rs)if(r.t==='B'&&r.h===h){const arr=r.m[ys];if(arr)s+=arr[pp-1]||0;}return s;};
   const BalRow=({lbl,v,o={},k})=>{const cls=['sd-row'];if(o.ind)cls.push('ind');if(o.tot)cls.push('tot');if(o.sub)cls.push('sub');if(o.warn)cls.push('warn');
     return <tr className={cls.join(' ')} key={k}><td className="lbl">{lbl}</td><td className="r"><Num v={v} tot={o.tot}/></td></tr>;};
-  const balRows=[];
+  const resJTD=yAct.resultaat;
+
   const FIX=[['Goodwill','Goodwill'],['Total fixed assets','Materiële vaste activa'],['Financial fixed assets','Financiële vaste activa']];
   const CUR=[['Total inventory','Voorraden'],['Accounts receivable','Debiteuren'],['Intercompany receivables','Intercompany vorderingen'],['C/A Management','Rekening-courant management'],['Prepaid expenses and other receivables','Vooruitbetaald & overige vorderingen'],['Other receivables','Overige vorderingen'],['Liquide middelen','Liquide middelen']];
-  let totA=0;
-  balRows.push(<tr className="sd-group" key="ga1"><td colSpan={2}>Activa — Vaste activa</td></tr>);
-  FIX.forEach(([h,l])=>{const v=balVal(h);totA+=v;balRows.push(<BalRow key={'fa'+h} lbl={l} v={v} o={{ind:1}}/>);});
-  balRows.push(<tr className="sd-group" key="ga2"><td colSpan={2}>Activa — Vlottende activa</td></tr>);
-  CUR.forEach(([h,l])=>{const v=balVal(h);totA+=v;balRows.push(<BalRow key={'ca'+h} lbl={l} v={v} o={{ind:1}}/>);});
-  balRows.push(<BalRow key="totA" lbl="Totaal activa" v={totA} o={{tot:1}}/>);
-  const equity=-balVal('Total equity'), resJTD=yAct.resultaat;
-  let totL=equity+resJTD;
-  balRows.push(<tr className="sd-group" key="gp"><td colSpan={2}>Passiva</td></tr>);
-  balRows.push(<BalRow key="eq" lbl="Eigen vermogen (begin/cumulatief)" v={equity} o={{ind:1}}/>);
-  balRows.push(<BalRow key="resj" lbl="Resultaat lopend boekjaar" v={resJTD} o={{ind:1}}/>);
-  [['Provisions','Voorzieningen'],['Long term Liabilities','Langlopende schulden'],['Accounts payable','Crediteuren'],['other payables','Overige schulden']].forEach(([h,l])=>{const v=-balVal(h);totL+=v;balRows.push(<BalRow key={'li'+h} lbl={l} v={v} o={{ind:1}}/>);});
-  balRows.push(<BalRow key="totL" lbl="Totaal passiva" v={totL} o={{tot:1}}/>);
-  balRows.push(<BalRow key="diffB" lbl="Aansluitingsverschil (ruwe GL)" v={totA-totL} o={{warn:1}}/>);
+  const LIA=[['Provisions','Voorzieningen'],['Long term Liabilities','Langlopende schulden'],['Accounts payable','Crediteuren'],['other payables','Overige schulden']];
+  const totA_fn=(y,pp)=>[...FIX,...CUR].reduce((s,[h])=>s+balValAt(h,y,pp),0);
+  const ev_fn  =(y,pp)=>-balValAt('Total equity',y,pp);
+  const res_fn =(y,pp)=>L.pnl(entity,y,pp,'ytd').resultaat;
+  const totL_fn=(y,pp)=>ev_fn(y,pp)+res_fn(y,pp)+LIA.reduce((s,[h])=>s+(-balValAt(h,y,pp)),0);
+  const diff_fn=(y,pp)=>totA_fn(y,pp)-totL_fn(y,pp);
+
+  const balDefs=[
+    {g:'Activa — Vaste activa'},
+    ...FIX.map(([h,l])=>({label:l,fn:(y,pp)=>balValAt(h,y,pp),o:{ind:1}})),
+    {g:'Activa — Vlottende activa'},
+    ...CUR.map(([h,l])=>({label:l,fn:(y,pp)=>balValAt(h,y,pp),o:{ind:1}})),
+    {label:'Totaal activa',fn:totA_fn,o:{tot:1}},
+    {g:'Passiva'},
+    {label:'Eigen vermogen (begin/cumulatief)',fn:ev_fn,o:{ind:1}},
+    {label:'Resultaat lopend boekjaar',fn:res_fn,o:{ind:1}},
+    ...LIA.map(([h,l])=>({label:l,fn:(y,pp)=>-balValAt(h,y,pp),o:{ind:1}})),
+    {label:'Totaal passiva',fn:totL_fn,o:{tot:1}},
+    {label:'Aansluitingsverschil (ruwe GL)',fn:diff_fn,o:{warn:1}},
+  ];
+  const drillYears=[...YEARS].sort().reverse().slice(0,3);  // 3 meest recente jaren
+  const balRows=[];
+  balDefs.forEach((d,bi)=>{
+    if(d.g){balRows.push(<tr className="sd-group" key={'bg'+bi}><td colSpan={2}>{d.g}</td></tr>);return;}
+    const cls=['sd-row'];if(d.o.ind)cls.push('ind');if(d.o.tot)cls.push('tot');if(d.o.warn)cls.push('warn');
+    const opened=!!balOpen[bi];
+    balRows.push(<tr className={cls.join(' ')} key={'br'+bi}>
+      <td className="lbl"><button className="exp" onClick={()=>setBalOpen(o=>({...o,[bi]:!o[bi]}))}>{opened?'−':'+'}</button>{d.label}</td>
+      <td className="r"><Num v={d.fn(year,p)} tot={d.o.tot}/></td></tr>);
+    if(opened){
+      drillYears.forEach(Y=>{
+        const cutoff=Y===year?p:(PERIODS[Y]||12);
+        const yk=bi+'|'+Y, yo=!!balOpenY[yk];
+        balRows.push(<tr className="sd-row det baly" key={'by'+yk}>
+          <td className="lbl"><button className="exp" onClick={()=>setBalOpenY(o=>({...o,[yk]:!o[yk]}))}>{yo?'−':'+'}</button>{Y}</td>
+          <td className="r"><Num v={d.fn(Y,cutoff)}/></td></tr>);
+        if(yo){
+          for(let m=1;m<=cutoff;m++){
+            balRows.push(<tr className="sd-row det balm" key={'bm'+yk+'_'+m}>
+              <td className="lbl">{MONTHS[m-1]} {Y}</td>
+              <td className="r"><Num v={d.fn(Y,m)}/></td></tr>);
+          }
+        }
+      });
+    }
+  });
 
   /* ---- Kasstroom ---- */
   const dlt=(h)=>{let s=0;for(const r of rs)if(r.t==='B'&&r.h===h){const a=r.m[year];if(a){s+=(a[p-1]||0)-(r.b[year]||0);}}return -s;};
@@ -354,9 +390,10 @@ export default function StatementsDashboard(){
         </div>
       </>}
 
-      {tab==='balans'&&<table className="sd-table">
-        <thead><tr><th>Post</th><th className="r">Stand {ytdLabel}</th></tr></thead>
-        <tbody>{balRows}</tbody></table>}
+      {tab==='balans'&&<><table className="sd-table">
+        <thead><tr><th>Post</th><th className="r">Stand · {MONTHS[p-1]} {year}</th></tr></thead>
+        <tbody>{balRows}</tbody></table>
+        <p className="chart-note" style={{padding:'2px 12px 8px'}}>Klik op <b>+</b> achter een post voor het verloop per jaar ({drillYears.join(' · ')}), en nogmaals op <b>+</b> bij een jaar voor de maandstanden. Bedragen × 1.000 {curLabel}.</p></>}
 
       {tab==='cash'&&<table className="sd-table">
         <thead><tr><th>Post</th><th className="r">YTD {ytdLabel}</th></tr></thead>
@@ -420,6 +457,10 @@ const CSS=`
 .sd-row.ind td.lbl{padding-left:24px;color:#3e4d5c}
 .sd-row.det.c1 td.lbl{padding-left:40px;font-size:12px;color:#52606e;text-transform:capitalize}
 .sd-row.det.gl td.lbl{padding-left:58px;font-size:11.5px;color:#8a96a3}
+.sd-row.det.baly td.lbl{padding-left:34px;font-size:12.5px;color:#3e4d5c;font-weight:600}
+.sd-row.det.baly .num{font-size:12.5px}
+.sd-row.det.balm td.lbl{padding-left:54px;font-size:11.5px;color:#8a96a3}
+.sd-row.det.balm .num{font-size:11.5px;color:#52606e}
 .sd-row.det td{border-bottom:0;padding-top:3px;padding-bottom:3px}
 .sd-group td{background:#f3eee2;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--gold2);font-weight:700;padding:7px 12px}
 .sd-row.strong td{font-weight:600}
