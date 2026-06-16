@@ -236,11 +236,14 @@ export default function StatementsDashboard(){
           <td className="lbl"><button className="exp" onClick={()=>setBalOpenY(o=>({...o,[yk]:!o[yk]}))}>{yo?'−':'+'}</button>{Y}</td>
           <td className="r"><Num v={d.fn(Y,cutoff)}/></td></tr>);
         if(yo){
+          const cells=[];
           for(let m=1;m<=cutoff;m++){
-            balRows.push(<tr className="sd-row det balm" key={'bm'+yk+'_'+m}>
-              <td className="lbl">{MONTHS[m-1]} {Y}</td>
-              <td className="r"><Num v={d.fn(Y,m)}/></td></tr>);
+            cells.push(<div className={'bm-cell'+((Y===year&&m===p)?' cur':'')} key={'bm'+yk+'_'+m}>
+              <span className="bm-mn">{MONTHS[m-1]}</span>
+              <span className="bm-v"><Num v={d.fn(Y,m)}/></span></div>);
           }
+          balRows.push(<tr className="sd-row det balmrow" key={'bmr'+yk}>
+            <td colSpan={2}><div className="bm-strip">{cells}</div></td></tr>);
         }
       });
     }
@@ -459,8 +462,13 @@ const CSS=`
 .sd-row.det.gl td.lbl{padding-left:58px;font-size:11.5px;color:#8a96a3}
 .sd-row.det.baly td.lbl{padding-left:34px;font-size:12.5px;color:#3e4d5c;font-weight:600}
 .sd-row.det.baly .num{font-size:12.5px}
-.sd-row.det.balm td.lbl{padding-left:54px;font-size:11.5px;color:#8a96a3}
-.sd-row.det.balm .num{font-size:11.5px;color:#52606e}
+.sd-row.det.balmrow td{padding:2px 12px 9px 50px;border-bottom:0}
+.bm-strip{display:flex;flex-wrap:wrap;gap:6px}
+.bm-cell{min-width:60px;border:1px solid var(--line);border-radius:6px;padding:4px 9px;display:flex;flex-direction:column;align-items:flex-end;background:var(--paper)}
+.bm-cell.cur{border-color:var(--gold);background:#fbf6ec}
+.bm-mn{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:#9aa3ad;font-weight:700}
+.bm-v{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-variant-numeric:tabular-nums}
+.bm-v .num{font-size:12px}
 .sd-row.det td{border-bottom:0;padding-top:3px;padding-bottom:3px}
 .sd-group td{background:#f3eee2;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--gold2);font-weight:700;padding:7px 12px}
 .sd-row.strong td{font-weight:600}
