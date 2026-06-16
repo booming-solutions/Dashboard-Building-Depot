@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: sandbox_ap_werkstroom_v2.js
+   BESTAND: sandbox_ap_werkstroom_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
 
@@ -146,6 +146,7 @@ export default function WerkstroomPage() {
   const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
+  const isAdmin = effectiveRole === 'admin';
 
   // Lokaal berekende capabilities — geen context-afhankelijkheid
   const canApprove = ['admin', 'cfo', 'ap_approver'].includes(effectiveRole);
@@ -785,6 +786,7 @@ export default function WerkstroomPage() {
         <BulkBar
           tab={tab}
           isClerk={isClerk}
+          isAdmin={isAdmin}
           canApprove={canApprove}
           canSendToBank={canSendToBank}
           canMarkPaid={canMarkPaid}
@@ -875,7 +877,7 @@ function Header({ onRefresh }) {
   );
 }
 
-function BulkBar({ tab, isClerk, canApprove, canSendToBank, canMarkPaid, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick }) {
+function BulkBar({ tab, isClerk, isAdmin, canApprove, canSendToBank, canMarkPaid, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick }) {
   return (
     <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
       <span className="text-[13px] font-semibold">
