@@ -1,7 +1,17 @@
 /* ============================================================
-   BESTAND: sandbox_ap_werkstroom_v1.js
+   BESTAND: sandbox_ap_werkstroom_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   v14 WIJZIGINGEN:
+   - Elke fase is terug te draaien naar de voorgaande fase door de
+     functionaris die hem heeft uitgevoerd OF door admin.
+     Knoppen "↶ Trek terug" verschijnen op elk tabblad:
+       · Bij goedkeurder → terug naar Klaar voor indiening  (door indiener / admin)
+       · Goedgekeurd     → terug naar Bij goedkeurder       (door goedkeurder / admin)
+       · Bij bank        → terug naar Goedgekeurd           (alleen admin)
+       · Betaald         → terug naar Bij bank              (door CFO / admin)
+   - Audit-log entry per terugdraai (action: 'rolled_back_*')
 
    v13 WIJZIGINGEN:
    - ALLE tabel-kolommen klikbaar om te sorteren (was: 4 van 11).
@@ -130,7 +140,7 @@ function daysUntilDue(dueDate) {
   return Math.round((due - today) / (1000 * 60 * 60 * 24));
 }
 
-const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by';
+const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at';
 
 export default function WerkstroomPage() {
   const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
@@ -230,6 +240,7 @@ export default function WerkstroomPage() {
         if (r.selected_by) userIds.add(r.selected_by);
         if (r.submitted_by) userIds.add(r.submitted_by);
         if (r.approved_by) userIds.add(r.approved_by);
+        if (r.paid_by) userIds.add(r.paid_by);
         if (r.rejected_by) userIds.add(r.rejected_by);
       }
       if (userIds.size > 0) {
@@ -502,8 +513,57 @@ export default function WerkstroomPage() {
         extraFields.paid_at = extra.paidDate;
         extraFields.paid_by = actualProfile.id;
         Object.assign(extraFields, clearRejection);
+      } else if (actionKey === 'unsubmit') {
+        // Approver_review → Selected_by_ap. Mag door submitted_by of admin.
+        newStatus = 'selected_by_ap';
+        auditAction = 'rolled_back_submit';
+        extraFields.submitted_at = null;
+        extraFields.submitted_by = null;
+      } else if (actionKey === 'unapprove') {
+        // Approved → Approver_review. Mag door approved_by of admin.
+        newStatus = 'approver_review';
+        auditAction = 'rolled_back_approve';
+        extraFields.approved_at = null;
+        extraFields.approved_by = null;
+      } else if (actionKey === 'unsend_to_bank') {
+        // At_bank → Approved. Alleen admin.
+        newStatus = 'approved';
+        auditAction = 'rolled_back_send_to_bank';
+      } else if (actionKey === 'unmark_paid') {
+        // Paid → At_bank. Mag door paid_by of admin.
+        newStatus = 'at_bank';
+        auditAction = 'rolled_back_mark_paid';
+        extraFields.paid_at = null;
+        extraFields.paid_by = null;
       } else {
         throw new Error('Onbekende actie: ' + actionKey);
+      }
+
+      // Permission check voor rollback acties (non-admin)
+      if (['unselect', 'unsubmit', 'unapprove', 'unmark_paid'].includes(actionKey) && !isAdmin) {
+        const fieldMap = {
+          unselect: 'selected_by',
+          unsubmit: 'submitted_by',
+          unapprove: 'approved_by',
+          unmark_paid: 'paid_by',
+        };
+        const field = fieldMap[actionKey];
+        const { data: checkRows, error: chkErr } = await supabase
+          .from('sandbox_ap_invoices')
+          .select(`id, ${field}`)
+          .in('id', ids);
+        if (chkErr) throw chkErr;
+        const notMine = (checkRows || []).filter(r => r[field] !== actualProfile.id);
+        if (notMine.length > 0) {
+          throw new Error(
+            `Je kunt alleen je eigen handelingen terugdraaien — ` +
+            `${notMine.length} van ${ids.length} ${notMine.length === 1 ? 'is' : 'zijn'} ` +
+            `door een collega ingediend. Vraag admin of de oorspronkelijke functionaris.`
+          );
+        }
+      }
+      if (actionKey === 'unsend_to_bank' && !isAdmin) {
+        throw new Error('Terugdraaien vanuit "Bij bank" kan alleen door admin.');
       }
 
       // Optimistic update: rijen verwijderen uit huidige tab + counts aanpassen
@@ -851,6 +911,13 @@ function BulkBar({ tab, isClerk, canApprove, canSendToBank, canMarkPaid, canManu
             </button>
           </>
         )}
+        {tab === 'approver_review' && (isClerk || isAdmin) && (
+          <button onClick={() => onAction('unsubmit')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
+            title={isAdmin ? 'Admin kan altijd terugdraaien' : 'Alleen je eigen ingediende facturen'}>
+            ↶ Trek terug (mijn ingediening)
+          </button>
+        )}
         {tab === 'approver_review' && canApprove && (
           <>
             <button onClick={onRejectClick} disabled={busy}
@@ -863,16 +930,37 @@ function BulkBar({ tab, isClerk, canApprove, canSendToBank, canMarkPaid, canManu
             </button>
           </>
         )}
+        {tab === 'approved' && (canApprove || isAdmin) && (
+          <button onClick={() => onAction('unapprove')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
+            title={isAdmin ? 'Admin kan altijd terugdraaien' : 'Alleen je eigen goedgekeurde facturen'}>
+            ↶ Trek goedkeuring terug
+          </button>
+        )}
         {tab === 'approved' && canSendToBank && (
           <button onClick={() => onAction('send_to_bank')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-purple-500 text-white text-[12px] font-semibold hover:bg-purple-600 transition-all disabled:opacity-50">
             {busy ? 'Bezig...' : '→ Markeer verzonden naar bank'}
           </button>
         )}
+        {tab === 'at_bank' && isAdmin && (
+          <button onClick={() => onAction('unsend_to_bank')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
+            title="Alleen admin">
+            ↶ Trek verzending terug
+          </button>
+        )}
         {tab === 'at_bank' && canMarkPaid && (
           <button onClick={() => onAction('mark_paid')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50">
             {busy ? 'Bezig...' : '✓ Bevestig betaald'}
+          </button>
+        )}
+        {tab === 'paid' && (canMarkPaid || isAdmin) && (
+          <button onClick={() => onAction('unmark_paid')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
+            title={isAdmin ? 'Admin kan altijd terugdraaien' : 'Alleen je eigen bevestigde betalingen'}>
+            ↶ Trek betaling terug
           </button>
         )}
         {tab === 'approver_review' && !canApprove && (
