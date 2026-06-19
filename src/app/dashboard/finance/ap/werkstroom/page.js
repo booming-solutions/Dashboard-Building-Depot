@@ -1,7 +1,16 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v15.js
+   BESTAND: ap_werkstroom_page_v16.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   v16 WIJZIGINGEN:
+   - Quick-Pay knoppen "💳 MCB direct" en "💳 RBC direct" voor admin/CFO
+     op tab Openstaand: factuur in 1 klik op status 'paid' zetten met
+     bank + datum (default vandaag), enter bevestigt.
+   - Nieuwe kolom: paid_bank (run ap_schema_v13_paid_bank.sql eerst).
+   - Bij direct-pay: automatisch een match_candidate aangemaakt met
+     source 'direct_pay_mcb' / 'direct_pay_rbc' en status 'confirmed'.
+     AP clerk vindt dit in afletterlijst om af te wikkelen in Eagle.
 
    v15 WIJZIGINGEN:
    - Partial payment ondersteuning: bij selectie op 'Openstaand' tab
@@ -147,7 +156,7 @@ function daysUntilDue(dueDate) {
   return Math.round((due - today) / (1000 * 60 * 60 * 24));
 }
 
-const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at, selected_amount';
+const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at, selected_amount, paid_bank';
 
 export default function WerkstroomPage() {
   const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
@@ -170,6 +179,8 @@ export default function WerkstroomPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   // V15: per-rij custom betalingsbedrag (Map<id, number>). Default = balance.
   const [customAmounts, setCustomAmounts] = useState(new Map());
+  // V16: quick-pay modal voor admin/CFO
+  const [showQuickPayModal, setShowQuickPayModal] = useState(null); // null | 'MCB' | 'RBC'
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -533,6 +544,18 @@ export default function WerkstroomPage() {
         auditAction = 'marked_paid';
         extraFields.paid_at = now;
         extraFields.paid_by = actualProfile.id;
+      } else if (actionKey === 'quick_pay') {
+        // Admin/CFO direct paid: status paid + bank + datum
+        if (!extra.bank || !['MCB', 'RBC'].includes(extra.bank)) {
+          throw new Error('Bank moet MCB of RBC zijn');
+        }
+        if (!extra.paidDate) throw new Error('Betaaldatum ontbreekt');
+        newStatus = 'paid';
+        auditAction = 'direct_paid';
+        extraFields.paid_at = new Date(extra.paidDate + 'T12:00:00').toISOString();
+        extraFields.paid_by = actualProfile.id;
+        extraFields.paid_bank = extra.bank;
+        Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'manual_writeoff') {
         if (!extra.reason || !extra.reason.trim()) throw new Error('Reden is verplicht');
         if (!extra.paidDate) throw new Error('Betaaldatum is verplicht');
@@ -632,6 +655,22 @@ export default function WerkstroomPage() {
               .eq('id', id);
           }
         }
+      }
+
+      // V16: bij 'quick_pay' direct match_candidates aanmaken voor afletterlijst
+      if (actionKey === 'quick_pay') {
+        const invoices = (tabRows[tab] || []).filter(r => ids.includes(r.id));
+        const candidateRows = invoices.map(inv => ({
+          invoice_id: inv.id,
+          source: `direct_pay_${extra.bank.toLowerCase()}`,
+          source_reference: extra.paidDate,
+          status: 'confirmed',
+          confirmed_at: now,
+          confirmed_by: actualProfile.id,
+          notes: `Direct betaald via ${extra.bank} op ${extra.paidDate} door ${actualProfile.full_name}`,
+        }));
+        const { error: candErr } = await supabase.from('ap_match_candidates').insert(candidateRows);
+        if (candErr) console.error('match_candidate insert faalde:', candErr);
       }
 
       // Voor manual_writeoff: maak ook match_candidate aan (al confirmed)
@@ -827,6 +866,7 @@ export default function WerkstroomPage() {
           tab={tab}
           isClerk={isClerk}
           isAdmin={isAdmin}
+          onQuickPay={(bank) => setShowQuickPayModal(bank)}
           canApprove={canApprove}
           canSendToBank={canSendToBank}
           canMarkPaid={canMarkPaid}
@@ -848,6 +888,20 @@ export default function WerkstroomPage() {
           busy={busy}
           onConfirm={(reason) => doAction('reject', { reason })}
           onCancel={() => setShowRejectModal(false)}
+        />
+      )}
+
+      {showQuickPayModal && (
+        <QuickPayModal
+          bank={showQuickPayModal}
+          count={selectedCount}
+          total={selectedTotal}
+          busy={busy}
+          onConfirm={(paidDate) => {
+            doAction('quick_pay', { bank: showQuickPayModal, paidDate });
+            setShowQuickPayModal(null);
+          }}
+          onCancel={() => setShowQuickPayModal(null)}
         />
       )}
 
@@ -919,7 +973,7 @@ function Header({ onRefresh }) {
   );
 }
 
-function BulkBar({ tab, isClerk, isAdmin, canApprove, canSendToBank, canMarkPaid, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick }) {
+function BulkBar({ tab, isClerk, isAdmin, canApprove, canSendToBank, canMarkPaid, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick, onQuickPay }) {
   return (
     <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
       <span className="text-[13px] font-semibold">
@@ -930,6 +984,20 @@ function BulkBar({ tab, isClerk, isAdmin, canApprove, canSendToBank, canMarkPaid
       </button>
 
       <div className="ml-auto flex items-center gap-2 flex-wrap">
+        {tab === 'open' && canMarkPaid && (
+          <>
+            <button onClick={() => onQuickPay('MCB')} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-semibold hover:bg-blue-700 transition-all disabled:opacity-50"
+              title="Markeer direct betaald via MCB">
+              💳 MCB direct
+            </button>
+            <button onClick={() => onQuickPay('RBC')} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-[12px] font-semibold hover:bg-purple-700 transition-all disabled:opacity-50"
+              title="Markeer direct betaald via RBC">
+              💳 RBC direct
+            </button>
+          </>
+        )}
         {tab === 'open' && isClerk && (
           <button onClick={() => onAction('select')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-white text-[#1B3A5C] text-[12px] font-semibold hover:bg-gray-100 transition-all disabled:opacity-50">
@@ -1355,5 +1423,65 @@ function SortableHeader({ field, label, current, desc, onSort, align }) {
       }`}>
       {label}{arrow}
     </th>
+  );
+}
+
+
+function QuickPayModal({ bank, count, total, busy, onConfirm, onCancel }) {
+  const today = new Date().toISOString().substring(0, 10);
+  const [paidDate, setPaidDate] = useState(today);
+
+  // Enter = bevestigen
+  useEffect(() => {
+    function handler(e) {
+      if (e.key === 'Enter' && !busy && paidDate) onConfirm(paidDate);
+      if (e.key === 'Escape') onCancel();
+    }
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [paidDate, busy, onConfirm, onCancel]);
+
+  const bankColor = bank === 'MCB' ? 'blue' : 'purple';
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onCancel}>
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+        <h3 className="text-[16px] font-bold text-[#1B3A5C] mb-2">
+          💳 Direct betalen via {bank}
+        </h3>
+        <p className="text-[13px] text-[#1B3A5C]/70 mb-4">
+          {count} {count === 1 ? 'factuur' : 'facturen'} ·
+          totaal XCG {fmtMoney(total)} ·
+          <span className={`ml-1 px-1.5 py-0.5 rounded bg-${bankColor}-100 text-${bankColor}-800 font-semibold text-[11px]`}>{bank}</span>
+        </p>
+        <p className="text-[12px] text-[#1B3A5C]/60 mb-3">
+          Deze actie zet de geselecteerde facturen direct op <strong>betaald</strong> en
+          plaatst ze op de afletterlijst. AP clerk kan dit later in Eagle afwikkelen.
+        </p>
+        <label className="block text-[12px] font-semibold text-[#1B3A5C]/70 mb-1">
+          Betaaldatum
+        </label>
+        <input
+          type="date"
+          value={paidDate}
+          onChange={e => setPaidDate(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-[13px] focus:outline-none focus:border-[#1B3A5C] mb-4"
+          autoFocus
+        />
+        <p className="text-[10px] text-[#1B3A5C]/40 italic mb-4">
+          Tip: druk op Enter om te bevestigen, Escape om te annuleren.
+        </p>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onCancel}
+            className="px-3 py-2 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[12px] font-semibold hover:bg-gray-200">
+            Annuleer
+          </button>
+          <button onClick={() => onConfirm(paidDate)} disabled={busy || !paidDate}
+            className={`px-3 py-2 rounded-lg bg-${bankColor}-600 text-white text-[12px] font-semibold hover:bg-${bankColor}-700 disabled:opacity-50`}>
+            {busy ? 'Bezig...' : `✓ Bevestig ${bank}`}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
