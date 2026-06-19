@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_match_worklist_page_v2.js
+   BESTAND: ap_match_worklist_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/worklist/page.js
    (nieuwe folder: match/worklist/, hernoemen naar page.js)
 
@@ -78,6 +78,9 @@ function fmtDate(iso) {
 }
 function fmtNum(n) { return new Intl.NumberFormat('nl-NL').format(n); }
 
+// v3: vinkjes per regel op tab 'confirmed' + 'Exporteer CSV voor Eagle Agent'
+// knop. CSV gaat als input naar eagle_aflet_agent_v3.py op de afdelingscomputer.
+
 export default function MatchWorklistPage() {
   const { actualProfile, effectiveRole, isPlayingRole, effectiveName } = useApRole();
   const supabase = createClient();
@@ -151,7 +154,7 @@ export default function MatchWorklistPage() {
       const invoiceIds = [...new Set(candidates.map(c => c.invoice_id))];
       const allInvoices = await fetchAllPaginated(() =>
         supabase.from('ap_invoices')
-          .select('id, vendor_id, vendor_name, invoice_number, voucher, balance, original_amount, currency, status, invoice_date, due_date, paid_at, assigned_ap_clerk')
+          .select('id, vendor_id, vendor_name, invoice_number, voucher, balance, original_amount, currency, status, invoice_date, due_date, paid_at, paid_bank, selected_amount, assigned_ap_clerk')
       );
       const invSet = new Set(invoiceIds);
       const invMap = {};
@@ -386,6 +389,48 @@ export default function MatchWorklistPage() {
     }
   }
 
+  // V3: CSV export voor Eagle Agent
+  function exportSelectedToCSV() {
+    const rows = filteredRows.filter(r => selectedIds.has(r.id));
+    if (rows.length === 0) return;
+
+    const headers = ['vendor_id','invoice_number','bank','amount','paid_date','sequence','candidate_id'];
+    const csvLines = [headers.join(',')];
+
+    rows.forEach((r, idx) => {
+      const inv = r.invoice || {};
+      const vendorId = inv.vendor_id || '';
+      const invoiceNumber = (inv.invoice_number || '').replace(/,/g, '');
+      const bank = inv.paid_bank || 'MCB';
+      const amount = (inv.selected_amount != null ? inv.selected_amount : inv.balance) || 0;
+      const paidDate = inv.paid_at ? new Date(inv.paid_at).toISOString().substring(0, 10) : new Date().toISOString().substring(0, 10);
+      const sequence = String(Math.min(idx + 1, 99)).padStart(2, '0');
+      const candidateId = r.id;
+
+      csvLines.push([
+        vendorId,
+        invoiceNumber,
+        bank,
+        Number(amount).toFixed(2),
+        paidDate,
+        sequence,
+        candidateId,
+      ].join(','));
+    });
+
+    const csv = csvLines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const filename = `afletter_${new Date().toISOString().substring(0,10).replace(/-/g,'')}.csv`;
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   const selectedCount = selectedIds.size;
   const selectedTotal = useMemo(() =>
     filteredRows.filter(r => selectedIds.has(r.id))
@@ -510,6 +555,11 @@ export default function MatchWorklistPage() {
             deselecteer
           </button>
           <div className="ml-auto flex items-center gap-2 flex-wrap">
+            <button onClick={exportSelectedToCSV} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-[12px] font-semibold hover:bg-blue-600 disabled:opacity-50"
+              title="Download CSV voor Eagle Aflet Agent">
+              📥 Exporteer CSV voor Eagle Agent
+            </button>
             <button onClick={markProcessedSelected} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 disabled:opacity-50">
               {busy ? 'Bezig...' : '✓ Markeer Eagle-boeking gedaan'}
