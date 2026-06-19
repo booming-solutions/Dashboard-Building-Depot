@@ -1,7 +1,15 @@
 /* ============================================================
-   BESTAND: sandbox_ap_werkstroom_v3.js
-   KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/werkstroom/page.js
+   BESTAND: ap_werkstroom_page_v15.js
+   KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   v15 WIJZIGINGEN:
+   - Partial payment ondersteuning: bij selectie op 'Openstaand' tab
+     verschijnt rechts een input-veld met standaard de volledige balance.
+     AP Clerk kan dit aanpassen naar het werkelijke te betalen bedrag.
+   - Nieuw veld in database: selected_amount (kolom op ap_invoices).
+     Vereist run van ap_schema_v12_selected_amount.sql.
+   - Doorgegeven aan vervolgfases: approver ziet aangepast bedrag.
 
    v14 WIJZIGINGEN:
    - Elke fase is terug te draaien naar de voorgaande fase door de
@@ -81,7 +89,6 @@
      · Optimistic updates: UI past direct aan na actie
      · Caching: switchen tussen tabs is instant na eerste load
    ============================================================ */
-// 🧪 SANDBOX BESTAND — werkt op sandbox_ap_* tabellen, geen impact op live data.
 'use client';
 
 import { useApRole } from '../layout';
@@ -140,7 +147,7 @@ function daysUntilDue(dueDate) {
   return Math.round((due - today) / (1000 * 60 * 60 * 24));
 }
 
-const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at';
+const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at, selected_amount';
 
 export default function WerkstroomPage() {
   const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
@@ -161,6 +168,8 @@ export default function WerkstroomPage() {
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingTab, setLoadingTab] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  // V15: per-rij custom betalingsbedrag (Map<id, number>). Default = balance.
+  const [customAmounts, setCustomAmounts] = useState(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -182,7 +191,7 @@ export default function WerkstroomPage() {
     let cancelled = false;
     async function loadVendors() {
       const data = await fetchAllPaginated(() =>
-        supabase.from('sandbox_ap_vendors').select('vendor_id, vendor_name').order('vendor_name')
+        supabase.from('ap_vendors').select('vendor_id, vendor_name').order('vendor_name')
       );
       if (!cancelled) setAllVendors(data || []);
     }
@@ -202,7 +211,7 @@ export default function WerkstroomPage() {
     try {
       const queries = STATUS_TABS.map(t => {
         let q = supabase
-          .from('sandbox_ap_invoices')
+          .from('ap_invoices')
           .select('*', { count: 'exact', head: true })
           .eq('status', t.key);
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
@@ -227,7 +236,7 @@ export default function WerkstroomPage() {
     try {
       const rows = await fetchAllPaginated(() => {
         let q = supabase
-          .from('sandbox_ap_invoices')
+          .from('ap_invoices')
           .select(SELECT_COLS)
           .eq('status', statusKey);
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
@@ -445,12 +454,29 @@ export default function WerkstroomPage() {
 
   function toggleSelect(id) {
     const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+      const m = new Map(customAmounts); m.delete(id); setCustomAmounts(m);
+    } else {
+      next.add(id);
+      const inv = currentInvoices.find(r => r.id === id);
+      if (inv) {
+        const m = new Map(customAmounts); m.set(id, parseFloat(inv.balance) || 0); setCustomAmounts(m);
+      }
+    }
     setSelectedIds(next);
   }
-  function selectAll() { setSelectedIds(new Set(currentInvoices.map(i => i.id))); }
-  function deselectAll() { setSelectedIds(new Set()); }
+  function setCustomAmount(id, value) {
+    const m = new Map(customAmounts); m.set(id, value); setCustomAmounts(m);
+  }
+  function selectAll() {
+    setSelectedIds(new Set(currentInvoices.map(i => i.id)));
+    setCustomAmounts(new Map(currentInvoices.map(r => [r.id, parseFloat(r.balance) || 0])));
+  }
+  function deselectAll() {
+    setSelectedIds(new Set());
+    setCustomAmounts(new Map());
+  }
 
   async function doAction(actionKey, extra = {}) {
     setBusy(true);
@@ -481,6 +507,7 @@ export default function WerkstroomPage() {
         auditAction = 'unselected';
         extraFields.selected_at = null;
         extraFields.selected_by = null;
+        extraFields.selected_amount = null;
       } else if (actionKey === 'approve') {
         newStatus = 'approved';
         auditAction = 'approved';
@@ -550,7 +577,7 @@ export default function WerkstroomPage() {
         };
         const field = fieldMap[actionKey];
         const { data: checkRows, error: chkErr } = await supabase
-          .from('sandbox_ap_invoices')
+          .from('ap_invoices')
           .select(`id, ${field}`)
           .in('id', ids);
         if (chkErr) throw chkErr;
@@ -584,7 +611,7 @@ export default function WerkstroomPage() {
 
       // Async: DB update
       const { error: updErr } = await supabase
-        .from('sandbox_ap_invoices')
+        .from('ap_invoices')
         .update({
           status: newStatus,
           last_status_change: now,
@@ -593,6 +620,19 @@ export default function WerkstroomPage() {
         })
         .in('id', ids);
       if (updErr) throw updErr;
+
+      // V15: bij 'select' per-id de aangepaste selected_amount zetten
+      if (actionKey === 'select') {
+        for (const id of ids) {
+          const amt = customAmounts.get(id);
+          if (amt !== undefined && amt !== null) {
+            await supabase
+              .from('ap_invoices')
+              .update({ selected_amount: amt })
+              .eq('id', id);
+          }
+        }
+      }
 
       // Voor manual_writeoff: maak ook match_candidate aan (al confirmed)
       if (actionKey === 'manual_writeoff') {
@@ -613,7 +653,7 @@ export default function WerkstroomPage() {
           created_by: actualProfile.id,
         }));
         if (candidateRows.length > 0) {
-          const { error: cErr } = await supabase.from('sandbox_ap_match_candidates').insert(candidateRows);
+          const { error: cErr } = await supabase.from('ap_match_candidates').insert(candidateRows);
           if (cErr) console.warn('Manual candidate insert mislukt:', cErr);
         }
       }
@@ -634,7 +674,7 @@ export default function WerkstroomPage() {
           ...(extra.paidDate ? { paid_date: extra.paidDate } : {}),
         },
       }));
-      if (auditRows.length > 0) await supabase.from('sandbox_ap_audit_log').insert(auditRows);
+      if (auditRows.length > 0) await supabase.from('ap_audit_log').insert(auditRows);
 
       // Verfris de bestemmingstab indien deze al geladen was
       if (tabRows[newStatus]) {
@@ -845,6 +885,8 @@ export default function WerkstroomPage() {
           sortBy={sortBy}
           sortDesc={sortDesc}
           onSort={handleSort}
+          customAmounts={customAmounts}
+          onCustomAmountChange={setCustomAmount}
         />
       )}
     </div>
@@ -856,7 +898,7 @@ function Header({ onRefresh }) {
     <div className="mb-4 flex items-end justify-between flex-wrap gap-2">
       <div>
         <div className="flex items-center gap-2 text-[12px] text-[#1B3A5C]/40 mb-2">
-          <Link href="/dashboard/finance/sandbox-ap" className="hover:text-[#1B3A5C]">Accounts Payable</Link>
+          <Link href="/dashboard/finance/ap" className="hover:text-[#1B3A5C]">Accounts Payable</Link>
           <span>›</span>
           <span>Werkstroom</span>
         </div>
@@ -1065,7 +1107,7 @@ function EmptyState({ tab, hasFilter, isClerk }) {
   );
 }
 
-function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, sortBy, sortDesc, onSort }) {
+function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, sortBy, sortDesc, onSort, customAmounts, onCustomAmountChange }) {
   const showSubmitter = tab === 'approver_review';
   const showApprover = tab === 'approved' || tab === 'at_bank';
   const showRejectionIndicator = tab === 'open';
@@ -1087,6 +1129,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
               <SortableHeader field="original_amount" label="Origineel" current={sortBy} desc={sortDesc} onSort={onSort} align="right" />
               <SortableHeader field="amount" label="Saldo" current={sortBy} desc={sortDesc} onSort={onSort} align="right" />
               <SortableHeader field="due_date" label="Vervaldatum" current={sortBy} desc={sortDesc} onSort={onSort} />
+              <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Te betalen</th>
               {showSubmitter && <SortableHeader field="submitted_by" label="Ingediend door" current={sortBy} desc={sortDesc} onSort={onSort} />}
               {showApprover && <SortableHeader field="approved_by" label="Goedgekeurd door" current={sortBy} desc={sortDesc} onSort={onSort} />}
             </tr>
@@ -1104,7 +1147,7 @@ function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselect
   );
 }
 
-function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection }) {
+function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, userNames, showRejection, customAmount, onCustomAmountChange, tab }) {
   const bal = parseFloat(inv.balance);
   const isCredit = bal < 0;
   const daysUntil = daysUntilDue(inv.due_date);
@@ -1162,6 +1205,29 @@ function InvoiceRow({ inv, selected, onToggle, showSubmitter, showApprover, user
           <div className={`text-[10px] ${isOverdue ? 'text-rose-600' : isUrgent ? 'text-amber-600' : 'text-[#1B3A5C]/40'}`}>
             {isOverdue ? `${Math.abs(daysUntil)} dgn verlopen` : daysUntil === 0 ? 'vandaag' : `over ${daysUntil} dgn`}
           </div>
+        )}
+      </td>
+      <td className="p-2 text-right">
+        {tab === 'open' && selected ? (
+          <input
+            type="number"
+            step="0.01"
+            value={customAmount !== undefined ? customAmount : (parseFloat(inv.balance) || 0)}
+            onChange={e => onCustomAmountChange(inv.id, parseFloat(e.target.value) || 0)}
+            className="w-24 px-1.5 py-0.5 rounded border border-blue-300 bg-blue-50 text-[12px] font-mono text-right focus:outline-none focus:border-blue-500"
+            title="Pas aan voor partial payment"
+          />
+        ) : tab === 'open' ? (
+          <span className="text-[10px] text-[#1B3A5C]/30 italic">selecteer</span>
+        ) : inv.selected_amount != null && Math.abs(parseFloat(inv.selected_amount) - parseFloat(inv.balance)) > 0.01 ? (
+          <span className="font-mono text-[12px]" title="Partial payment - afwijkend bedrag">
+            {fmtMoney(parseFloat(inv.selected_amount))}
+            <span className="ml-1 px-1 py-0 rounded bg-amber-100 text-amber-800 text-[9px] font-semibold">partial</span>
+          </span>
+        ) : inv.selected_amount != null ? (
+          <span className="font-mono text-[12px] text-[#1B3A5C]/70">{fmtMoney(parseFloat(inv.selected_amount))}</span>
+        ) : (
+          <span className="text-[10px] text-[#1B3A5C]/30">—</span>
         )}
       </td>
       {showSubmitter && <td className="p-2 text-[#1B3A5C]/70 text-[11px]">{inv.submitted_by ? (userNames[inv.submitted_by] || '—') : '—'}</td>}
