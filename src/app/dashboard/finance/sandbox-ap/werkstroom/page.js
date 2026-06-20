@@ -1,7 +1,23 @@
 /* ============================================================
-   BESTAND: sandbox_ap_werkstroom_v5.js
+   BESTAND: sandbox_ap_werkstroom_v8.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/werkstroom/page.js
    (overschrijft v4, hernoemen naar page.js)
+
+   v19 WIJZIGINGEN:
+   - source='manual' (constraint-veilig). Bank-info naar match_meta JSON.
+   - notes kolom niet meer in insert (bestaat niet altijd).
+
+   v18 WIJZIGINGEN:
+   - confidence is TEXT in DB (ARRAY['exact','fuzzy','manual']) — alle
+     handmatige acties gebruiken nu 'manual' i.p.v. numerieke waarde.
+
+   v17 WIJZIGINGEN:
+   - 'Markeer extern betaald' krijgt nu ook een bank-select (verplicht,
+     net als bij MCB/RBC direct). Reden wordt optioneel.
+   - Confidence-waarde voor match_candidate insert is 0.99 i.p.v. 1.0
+     (de CHECK constraint is < 1.0 strikt — 1.0 zelf wordt geweigerd).
+   - Bij silent failures van candidate-insert verschijnt nu een waarschuwing
+     in de UI in plaats van alleen console.error.
 
    v16 WIJZIGINGEN:
    - Quick-Pay knoppen "💳 MCB direct" en "💳 RBC direct" voor admin/CFO
@@ -558,12 +574,16 @@ export default function WerkstroomPage() {
         extraFields.paid_bank = extra.bank;
         Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'manual_writeoff') {
-        if (!extra.reason || !extra.reason.trim()) throw new Error('Reden is verplicht');
+        // V17: bank is nu verplicht, reden optioneel
+        if (!extra.bank || !['MCB', 'RBC', 'RBC_USD', 'BONAIRE', 'MULTIMART', 'BDC'].includes(extra.bank)) {
+          throw new Error('Bank moet gekozen worden (MCB/RBC/etc)');
+        }
         if (!extra.paidDate) throw new Error('Betaaldatum is verplicht');
         newStatus = 'paid';
         auditAction = 'manual_writeoff';
         extraFields.paid_at = extra.paidDate;
         extraFields.paid_by = actualProfile.id;
+        extraFields.paid_bank = extra.bank;
         Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'unsubmit') {
         // Approver_review → Selected_by_ap. Mag door submitted_by of admin.
@@ -658,35 +678,56 @@ export default function WerkstroomPage() {
         }
       }
 
-      // V16: bij 'quick_pay' direct match_candidates aanmaken voor afletterlijst
+      // V17: bij 'quick_pay' direct match_candidates aanmaken voor afletterlijst
+      // Gebruikt zelfde kolommen als manual_writeoff voor consistency
       if (actionKey === 'quick_pay') {
         const invoices = (tabRows[tab] || []).filter(r => ids.includes(r.id));
         const candidateRows = invoices.map(inv => ({
           invoice_id: inv.id,
-          source: `direct_pay_${extra.bank.toLowerCase()}`,
+          source: 'manual',
           source_reference: extra.paidDate,
+          matched_amount: parseFloat(inv.selected_amount != null ? inv.selected_amount : inv.balance) || 0,
+          matched_date: extra.paidDate,
+          matched_currency: inv.currency || 'XCG',
+          confidence: 'manual',
+          match_score: null,
+          match_meta: {
+            bank: extra.bank,
+            source_type: 'direct_pay',
+            source_invoice_status_before: inv.status,
+            note: `Direct betaald via ${extra.bank} op ${extra.paidDate} door ${actualProfile.full_name}`,
+          },
           status: 'confirmed',
           confirmed_at: now,
           confirmed_by: actualProfile.id,
-          notes: `Direct betaald via ${extra.bank} op ${extra.paidDate} door ${actualProfile.full_name}`,
+          created_by: actualProfile.id,
         }));
         const { error: candErr } = await supabase.from('sandbox_ap_match_candidates').insert(candidateRows);
-        if (candErr) console.error('match_candidate insert faalde:', candErr);
+        if (candErr) {
+          console.error('match_candidate insert faalde:', candErr);
+          alert('Let op: factuur is op betaald gezet maar verschijnt nog niet op afletter-werklijst.\n\nReden: ' + (candErr.message || candErr.code || 'onbekend') + '\n\nNeem contact op met admin.');
+        }
       }
 
-      // Voor manual_writeoff: maak ook match_candidate aan (al confirmed)
+      // V17: Voor manual_writeoff: maak ook match_candidate aan met bank in source
       if (actionKey === 'manual_writeoff') {
         const invoices = (tabRows[tab] || []).filter(r => ids.includes(r.id));
         const candidateRows = invoices.map(inv => ({
           invoice_id: inv.id,
           source: 'manual',
-          source_reference: null,
+          source_reference: extra.paidDate,
           matched_amount: parseFloat(inv.balance) || parseFloat(inv.original_amount) || 0,
           matched_date: extra.paidDate,
           matched_currency: inv.currency || 'XCG',
           confidence: 'manual',
           match_score: null,
-          match_meta: { reason: extra.reason, source_invoice_status_before: inv.status },
+          match_meta: {
+            bank: extra.bank,
+            source_type: 'manual_writeoff',
+            reason: extra.reason || null,
+            source_invoice_status_before: inv.status,
+            note: `Markeer extern betaald via ${extra.bank} op ${extra.paidDate} door ${actualProfile.full_name}.${extra.reason ? ' Reden: ' + extra.reason : ''}`,
+          },
           status: 'confirmed',
           confirmed_at: now,
           confirmed_by: actualProfile.id,
@@ -694,7 +735,10 @@ export default function WerkstroomPage() {
         }));
         if (candidateRows.length > 0) {
           const { error: cErr } = await supabase.from('sandbox_ap_match_candidates').insert(candidateRows);
-          if (cErr) console.warn('Manual candidate insert mislukt:', cErr);
+          if (cErr) {
+            console.error('Manual candidate insert mislukt:', cErr);
+            alert('Let op: factuur is op betaald gezet maar verschijnt nog niet op afletter-werklijst.\n\nReden: ' + (cErr.message || cErr.code || 'onbekend') + '\n\nNeem contact op met admin.');
+          }
         }
       }
 
@@ -911,8 +955,8 @@ export default function WerkstroomPage() {
           count={selectedCount}
           total={selectedTotal}
           busy={busy}
-          onConfirm={(paidDate, reason) => {
-            doAction('manual_writeoff', { paidDate, reason });
+          onConfirm={(paidDate, bank, reason) => {
+            doAction('manual_writeoff', { paidDate, bank, reason });
             setShowMarkPaidModal(false);
           }}
           onCancel={() => setShowMarkPaidModal(false)}
@@ -1124,7 +1168,16 @@ function RejectModal({ count, total, busy, onConfirm, onCancel }) {
 
 function ManualPaidModal({ count, total, busy, onConfirm, onCancel }) {
   const [paidDate, setPaidDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bank, setBank] = useState('MCB');
   const [reason, setReason] = useState('');
+  const banks = [
+    { value: 'MCB', label: 'MCB' },
+    { value: 'RBC', label: 'RBC' },
+    { value: 'RBC_USD', label: 'RBC USD' },
+    { value: 'BONAIRE', label: 'RBC Bonaire' },
+    { value: 'MULTIMART', label: 'Multimart' },
+    { value: 'BDC', label: 'Banco di Caribe' },
+  ];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
       <div className="bg-white rounded-xl p-6 w-[480px] shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1132,28 +1185,41 @@ function ManualPaidModal({ count, total, busy, onConfirm, onCancel }) {
           Markeer als extern betaald ({count} {count === 1 ? 'factuur' : 'facturen'})
         </h3>
         <p className="text-[12px] text-[#1B3A5C]/60 mb-3">
-          Totaal XCG {fmtMoney(total)} · gaan direct naar status &quot;Betaald&quot;.
-          Bedoeld voor oude facturen die in werkelijkheid al zijn betaald.
+          Totaal XCG {fmtMoney(total)} · gaat direct naar status &quot;Betaald&quot;.
+          Bedoeld voor facturen die in werkelijkheid al via een bank zijn betaald
+          maar nog niet via de portal-flow zijn verwerkt.
         </p>
-        <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Betaaldatum</label>
-        <input type="date" value={paidDate} onChange={e => setPaidDate(e.target.value)}
-          className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] mb-3" />
-        <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Reden</label>
-        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
-          placeholder="Bijv. Al betaald vóór portal-introductie, gezien in bank statement maart 2025..."
-          className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] resize-none"
-          autoFocus />
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Betaaldatum</label>
+            <input type="date" value={paidDate} onChange={e => setPaidDate(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C]" />
+          </div>
+          <div>
+            <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">Bank</label>
+            <select value={bank} onChange={e => setBank(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] bg-white">
+              {banks.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+            </select>
+          </div>
+        </div>
+        <label className="block text-[12px] font-semibold text-[#1B3A5C] mb-1">
+          Reden <span className="font-normal text-[#1B3A5C]/40">(optioneel)</span>
+        </label>
+        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
+          placeholder="Bijv. Al betaald vóór portal-introductie..."
+          className="w-full px-3 py-2 rounded-lg border border-gray-300 text-[13px] focus:outline-none focus:border-[#1B3A5C] resize-none" />
         <p className="text-[11px] text-[#1B3A5C]/40 mt-1">
-          Wordt vastgelegd in audit log en in de afletter-werklijst.
+          Bank wordt opgenomen in afletter-CSV. Audit log legt alles vast.
         </p>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onCancel} disabled={busy}
             className="px-4 py-2 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[13px] font-semibold hover:bg-gray-200 disabled:opacity-50">
             Annuleren
           </button>
-          <button onClick={() => onConfirm(paidDate, reason)} disabled={!paidDate || !reason.trim() || busy}
+          <button onClick={() => onConfirm(paidDate, bank, reason)} disabled={!paidDate || !bank || busy}
             className="px-4 py-2 rounded-lg bg-amber-500 text-white text-[13px] font-semibold hover:bg-amber-600 disabled:opacity-50">
-            {busy ? 'Bezig...' : '⚐ Markeer betaald'}
+            {busy ? 'Bezig...' : `⚐ Markeer betaald via ${bank}`}
           </button>
         </div>
       </div>
