@@ -67,6 +67,7 @@ var STORES = {
 export default function TrafficDashboard() {
   var supabase = createClient();
   var [trafficData, setTrafficData] = useState([]);
+  var [salesData, setSalesData] = useState([]);
   var [visitorData, setVisitorData] = useState([]);
   var [loading, setLoading] = useState(true);
   var [tab, setTab] = useState('bd');
@@ -81,7 +82,7 @@ export default function TrafficDashboard() {
   useEffect(function() { loadData(); }, []);
 
   async function loadData() {
-    // Load traffic_data (daily, will aggregate to weekly)
+    // Load traffic_data (daily, voor tickets-count — sales nemen we uit sales_data voor consistentie met Actuals)
     var allTraffic = [], from = 0, step = 1000;
     while (true) {
       var r = await supabase.from('traffic_data').select('*').order('date').range(from, from + step - 1);
@@ -91,6 +92,17 @@ export default function TrafficDashboard() {
       from += step;
     }
     setTrafficData(allTraffic);
+
+    // Load sales_data (daily, voor sales totaal — consistent met /dashboard/sales)
+    var allSales = [], fromS = 0;
+    while (true) {
+      var rS = await supabase.from('sales_data').select('sale_date,store_number,net_sales').range(fromS, fromS + step - 1);
+      if (!rS.data || !rS.data.length) break;
+      allSales = allSales.concat(rS.data);
+      if (rS.data.length < step) break;
+      fromS += step;
+    }
+    setSalesData(allSales);
 
     // Load visitor_data_weekly
     var allVisitors = [], from2 = 0;
@@ -114,7 +126,7 @@ export default function TrafficDashboard() {
       .map(function(r) { return { year: r.year, week: r.week, visitors: r.visitors, customer_count: r.customer_count }; });
   }, [visitorData, storeMeta.store_number]);
 
-  // Aggregate traffic_data (daily) to weekly per store
+  // Aggregate traffic_data (daily) to weekly tickets (per store)
   var weeklyTraffic = useMemo(function() {
     var map = {};
     trafficData
@@ -124,12 +136,20 @@ export default function TrafficDashboard() {
         var key = iw.year + '-' + iw.week;
         if (!map[key]) map[key] = { year: iw.year, week: iw.week, tickets: 0, sales: 0 };
         map[key].tickets += (r.tickets || 0);
-        map[key].sales += parseFloat(r.total_sales || 0);
+      });
+    // Sales uit sales_data (consistent met Actuals dashboard)
+    salesData
+      .filter(function(r) { return r.store_number === storeMeta.store_number; })
+      .forEach(function(r) {
+        var iw = isoWeek(r.sale_date);
+        var key = iw.year + '-' + iw.week;
+        if (!map[key]) map[key] = { year: iw.year, week: iw.week, tickets: 0, sales: 0 };
+        map[key].sales += parseFloat(r.net_sales || 0);
       });
     return Object.values(map).sort(function(a, b) {
       return a.year !== b.year ? a.year - b.year : a.week - b.week;
     });
-  }, [trafficData, storeMeta.store_number]);
+  }, [trafficData, salesData, storeMeta.store_number]);
 
   // Merge visitors + traffic per (year, week)
   var weekly = useMemo(function() {
@@ -282,7 +302,7 @@ export default function TrafficDashboard() {
   }, [weekly, currentYear, cyArr, lyArr, maxWeek, loading, tab, storeMeta]);
 
   if (loading) return <LoadingLogo text="Bezoekers & conversie laden..." />;
-  if (!trafficData.length && !visitorData.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen data beschikbaar.</p></div>;
+  if (!trafficData.length && !visitorData.length && !salesData.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen data beschikbaar.</p></div>;
 
   var cyConvYTD = cyYTD.visitors ? (cyYTD.tickets / cyYTD.visitors * 100) : 0;
   var lyConvYTD = lyYTD.visitors ? (lyYTD.tickets / lyYTD.visitors * 100) : 0;
@@ -394,7 +414,7 @@ export default function TrafficDashboard() {
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
         <div className="text-[10px] text-[#6b5240] space-y-1">
           <p><strong>Conversie</strong> = tickets ÷ bezoekers × 100%. <strong>Gem. Bonbedrag</strong> = omzet ÷ tickets.</p>
-          <p>Bezoekers per week komen uit wekelijkse export van Marketing. Tickets en omzet zijn geaggregeerd uit dagelijkse Compass data.</p>
+          <p>Bezoekers per week komen uit wekelijkse export van Marketing. Tickets uit dagelijkse Compass traffic-data. Omzet uit sales_data (consistent met dashboard Omzet/Actuals).</p>
           {!storeMeta.hasSales && <p><em>Keuken Depot heeft alleen bezoekersaantallen — omzet zit bij Building Depot Curaçao.</em></p>}
         </div>
       </div>
