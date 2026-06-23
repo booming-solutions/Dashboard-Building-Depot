@@ -1,7 +1,16 @@
 /* ============================================================
-   BESTAND: page_traffic_v4.js
+   BESTAND: page.js (Bezoekers & Conversie)
    KOPIEER NAAR: src/app/dashboard/sales/traffic/page.js
-   (hernoem naar page.js bij het plaatsen)
+   VERSIE: v5.0 — Week-based view
+
+   Veranderingen vs v4:
+   - Bezoekers per week i.p.v. per dag, uit nieuwe tabel visitor_data_weekly
+   - Tickets/sales geaggregeerd vanuit traffic_data (daily → weekly)
+   - 4 tabs: Building Depot Curaçao, Bonaire, Multimart, Keuken Depot
+   - Keuken Depot heeft alleen bezoekers (sales zitten bij Curaçao)
+   - Bezoekers-per-dag chart verwijderd
+   - Day-of-week chart verwijderd (niet meer relevant zonder daily visitors)
+   - YTD vergelijking vs zelfde week vorig jaar
    ============================================================ */
 'use client';
 
@@ -12,12 +21,21 @@ import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElemen
 
 Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler);
 
-var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec'];
-var DAYS = ['Ma','Di','Wo','Do','Vr','Za','Zo'];
-var DAYS_FULL = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
-var fmtK = function(n) { var a = Math.abs(n || 0); return a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : fmt(a); };
+var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : fmt(a)); };
 var fmtP = function(n) { return (n || 0).toFixed(1) + '%'; };
+var pctChg = function(cur, prev) { return prev ? ((cur - prev) / Math.abs(prev) * 100) : 0; };
+
+// ISO week from date string YYYY-MM-DD
+function isoWeek(dateStr) {
+  var d = new Date(dateStr);
+  var t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  var day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  var yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  var wk = Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
+  return { year: t.getUTCFullYear(), week: wk };
+}
 
 function Pill({ label, active, onClick }) {
   return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
@@ -39,267 +57,238 @@ function KPI({ label, value, sub, subColor, icon }) {
   );
 }
 
+var STORES = {
+  bd: { label: 'Building Depot Curaçao', store_number: '1', currency: 'XCG', hasSales: true },
+  bonaire: { label: 'Bonaire', store_number: 'B', currency: 'US$', hasSales: true },
+  multimart: { label: 'Multimart', store_number: 'M', currency: 'XCG', hasSales: true },
+  keuken: { label: 'Keuken Depot', store_number: 'KK', currency: 'XCG', hasSales: false },
+};
+
 export default function TrafficDashboard() {
-  var _d = useState([]), data = _d[0], setData = _d[1];
-  var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
-  var _tab = useState('bd'), tab = _tab[0], setTab = _tab[1];
-  var _yr = useState('all'), yearFilter = _yr[0], setYearFilter = _yr[1];
+  var supabase = createClient();
+  var [trafficData, setTrafficData] = useState([]);
+  var [visitorData, setVisitorData] = useState([]);
+  var [loading, setLoading] = useState(true);
+  var [tab, setTab] = useState('bd');
+  var [yearFilter, setYearFilter] = useState('all');
 
   var visitorsRef = useRef(null);
   var conversionRef = useRef(null);
   var ticketRef = useRef(null);
   var comboRef = useRef(null);
-  var dowRef = useRef(null);
-  var dowRef2 = useRef(null);
-  var keukenMonthRef = useRef(null);
   var chartsRef = useRef({});
 
-  var supabase = createClient();
   useEffect(function() { loadData(); }, []);
 
   async function loadData() {
-    var all = [], from = 0, step = 1000;
+    // Load traffic_data (daily, will aggregate to weekly)
+    var allTraffic = [], from = 0, step = 1000;
     while (true) {
       var r = await supabase.from('traffic_data').select('*').order('date').range(from, from + step - 1);
       if (!r.data || !r.data.length) break;
-      all = all.concat(r.data);
+      allTraffic = allTraffic.concat(r.data);
       if (r.data.length < step) break;
       from += step;
     }
-    setData(all); setLoading(false);
+    setTrafficData(allTraffic);
+
+    // Load visitor_data_weekly
+    var allVisitors = [], from2 = 0;
+    while (true) {
+      var r2 = await supabase.from('visitor_data_weekly').select('*').range(from2, from2 + step - 1);
+      if (!r2.data || !r2.data.length) break;
+      allVisitors = allVisitors.concat(r2.data);
+      if (r2.data.length < step) break;
+      from2 += step;
+    }
+    setVisitorData(allVisitors);
+    setLoading(false);
   }
 
-  // Get store data based on tab
-  var storeNumber = tab === 'bonaire' ? 'B' : '1';
-  var storeData = useMemo(function() {
-    return data.filter(function(r) { return r.store_number === storeNumber; });
-  }, [data, storeNumber]);
+  var storeMeta = STORES[tab];
 
-  // Visitor field based on tab
-  var getVisitors = function(r) {
-    if (tab === 'bd') return r.visitors || 0;
-    if (tab === 'multimart') return r.visitors_multimart || 0;
-    if (tab === 'bonaire') return r.visitors || 0;
-    return 0;
-  };
+  // Visitors for current tab (from visitor_data_weekly)
+  var weeklyVisitors = useMemo(function() {
+    return visitorData
+      .filter(function(r) { return r.store_number === storeMeta.store_number; })
+      .map(function(r) { return { year: r.year, week: r.week, visitors: r.visitors, customer_count: r.customer_count }; });
+  }, [visitorData, storeMeta.store_number]);
 
-  var lastDate = useMemo(function() {
-    if (!storeData.length) return null;
-    return storeData.reduce(function(max, r) { return r.date > max ? r.date : max; }, storeData[0].date);
-  }, [storeData]);
-
-  // Separate "last updated" dates for visitors vs tickets
-  var lastVisitorDate = useMemo(function() {
-    var withVisitors = storeData.filter(function(r) { return (getVisitors(r)) > 0; });
-    if (!withVisitors.length) return null;
-    return withVisitors.reduce(function(max, r) { return r.date > max ? r.date : max; }, withVisitors[0].date);
-  }, [storeData, tab]);
-
-  var lastTicketDate = useMemo(function() {
-    var withTickets = storeData.filter(function(r) { return (r.tickets || 0) > 0; });
-    if (!withTickets.length) return null;
-    return withTickets.reduce(function(max, r) { return r.date > max ? r.date : max; }, withTickets[0].date);
-  }, [storeData]);
-
-  var currentYear = useMemo(function() { return lastDate ? parseInt(lastDate.split('-')[0]) : 2026; }, [lastDate]);
-
-  // Aggregate daily → monthly with correct visitor source
-  // BELANGRIJK: voor het huidige jaar knippen we alle data op lastVisitorDate, en voor LY op de equivalente datum.
-  // Anders heeft april 2026: bezoekers t/m 16 apr (lastVisitorDate) maar tickets t/m 30 apr (recenter),
-  // wat een verkeerde conversie van 92% geeft. Door consistent te clippen wordt de chart eerlijk.
-  var monthly = useMemo(function() {
-    var cyClip = lastVisitorDate;
-    var lyClip = lastVisitorDate ? (currentYear - 1) + lastVisitorDate.substring(4) : null;
+  // Aggregate traffic_data (daily) to weekly per store
+  var weeklyTraffic = useMemo(function() {
     var map = {};
-    storeData.forEach(function(r) {
-      // Clip current year op lastVisitorDate (zelfde voor LY op zelfde dag-van-jaar)
-      if (cyClip && r.date.startsWith(String(currentYear)) && r.date > cyClip) return;
-      if (lyClip && r.date.startsWith(String(currentYear - 1)) && r.date > lyClip) return;
-      var parts = r.date.split('-');
-      var y = parseInt(parts[0]); var m = parseInt(parts[1]);
-      var key = y + '-' + String(m).padStart(2, '0');
-      if (!map[key]) map[key] = { year: y, month: m, visitors: 0, visitors_keuken: 0, tickets: 0, sales: 0 };
-      map[key].visitors += getVisitors(r);
-      if (tab === 'bd') map[key].visitors_keuken += r.visitors_keuken || 0;
-      map[key].tickets += r.tickets || 0;
-      map[key].sales += parseFloat(r.total_sales) || 0;
+    trafficData
+      .filter(function(r) { return r.store_number === storeMeta.store_number; })
+      .forEach(function(r) {
+        var iw = isoWeek(r.date);
+        var key = iw.year + '-' + iw.week;
+        if (!map[key]) map[key] = { year: iw.year, week: iw.week, tickets: 0, sales: 0 };
+        map[key].tickets += (r.tickets || 0);
+        map[key].sales += parseFloat(r.total_sales || 0);
+      });
+    return Object.values(map).sort(function(a, b) {
+      return a.year !== b.year ? a.year - b.year : a.week - b.week;
     });
-    return Object.values(map).sort(function(a, b) { return (b.year * 100 + b.month) - (a.year * 100 + a.month); });
-  }, [storeData, tab, lastVisitorDate, currentYear]);
+  }, [trafficData, storeMeta.store_number]);
 
+  // Merge visitors + traffic per (year, week)
+  var weekly = useMemo(function() {
+    var map = {};
+    weeklyVisitors.forEach(function(v) {
+      var key = v.year + '-' + v.week;
+      map[key] = { year: v.year, week: v.week, visitors: v.visitors, customer_count: v.customer_count, tickets: 0, sales: 0 };
+    });
+    weeklyTraffic.forEach(function(t) {
+      var key = t.year + '-' + t.week;
+      if (!map[key]) map[key] = { year: t.year, week: t.week, visitors: 0, customer_count: null, tickets: 0, sales: 0 };
+      map[key].tickets = t.tickets;
+      map[key].sales = t.sales;
+    });
+    return Object.values(map).sort(function(a, b) {
+      return a.year !== b.year ? a.year - b.year : a.week - b.week;
+    });
+  }, [weeklyVisitors, weeklyTraffic]);
+
+  // Years available
   var years = useMemo(function() {
-    var s = {}; monthly.forEach(function(r) { s[r.year] = true; });
-    return Object.keys(s).sort();
-  }, [monthly]);
+    var s = new Set();
+    weekly.forEach(function(w) { s.add(w.year); });
+    return [...s].sort();
+  }, [weekly]);
 
-  var filteredMonthly = useMemo(function() {
-    if (yearFilter === 'all') return monthly;
-    return monthly.filter(function(r) { return String(r.year) === yearFilter; });
-  }, [monthly, yearFilter]);
+  var currentYear = years.length ? years[years.length - 1] : new Date().getFullYear();
+  var lastVisitorWeek = useMemo(function() {
+    var withV = weekly.filter(function(w) { return w.year === currentYear && w.visitors > 0; });
+    if (!withV.length) return null;
+    return withV[withV.length - 1].week;
+  }, [weekly, currentYear]);
+  var lastTicketWeek = useMemo(function() {
+    var withT = weekly.filter(function(w) { return w.year === currentYear && w.tickets > 0; });
+    if (!withT.length) return null;
+    return withT[withT.length - 1].week;
+  }, [weekly, currentYear]);
 
-  // YTD exact same day comparison — alles geknipt op lastVisitorDate voor consistente conversie
-  // (bezoekers loopt vaak achter op tickets; door alles op visitor-cutoff te knippen
-  //  zijn de drie KPI's onderling consistent en klopt conversie = tickets/visitors)
-  var ytdCutoffDate = lastVisitorDate || lastDate;
+  // YTD = sum t/m lastVisitorWeek (or t/m latest week if no visitors)
+  // Both visitors and tickets clipped to same week for consistent conversion
+  var ytdCutoff = lastVisitorWeek || lastTicketWeek || 53;
+
   var cyYTD = useMemo(function() {
-    if (!ytdCutoffDate) return { visitors: 0, tickets: 0, sales: 0 };
-    var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear)) && r.date <= ytdCutoffDate; });
-    return { visitors: d.reduce(function(s, r) { return s + getVisitors(r); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
-  }, [storeData, currentYear, ytdCutoffDate, tab]);
+    var f = weekly.filter(function(w) { return w.year === currentYear && w.week <= ytdCutoff; });
+    return {
+      visitors: f.reduce(function(s, w) { return s + (w.visitors || 0); }, 0),
+      tickets: f.reduce(function(s, w) { return s + (w.tickets || 0); }, 0),
+      sales: f.reduce(function(s, w) { return s + (w.sales || 0); }, 0),
+    };
+  }, [weekly, currentYear, ytdCutoff]);
 
   var lyYTD = useMemo(function() {
-    if (!ytdCutoffDate) return { visitors: 0, tickets: 0, sales: 0 };
-    var lyCutoff = (currentYear - 1) + ytdCutoffDate.substring(4);
-    var d = storeData.filter(function(r) { return r.date.startsWith(String(currentYear - 1)) && r.date <= lyCutoff; });
-    return { visitors: d.reduce(function(s, r) { return s + getVisitors(r); }, 0), tickets: d.reduce(function(s, r) { return s + (r.tickets || 0); }, 0), sales: d.reduce(function(s, r) { return s + parseFloat(r.total_sales || 0); }, 0) };
-  }, [storeData, currentYear, ytdCutoffDate, tab]);
+    var f = weekly.filter(function(w) { return w.year === currentYear - 1 && w.week <= ytdCutoff; });
+    return {
+      visitors: f.reduce(function(s, w) { return s + (w.visitors || 0); }, 0),
+      tickets: f.reduce(function(s, w) { return s + (w.tickets || 0); }, 0),
+      sales: f.reduce(function(s, w) { return s + (w.sales || 0); }, 0),
+    };
+  }, [weekly, currentYear, ytdCutoff]);
 
-  // Day of week analysis for current year
-  var dowData = useMemo(function() {
-    var totals = [0,0,0,0,0,0,0]; var counts = [0,0,0,0,0,0,0];
-    storeData.forEach(function(r) {
-      if (!r.date.startsWith(String(currentYear))) return;
-      var v = getVisitors(r);
-      if (!v) return;
-      var dt = new Date(r.date + 'T12:00:00');
-      var dow = (dt.getDay() + 6) % 7; // Monday=0
-      totals[dow] += v; counts[dow]++;
-    });
-    var total = totals.reduce(function(a, b) { return a + b; }, 0);
-    return DAYS.map(function(d, i) { return { day: d, dayFull: DAYS_FULL[i], total: totals[i], avg: counts[i] ? Math.round(totals[i] / counts[i]) : 0, pct: total ? (totals[i] / total * 100) : 0 }; });
-  }, [storeData, currentYear, tab]);
+  // For table: filtered by yearFilter
+  var weeklyFiltered = useMemo(function() {
+    if (yearFilter === 'all') return [...weekly].sort(function(a, b) { return b.year !== a.year ? b.year - a.year : b.week - a.week; });
+    return weekly.filter(function(w) { return w.year === yearFilter }).sort(function(a, b) { return b.week - a.week; });
+  }, [weekly, yearFilter]);
 
-  // KeukenDepot day of week (only for BD tab)
-  var dowKeuken = useMemo(function() {
-    if (tab !== 'bd') return null;
-    var totals = [0,0,0,0,0,0,0]; var counts = [0,0,0,0,0,0,0];
-    storeData.forEach(function(r) {
-      if (!r.date.startsWith(String(currentYear))) return;
-      var v = r.visitors_keuken || 0;
-      if (!v) return;
-      var dt = new Date(r.date + 'T12:00:00');
-      var dow = (dt.getDay() + 6) % 7;
-      totals[dow] += v; counts[dow]++;
-    });
-    var total = totals.reduce(function(a, b) { return a + b; }, 0);
-    return DAYS.map(function(d, i) { return { day: d, total: totals[i], avg: counts[i] ? Math.round(totals[i] / counts[i]) : 0, pct: total ? (totals[i] / total * 100) : 0 }; });
-  }, [storeData, currentYear, tab]);
+  // CY / LY arrays for charts: weeks 1-53
+  var cyArr = useMemo(function() {
+    var arr = [];
+    for (var i = 1; i <= 53; i++) {
+      var r = weekly.find(function(w) { return w.year === currentYear && w.week === i; });
+      arr.push(r || null);
+    }
+    return arr;
+  }, [weekly, currentYear]);
 
-  // KeukenDepot monthly data (only for BD tab)
-  var keukenMonthly = useMemo(function() {
-    if (tab !== 'bd') return { cy: [], ly: [] };
-    var map = {};
-    storeData.forEach(function(r) {
-      var parts = r.date.split('-');
-      var y = parseInt(parts[0]); var m = parseInt(parts[1]);
-      var key = y + '-' + String(m).padStart(2, '0');
-      if (!map[key]) map[key] = { year: y, month: m, visitors: 0 };
-      map[key].visitors += r.visitors_keuken || 0;
-    });
-    var all = Object.values(map).sort(function(a, b) { return (a.year * 100 + a.month) - (b.year * 100 + b.month); });
-    return { cy: all.filter(function(r) { return r.year === currentYear; }), ly: all.filter(function(r) { return r.year === currentYear - 1; }) };
-  }, [storeData, currentYear, tab]);
+  var lyArr = useMemo(function() {
+    var arr = [];
+    for (var i = 1; i <= 53; i++) {
+      var r = weekly.find(function(w) { return w.year === currentYear - 1 && w.week === i; });
+      arr.push(r || null);
+    }
+    return arr;
+  }, [weekly, currentYear]);
 
-  var pctChg = function(a, b) { return b ? ((a - b) / Math.abs(b) * 100) : 0; };
-
-  // Monthly chart data
-  var monthlyAsc = useMemo(function() { return monthly.slice().sort(function(a, b) { return (a.year * 100 + a.month) - (b.year * 100 + b.month); }); }, [monthly]);
-  var cyMonthly = useMemo(function() { return monthlyAsc.filter(function(r) { return r.year === currentYear; }); }, [monthlyAsc, currentYear]);
-  var lyMonthly = useMemo(function() { return monthlyAsc.filter(function(r) { return r.year === currentYear - 1; }); }, [monthlyAsc, currentYear]);
+  // Find last week with data to determine chart x-axis
+  var maxWeek = useMemo(function() {
+    var m = 0;
+    cyArr.forEach(function(w, i) { if (w && (w.visitors || w.tickets)) m = Math.max(m, i + 1); });
+    lyArr.forEach(function(w, i) { if (w && (w.visitors || w.tickets)) m = Math.max(m, i + 1); });
+    return Math.max(m, 52);
+  }, [cyArr, lyArr]);
 
   // Render charts
   useEffect(function() {
     Object.values(chartsRef.current).forEach(function(c) { if (c) c.destroy(); });
     chartsRef.current = {};
-    if (!storeData.length) return;
+    if (loading || !weekly.length) return;
 
-    var labels = [], cyV = [], lyV = [], cyConv = [], lyConv = [], cyAvg = [], lyAvg = [], cyT = [], lyT = [];
-    for (var m = 1; m <= 12; m++) {
-      labels.push(MN[m - 1]);
-      var cy = cyMonthly.find(function(r) { return r.month === m; });
-      var ly = lyMonthly.find(function(r) { return r.month === m; });
-      cyV.push(cy ? cy.visitors : null); lyV.push(ly ? ly.visitors : null);
-      cyConv.push(cy && cy.visitors ? (cy.tickets / cy.visitors * 100) : null);
-      lyConv.push(ly && ly.visitors ? (ly.tickets / ly.visitors * 100) : null);
-      cyAvg.push(cy && cy.tickets ? (cy.sales / cy.tickets) : null);
-      lyAvg.push(ly && ly.tickets ? (ly.sales / ly.tickets) : null);
-      cyT.push(cy ? cy.tickets : null); lyT.push(ly ? ly.tickets : null);
-    }
+    var labels = [];
+    for (var i = 1; i <= maxWeek; i++) labels.push('W' + i);
+    var cyV = cyArr.slice(0, maxWeek).map(function(w) { return w ? w.visitors : null; });
+    var lyV = lyArr.slice(0, maxWeek).map(function(w) { return w ? w.visitors : null; });
+    var cyT = cyArr.slice(0, maxWeek).map(function(w) { return w ? w.tickets : null; });
+    var lyT = lyArr.slice(0, maxWeek).map(function(w) { return w ? w.tickets : null; });
+    var cyConv = cyArr.slice(0, maxWeek).map(function(w) { return w && w.visitors ? (w.tickets / w.visitors * 100) : null; });
+    var lyConv = lyArr.slice(0, maxWeek).map(function(w) { return w && w.visitors ? (w.tickets / w.visitors * 100) : null; });
+    var cyAvg = cyArr.slice(0, maxWeek).map(function(w) { return w && w.tickets ? (w.sales / w.tickets) : null; });
+    var lyAvg = lyArr.slice(0, maxWeek).map(function(w) { return w && w.tickets ? (w.sales / w.tickets) : null; });
 
-    var co = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#f0ebe5' } } } };
+    var co = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { usePointStyle: true, font: { size: 11 } } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      interaction: { mode: 'index', intersect: false },
+    };
 
     if (visitorsRef.current) {
       chartsRef.current.v = new Chart(visitorsRef.current, { type: 'bar', data: { labels: labels, datasets: [
         { label: currentYear + ' Bezoekers', data: cyV, backgroundColor: 'rgba(232,78,27,0.25)', borderColor: '#E84E1B', borderWidth: 1, borderRadius: 4, order: 2 },
-        { label: (currentYear - 1) + ' Bezoekers', data: lyV, type: 'line', borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 4, tension: 0.3, fill: false, order: 1 },
-      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(c.raw); } } } }) }) });
+        { label: (currentYear - 1) + ' Bezoekers', data: lyV, type: 'line', borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 3, tension: 0.3, fill: false, order: 1, spanGaps: true },
+      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false }, ticks: { font: { size: 9 } } }, y: { ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(c.raw); } } } }) }) });
     }
 
     if (conversionRef.current && cyConv.some(function(v) { return v !== null; })) {
       chartsRef.current.c = new Chart(conversionRef.current, { type: 'line', data: { labels: labels, datasets: [
-        { label: currentYear + ' Conversie %', data: cyConv, borderColor: '#E84E1B', backgroundColor: 'rgba(232,78,27,0.08)', pointBackgroundColor: '#E84E1B', pointRadius: 5, tension: 0.3, fill: true, borderWidth: 2.5 },
-        { label: (currentYear - 1) + ' Conversie %', data: lyConv, borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 4, tension: 0.3, fill: false, borderWidth: 2 },
-      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return v + '%'; } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmtP(c.raw); } } } }) }) });
+        { label: currentYear + ' Conversie %', data: cyConv, borderColor: '#E84E1B', backgroundColor: 'rgba(232,78,27,0.08)', pointBackgroundColor: '#E84E1B', pointRadius: 3, tension: 0.3, fill: true, borderWidth: 2.5, spanGaps: true },
+        { label: (currentYear - 1) + ' Conversie %', data: lyConv, borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 3, tension: 0.3, fill: false, borderWidth: 2, spanGaps: true },
+      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false }, ticks: { font: { size: 9 } } }, y: { ticks: { callback: function(v) { return v + '%'; } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmtP(c.raw); } } } }) }) });
     }
 
-    if (ticketRef.current) {
+    if (ticketRef.current && storeMeta.hasSales) {
       chartsRef.current.t = new Chart(ticketRef.current, { type: 'line', data: { labels: labels, datasets: [
-        { label: currentYear + ' Gem. Bon', data: cyAvg, borderColor: '#1B3A5C', backgroundColor: 'rgba(27,58,92,0.08)', pointBackgroundColor: '#1B3A5C', pointRadius: 5, tension: 0.3, fill: true, borderWidth: 2.5 },
-        { label: (currentYear - 1) + ' Gem. Bon', data: lyAvg, borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 4, tension: 0.3, fill: false, borderWidth: 2 },
-      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return 'Cg ' + v; } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': Cg ' + fmt(Math.round(c.raw)); } } } }) }) });
+        { label: currentYear + ' Gem. Bon', data: cyAvg, borderColor: '#1B3A5C', backgroundColor: 'rgba(27,58,92,0.08)', pointBackgroundColor: '#1B3A5C', pointRadius: 3, tension: 0.3, fill: true, borderWidth: 2.5, spanGaps: true },
+        { label: (currentYear - 1) + ' Gem. Bon', data: lyAvg, borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 3, tension: 0.3, fill: false, borderWidth: 2, spanGaps: true },
+      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false }, ticks: { font: { size: 9 } } }, y: { ticks: { callback: function(v) { return storeMeta.currency + ' ' + v; } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + storeMeta.currency + ' ' + fmt(Math.round(c.raw)); } } } }) }) });
     }
 
-    if (comboRef.current) {
+    if (comboRef.current && storeMeta.hasSales) {
       chartsRef.current.cb = new Chart(comboRef.current, { type: 'bar', data: { labels: labels, datasets: [
         { label: currentYear + ' Tickets', data: cyT, backgroundColor: 'rgba(232,78,27,0.2)', borderColor: '#E84E1B', borderWidth: 1, borderRadius: 4, yAxisID: 'y', order: 2 },
         { label: (currentYear - 1) + ' Tickets', data: lyT, backgroundColor: 'rgba(136,136,136,0.15)', borderColor: '#888', borderWidth: 1, borderRadius: 4, yAxisID: 'y', order: 3 },
-        { label: currentYear + ' Gem. Bon', data: cyAvg, type: 'line', borderColor: '#1B3A5C', pointBackgroundColor: '#1B3A5C', pointRadius: 4, tension: 0.3, fill: false, borderWidth: 2.5, yAxisID: 'y1', order: 1 },
-      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: co.plugins, scales: { x: { grid: { display: false } }, y: { position: 'left', ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } }, y1: { position: 'right', ticks: { callback: function(v) { return 'Cg ' + v; } }, grid: { display: false } } } } });
-    }
-
-    // KeukenDepot monthly chart
-    if (keukenMonthRef.current && tab === 'bd') {
-      var kcV = [], klV = [];
-      for (var mk = 1; mk <= 12; mk++) {
-        var kcy = keukenMonthly.cy.find(function(r) { return r.month === mk; });
-        var kly = keukenMonthly.ly.find(function(r) { return r.month === mk; });
-        kcV.push(kcy ? kcy.visitors : null);
-        klV.push(kly ? kly.visitors : null);
-      }
-      chartsRef.current.km = new Chart(keukenMonthRef.current, { type: 'bar', data: { labels: labels, datasets: [
-        { label: currentYear + ' Bezoekers', data: kcV, backgroundColor: 'rgba(22,163,74,0.25)', borderColor: '#16a34a', borderWidth: 1, borderRadius: 4, order: 2 },
-        { label: (currentYear - 1) + ' Bezoekers', data: klV, type: 'line', borderColor: '#888', borderDash: [5, 5], pointBackgroundColor: '#888', pointRadius: 4, tension: 0.3, fill: false, order: 1 },
-      ] }, options: Object.assign({}, co, { scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } } }, plugins: Object.assign({}, co.plugins, { tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + fmt(c.raw); } } } }) }) });
-    }
-
-    // Day of week chart
-    if (dowRef.current && dowData.some(function(d) { return d.total > 0; })) {
-      chartsRef.current.dow = new Chart(dowRef.current, { type: 'bar', data: { labels: dowData.map(function(d) { return d.day; }), datasets: [
-        { data: dowData.map(function(d) { return d.pct; }), backgroundColor: dowData.map(function(d, i) { return i === 5 ? '#E84E1B' : i === 6 ? '#d4a574' : 'rgba(27,58,92,0.3)'; }), borderColor: dowData.map(function(d, i) { return i === 5 ? '#E84E1B' : i === 6 ? '#c4956a' : '#1B3A5C'; }), borderWidth: 1, borderRadius: 4 },
-      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(c) { var d = dowData[c.dataIndex]; return d.dayFull + ': ' + fmtP(d.pct) + ' (gem. ' + fmt(d.avg) + '/dag)'; } } } }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return v + '%'; } }, grid: { color: '#f0ebe5' } } } } });
-    }
-
-    // KeukenDepot day of week
-    if (dowRef2.current && dowKeuken && dowKeuken.some(function(d) { return d.total > 0; })) {
-      chartsRef.current.dow2 = new Chart(dowRef2.current, { type: 'bar', data: { labels: dowKeuken.map(function(d) { return d.day; }), datasets: [
-        { data: dowKeuken.map(function(d) { return d.pct; }), backgroundColor: dowKeuken.map(function(d, i) { return i === 5 ? '#16a34a' : i === 6 ? '#a3d9a5' : 'rgba(22,163,74,0.25)'; }), borderColor: dowKeuken.map(function(d, i) { return i === 5 ? '#16a34a' : i === 6 ? '#6bc06d' : '#16a34a'; }), borderWidth: 1, borderRadius: 4 },
-      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(c) { var d = dowKeuken[c.dataIndex]; return DAYS_FULL[c.dataIndex] + ': ' + fmtP(d.pct) + ' (gem. ' + fmt(d.avg) + '/dag)'; } } } }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return v + '%'; } }, grid: { color: '#f0ebe5' } } } } });
+        { label: currentYear + ' Gem. Bon', data: cyAvg, type: 'line', borderColor: '#1B3A5C', pointBackgroundColor: '#1B3A5C', pointRadius: 3, tension: 0.3, fill: false, borderWidth: 2.5, yAxisID: 'y1', order: 1, spanGaps: true },
+      ] }, options: { responsive: true, maintainAspectRatio: false, plugins: co.plugins, scales: { x: { grid: { display: false }, ticks: { font: { size: 9 } } }, y: { position: 'left', ticks: { callback: function(v) { return fmtK(v); } }, grid: { color: '#f0ebe5' } }, y1: { position: 'right', ticks: { callback: function(v) { return storeMeta.currency + ' ' + v; } }, grid: { display: false } } } } });
     }
 
     return function() { Object.values(chartsRef.current).forEach(function(c) { if (c) c.destroy(); }); };
-  }, [storeData, cyMonthly, lyMonthly, currentYear, dowData, dowKeuken, keukenMonthly, tab]);
+  }, [weekly, currentYear, cyArr, lyArr, maxWeek, loading, tab, storeMeta]);
 
   if (loading) return <LoadingLogo text="Bezoekers & conversie laden..." />;
-  if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen traffic data beschikbaar.</p></div>;
+  if (!trafficData.length && !visitorData.length) return <div className="text-center py-16"><p className="text-[#6b5240]">Geen data beschikbaar.</p></div>;
 
   var cyConvYTD = cyYTD.visitors ? (cyYTD.tickets / cyYTD.visitors * 100) : 0;
   var lyConvYTD = lyYTD.visitors ? (lyYTD.tickets / lyYTD.visitors * 100) : 0;
   var cyAvgYTD = cyYTD.tickets ? (cyYTD.sales / cyYTD.tickets) : 0;
   var lyAvgYTD = lyYTD.tickets ? (lyYTD.sales / lyYTD.tickets) : 0;
   var hasVisitors = cyYTD.visitors > 0;
-  var fmtDate = function(d) { if (!d) return '—'; var p = d.split('-'); return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + ' ' + p[0]; };
-  var dateLabel = fmtDate(lastDate);
-  var tabNames = { bd: 'Building Depot', multimart: 'MultiMart', bonaire: 'Bonaire' };
 
   return (
     <div className="max-w-[1520px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
@@ -307,160 +296,106 @@ export default function TrafficDashboard() {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '22px', fontWeight: 900 }}>Bezoekers & Conversie</h1>
-          <p className="text-[13px] text-[#6b5240]">{tabNames[tab] + ' vs ' + (currentYear - 1)}</p>
+          <p className="text-[13px] text-[#6b5240]">{storeMeta.label} · vergelijking met {currentYear - 1}</p>
           <div className="flex flex-col gap-0.5 mt-1">
-            <span className="text-[11px] text-[#a08a74]">{'Alle vergelijkingen t/m ' + fmtDate(lastVisitorDate) + ' (laatste bezoekersdag)'}</span>
-            {lastTicketDate && lastTicketDate !== lastVisitorDate && <span className="text-[10px] text-[#c4a890] italic">{'Recentere bonbedrag-data beschikbaar t/m ' + fmtDate(lastTicketDate) + ', maar genegeerd voor consistente conversie'}</span>}
+            {lastVisitorWeek && <span className="text-[11px] text-[#a08a74]">{'Alle vergelijkingen t/m W' + lastVisitorWeek + ' ' + currentYear + ' (laatste bezoekersweek)'}</span>}
+            {lastTicketWeek && lastTicketWeek !== lastVisitorWeek && <span className="text-[10px] text-[#c4a890] italic">{'Tickets data beschikbaar t/m W' + lastTicketWeek + ', maar afgekapt voor consistente conversie'}</span>}
           </div>
         </div>
       </div>
 
       {/* Store tabs */}
       <div className="flex gap-1 mb-5 border-b-2 border-[#e5ddd4]">
-        {[['bd', 'Building Depot'], ['multimart', 'MultiMart'], ['bonaire', 'Bonaire']].map(function(item) {
+        {[['bd', 'Building Depot Curaçao'], ['bonaire', 'Bonaire'], ['multimart', 'Multimart'], ['keuken', 'Keuken Depot']].map(function(item) {
           return <button key={item[0]} onClick={function() { setTab(item[0]); setYearFilter('all'); }} className={'px-5 py-2.5 text-[13px] font-semibold border-b-[2.5px] -mb-[2px] transition-colors ' + (tab === item[0] ? 'text-[#E84E1B] border-[#E84E1B]' : 'text-[#6b5240] border-transparent hover:text-[#1a0a04]')}>{item[1]}</button>;
         })}
       </div>
 
-      {/* KPI tiles - hide for multimart */}
-      {tab !== 'multimart' && (
-      <div className={'grid grid-cols-2 gap-4 mb-5 ' + (hasVisitors ? 'md:grid-cols-5' : 'md:grid-cols-3')}>
-        {hasVisitors && <KPI label="Bezoekers YTD" value={fmtK(cyYTD.visitors)} sub={'LY: ' + fmtK(lyYTD.visitors) + ' (' + (pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.visitors, lyYTD.visitors)) + ')'} subColor={pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '#16a34a' : '#dc2626'} icon="👥" />}
-        <KPI label="Tickets YTD" value={fmtK(cyYTD.tickets)} sub={'LY: ' + fmtK(lyYTD.tickets) + ' (' + (pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.tickets, lyYTD.tickets)) + ')'} subColor={pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '#16a34a' : '#dc2626'} icon="🧾" />
-        {hasVisitors && <KPI label="Conversie YTD" value={fmtP(cyConvYTD)} sub={'LY: ' + fmtP(lyConvYTD) + ' (' + (cyConvYTD - lyConvYTD >= 0 ? '+' : '') + (cyConvYTD - lyConvYTD).toFixed(1) + 'pp)'} subColor={cyConvYTD >= lyConvYTD ? '#16a34a' : '#dc2626'} icon="🎯" />}
-        <KPI label="Gem. Bonbedrag" value={'Cg ' + fmt(Math.round(cyAvgYTD))} sub={'LY: Cg ' + fmt(Math.round(lyAvgYTD)) + ' (' + (pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '+' : '') + fmtP(pctChg(cyAvgYTD, lyAvgYTD)) + ')'} subColor={pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '#16a34a' : '#dc2626'} icon="💰" />
-        <KPI label="Omzet YTD" value={fmtK(cyYTD.sales)} sub={'LY: ' + fmtK(lyYTD.sales) + ' (' + (pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.sales, lyYTD.sales)) + ')'} subColor={pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '#16a34a' : '#dc2626'} icon="📊" />
+      {/* KPIs */}
+      <div className={'grid grid-cols-2 gap-4 mb-5 ' + (storeMeta.hasSales && hasVisitors ? 'md:grid-cols-5' : storeMeta.hasSales ? 'md:grid-cols-3' : hasVisitors ? 'md:grid-cols-1' : '')}>
+        {hasVisitors && <KPI label="Bezoekers YTD" value={fmtK(cyYTD.visitors)} sub={lyYTD.visitors ? ('LY: ' + fmtK(lyYTD.visitors) + ' (' + (pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.visitors, lyYTD.visitors)) + ')') : '—'} subColor={pctChg(cyYTD.visitors, lyYTD.visitors) >= 0 ? '#16a34a' : '#dc2626'} icon="👥" />}
+        {storeMeta.hasSales && <KPI label="Tickets YTD" value={fmtK(cyYTD.tickets)} sub={lyYTD.tickets ? ('LY: ' + fmtK(lyYTD.tickets) + ' (' + (pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.tickets, lyYTD.tickets)) + ')') : '—'} subColor={pctChg(cyYTD.tickets, lyYTD.tickets) >= 0 ? '#16a34a' : '#dc2626'} icon="🧾" />}
+        {storeMeta.hasSales && hasVisitors && <KPI label="Conversie YTD" value={fmtP(cyConvYTD)} sub={lyConvYTD ? ('LY: ' + fmtP(lyConvYTD) + ' (' + (cyConvYTD - lyConvYTD >= 0 ? '+' : '') + (cyConvYTD - lyConvYTD).toFixed(1) + 'pp)') : '—'} subColor={cyConvYTD >= lyConvYTD ? '#16a34a' : '#dc2626'} icon="🎯" />}
+        {storeMeta.hasSales && <KPI label="Gem. Bonbedrag" value={storeMeta.currency + ' ' + fmt(Math.round(cyAvgYTD))} sub={lyAvgYTD ? ('LY: ' + storeMeta.currency + ' ' + fmt(Math.round(lyAvgYTD)) + ' (' + (pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '+' : '') + fmtP(pctChg(cyAvgYTD, lyAvgYTD)) + ')') : '—'} subColor={pctChg(cyAvgYTD, lyAvgYTD) >= 0 ? '#16a34a' : '#dc2626'} icon="💰" />}
+        {storeMeta.hasSales && <KPI label="Omzet YTD" value={storeMeta.currency + ' ' + fmtK(cyYTD.sales)} sub={lyYTD.sales ? ('LY: ' + storeMeta.currency + ' ' + fmtK(lyYTD.sales) + ' (' + (pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '+' : '') + fmtP(pctChg(cyYTD.sales, lyYTD.sales)) + ')') : '—'} subColor={pctChg(cyYTD.sales, lyYTD.sales) >= 0 ? '#16a34a' : '#dc2626'} icon="📊" />}
       </div>
-      )}
 
-      {/* Visitor overview + day-of-week */}
-      {tab === 'bd' && hasVisitors && (
-        <div className="space-y-4 mb-5">
-          {/* Row 1: Building Depot */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-              <h3 className="text-[15px] font-bold mb-4">Building Depot — Bezoekers per maand</h3>
-              <div style={{ height: '250px' }}><canvas ref={visitorsRef}></canvas></div>
-            </div>
-            <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-              <h3 className="text-[15px] font-bold mb-2">Building Depot — Verdeling per weekdag</h3>
-              <p className="text-[12px] text-[#6b5240] mb-3">{currentYear + ' — hover voor gemiddelde per dag'}</p>
-              <div style={{ height: '220px' }}><canvas ref={dowRef}></canvas></div>
-            </div>
-          </div>
-          {/* Row 2: KeukenDepot */}
-          {dowKeuken && dowKeuken.some(function(d) { return d.total > 0; }) && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-                <h3 className="text-[15px] font-bold mb-4">KeukenDepot — Bezoekers per maand</h3>
-                <div style={{ height: '250px' }}><canvas ref={keukenMonthRef}></canvas></div>
-              </div>
-              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-                <h3 className="text-[15px] font-bold mb-2">KeukenDepot — Verdeling per weekdag</h3>
-                <p className="text-[12px] text-[#6b5240] mb-3">{currentYear + ' — hover voor gemiddelde per dag'}</p>
-                <div style={{ height: '220px' }}><canvas ref={dowRef2}></canvas></div>
-              </div>
-            </div>
-          )}
+      {/* Charts */}
+      {hasVisitors && (
+        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-4">
+          <h3 className="text-[15px] font-bold mb-4">{storeMeta.label} — Bezoekers per week</h3>
+          <div style={{ height: '300px' }}><canvas ref={visitorsRef}></canvas></div>
         </div>
       )}
 
-      {/* MultiMart: only visitors, no tickets/bonbedrag */}
-      {tab === 'multimart' && (
-        <div className="space-y-4 mb-5">
-          {hasVisitors && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-                <h3 className="text-[15px] font-bold mb-4">MultiMart — Bezoekers per maand</h3>
-                <div style={{ height: '250px' }}><canvas ref={visitorsRef}></canvas></div>
-              </div>
-              <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-                <h3 className="text-[15px] font-bold mb-2">MultiMart — Verdeling per weekdag</h3>
-                <p className="text-[12px] text-[#6b5240] mb-3">{currentYear + ' — hover voor gemiddelde per dag'}</p>
-                <div style={{ height: '220px' }}><canvas ref={dowRef}></canvas></div>
-              </div>
-            </div>
-          )}
-          <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 text-[13px] text-amber-700">
-            Voor MultiMart zijn op dit moment alleen bezoekersaantallen beschikbaar. Aantal facturen en bonbedragen zijn nog niet gekoppeld.
+      {storeMeta.hasSales && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+          {hasVisitors && <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+            <h3 className="text-[15px] font-bold mb-4">Conversie % (tickets / bezoekers)</h3>
+            <div style={{ height: '280px' }}><canvas ref={conversionRef}></canvas></div>
+          </div>}
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
+            <h3 className="text-[15px] font-bold mb-4">Gemiddeld bonbedrag ({storeMeta.currency})</h3>
+            <div style={{ height: '280px' }}><canvas ref={ticketRef}></canvas></div>
+          </div>
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm lg:col-span-2">
+            <h3 className="text-[15px] font-bold mb-4">Tickets & Gemiddeld Bonbedrag</h3>
+            <div style={{ height: '280px' }}><canvas ref={comboRef}></canvas></div>
           </div>
         </div>
       )}
 
-      {/* Bonaire: no visitors */}
-      {tab === 'bonaire' && !hasVisitors && (
-        <div className="bg-amber-50 border border-amber-200 rounded-[14px] p-4 mb-5 text-[13px] text-amber-700">Bezoekersaantallen voor Bonaire zijn nog niet beschikbaar.</div>
-      )}
-
-      {/* Charts - only for BD and Bonaire */}
-      {tab !== 'multimart' && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
-        {hasVisitors && <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-          <h3 className="text-[15px] font-bold mb-4">Conversie % (tickets / bezoekers)</h3>
-          <div style={{ height: '280px' }}><canvas ref={conversionRef}></canvas></div>
-        </div>}
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-          <h3 className="text-[15px] font-bold mb-4">Gemiddeld bonbedrag (Cg)</h3>
-          <div style={{ height: '280px' }}><canvas ref={ticketRef}></canvas></div>
-        </div>
-        <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
-          <h3 className="text-[15px] font-bold mb-4">Tickets & Gemiddeld Bonbedrag</h3>
-          <div style={{ height: '280px' }}><canvas ref={comboRef}></canvas></div>
-        </div>
-      </div>
-      )}
-
-      {/* Monthly table — newest first, not for multimart */}
-      {tab !== 'multimart' && (
+      {/* Weekly table */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-5">
         <div className="flex items-center justify-between p-4 border-b border-[#e5ddd4]">
-          <h3 className="text-[15px] font-bold">Maandelijks Overzicht</h3>
+          <h3 className="text-[15px] font-bold">Wekelijks Overzicht</h3>
           <div className="flex gap-1">
             <Pill label="Alle jaren" active={yearFilter === 'all'} onClick={function() { setYearFilter('all'); }} />
             {years.map(function(y) { return <Pill key={y} label={y} active={yearFilter === y} onClick={function() { setYearFilter(y); }} />; })}
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" style={{ maxHeight: '500px', overflowY: 'auto' }}>
           <table className="w-full border-collapse text-[12px]">
             <thead>
-              <tr className="bg-[#f0ebe5]">
-                {['Maand', hasVisitors ? 'Bezoekers' : null, 'Tickets', hasVisitors ? 'Conversie' : null, 'Omzet', 'Gem. Bon', hasVisitors ? 'vs LY Bez.' : null, hasVisitors ? 'vs LY Conv.' : null, 'vs LY Bon'].filter(Boolean).map(function(h) {
-                  return <th key={h} className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right first:text-left">{h}</th>;
-                })}
+              <tr className="bg-[#f0ebe5] sticky top-0">
+                <th className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-left">Week</th>
+                {hasVisitors && <th className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right">Bezoekers</th>}
+                {storeMeta.hasSales && <th className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right">Tickets</th>}
+                {storeMeta.hasSales && hasVisitors && <th className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right">Conversie</th>}
+                {storeMeta.hasSales && <th className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right">Omzet</th>}
+                {storeMeta.hasSales && <th className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right">Gem. Bon</th>}
+                {hasVisitors && <th className="p-2.5 text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] border-b-2 border-[#e5ddd4] text-right">vs LY Bez.</th>}
               </tr>
             </thead>
             <tbody>
-              {filteredMonthly.map(function(r, i) {
-                var ly = monthlyAsc.find(function(d) { return d.year === r.year - 1 && d.month === r.month; });
+              {weeklyFiltered.map(function(r, i) {
+                var ly = weekly.find(function(d) { return d.year === r.year - 1 && d.week === r.week; });
                 var conv = r.visitors ? (r.tickets / r.visitors * 100) : 0;
-                var lyConv = ly && ly.visitors ? (ly.tickets / ly.visitors * 100) : 0;
                 var avg = r.tickets ? (r.sales / r.tickets) : 0;
-                var lyAvgV = ly && ly.tickets ? (ly.sales / ly.tickets) : 0;
                 var vChg = ly && ly.visitors ? pctChg(r.visitors, ly.visitors) : null;
-                var cChg = ly && r.visitors && ly.visitors ? (conv - lyConv) : null;
-                var aChg = ly && ly.tickets ? pctChg(avg, lyAvgV) : null;
-                var cells = [<td key="m" className="p-2.5 text-[13px] border-b border-[#e5ddd4] font-semibold">{MN[r.month - 1] + ' ' + r.year}</td>];
-                if (hasVisitors) cells.push(<td key="v" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{r.visitors ? fmt(r.visitors) : '-'}</td>);
-                cells.push(<td key="t" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmt(r.tickets)}</td>);
-                if (hasVisitors) cells.push(<td key="c" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: conv >= 50 ? '#16a34a' : '#d97706' }}>{r.visitors ? fmtP(conv) : '-'}</td>);
-                cells.push(<td key="s" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{fmtK(r.sales)}</td>);
-                cells.push(<td key="a" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold">{'Cg ' + fmt(Math.round(avg))}</td>);
-                if (hasVisitors) cells.push(<td key="vl" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={{ color: vChg !== null ? (vChg >= 0 ? '#16a34a' : '#dc2626') : '#a08a74' }}>{vChg !== null ? ((vChg >= 0 ? '+' : '') + fmtP(vChg)) : '-'}</td>);
-                if (hasVisitors) cells.push(<td key="cl" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={{ color: cChg !== null ? (cChg >= 0 ? '#16a34a' : '#dc2626') : '#a08a74' }}>{cChg !== null ? ((cChg >= 0 ? '+' : '') + cChg.toFixed(1) + 'pp') : '-'}</td>);
-                cells.push(<td key="al" className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={{ color: aChg !== null ? (aChg >= 0 ? '#16a34a' : '#dc2626') : '#a08a74' }}>{aChg !== null ? ((aChg >= 0 ? '+' : '') + fmtP(aChg)) : '-'}</td>);
-                return <tr key={r.year + '-' + r.month} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}>{cells}</tr>;
+                return (
+                  <tr key={r.year + '-' + r.week} className={(i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]') + ' hover:bg-[#faf5f0]'}>
+                    <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] font-semibold">{'W' + r.week + ' ' + r.year}</td>
+                    {hasVisitors && <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{r.visitors ? fmt(r.visitors) : '-'}</td>}
+                    {storeMeta.hasSales && <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{r.tickets ? fmt(r.tickets) : '-'}</td>}
+                    {storeMeta.hasSales && hasVisitors && <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold" style={{ color: conv >= 50 ? '#16a34a' : '#d97706' }}>{r.visitors && r.tickets ? fmtP(conv) : '-'}</td>}
+                    {storeMeta.hasSales && <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono">{r.sales ? (storeMeta.currency + ' ' + fmtK(r.sales)) : '-'}</td>}
+                    {storeMeta.hasSales && <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono font-semibold">{r.tickets ? (storeMeta.currency + ' ' + fmt(Math.round(avg))) : '-'}</td>}
+                    {hasVisitors && <td className="p-2.5 text-[13px] border-b border-[#e5ddd4] text-right font-mono" style={{ color: vChg !== null ? (vChg >= 0 ? '#16a34a' : '#dc2626') : '#a08a74' }}>{vChg !== null ? ((vChg >= 0 ? '+' : '') + fmtP(vChg)) : '-'}</td>}
+                  </tr>
+                );
               })}
             </tbody>
           </table>
         </div>
       </div>
-      )}
 
       {/* Legend */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 shadow-sm">
         <div className="text-[10px] text-[#6b5240] space-y-1">
           <p><strong>Conversie</strong> = tickets ÷ bezoekers × 100%. <strong>Gem. Bonbedrag</strong> = omzet ÷ tickets.</p>
-          <p><strong>YTD vergelijking</strong> is t/m exact {dateLabel} vs {dateLabel ? dateLabel.replace(String(currentYear), String(currentYear - 1)) : ''}.</p>
+          <p>Bezoekers per week komen uit wekelijkse export van Marketing. Tickets en omzet zijn geaggregeerd uit dagelijkse Compass data.</p>
+          {!storeMeta.hasSales && <p><em>Keuken Depot heeft alleen bezoekersaantallen — omzet zit bij Building Depot Curaçao.</em></p>}
         </div>
       </div>
     </div>
