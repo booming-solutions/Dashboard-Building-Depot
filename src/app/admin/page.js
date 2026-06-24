@@ -1,10 +1,10 @@
 /* ============================================================
-   BESTAND: page_admin_v7.js
+   BESTAND: page_admin_v12.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGING t.o.v. v6:
-   - Gebruikerslijst sorteert nu alfabetisch op naam (was op datum)
+   WIJZIGING t.o.v. v11:
+   - Order Flow (logistics_order_flow) toegevoegd onder Logistiek
    ============================================================ */
 'use client';
 
@@ -15,12 +15,23 @@ var REPORTS = [
   { id: 'sales', label: 'Omzet en Marge', group: 'Omzet', icon: '📊' },
   { id: 'sales_index', label: 'Index Rapport', group: 'Omzet', icon: '📈' },
   { id: 'sales_traffic', label: 'Bezoekers & Conversie', group: 'Omzet', icon: '👥' },
+  { id: 'sales_discounts', label: 'Kortingen', group: 'Omzet', icon: '🏷️' },
   { id: 'inventory_budget', label: 'Voorraad vs Budget', group: 'Voorraad', icon: '📦' },
   { id: 'inventory_buying', label: 'Inkoopvoorstel', group: 'Voorraad', icon: '🛒' },
   { id: 'inventory_negative', label: 'Negatieve Voorraad', group: 'Voorraad', icon: '⚠️' },
   { id: 'inventory_stockrisk', label: 'Stock Risk Alert', group: 'Voorraad', icon: '🚨' },
   { id: 'inventory_health', label: 'Gezondheid Voorraden', group: 'Voorraad', icon: '🏥' },
+  { id: 'inventory_price_changes', label: 'Price Changes', group: 'Voorraad', icon: '💱' },
   { id: 'hr_payroll', label: 'Salariskosten', group: 'HR', icon: '💰' },
+  { id: 'hr_urenplanning', label: 'Uren Planning', group: 'HR', icon: '🗓️' },
+  { id: 'hr_urenplanning_overview', label: 'Uren Planning Overzicht', group: 'HR', icon: '📋' },
+  { id: 'hr_urentarget', label: 'Uren Target', group: 'HR', icon: '🎯' },
+  { id: 'finance_ap', label: 'AP Dashboard', group: 'Finance', icon: '💼' },
+  { id: 'finance_sandbox_ap', label: 'AP Sandbox', group: 'Finance', icon: '🧪' },
+  { id: 'finance_reports', label: 'Finance Rapportages', group: 'Finance', icon: '📑' },
+  { id: 'logistics_order_flow', label: 'Order Flow', group: 'Logistiek', icon: '🚢' },
+  { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },
+  { id: 'files', label: 'Bestanden', group: 'Algemeen', icon: '📁' },
 ];
 
 export default function AdminUsersPage() {
