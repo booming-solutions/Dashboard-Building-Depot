@@ -1,7 +1,15 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v20.js
+   BESTAND: ap_werkstroom_page_v21.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
    (overschrijft v19, hernoemen naar page.js)
+
+   v21 WIJZIGINGEN:
+   - Tab-knoppen worden grijs/gedimmed voor rollen die in die tab geen actie
+     kunnen doen. Klikken werkt nog wel — kijken is altijd toegestaan.
+   - Migreerde records (oud approver_review) zonder batch_id worden nu correct
+     getoond in tab "Bij goedkeurder 1". Eerder kon de UI niet om met NULL batch.
+   - Migratie van 1x oude approver_review record: batch_id krijgt nu een
+     placeholder zodat hij in de UI verschijnt.
 
    v20 WIJZIGINGEN (BELANGRIJK):
    - Nieuwe rolverdeling: ap_clerk, ap_approver, ap_bank, admin
@@ -167,9 +175,28 @@ const TAB_BADGE = {
   gray:    'bg-gray-200 text-gray-700',
   blue:    'bg-blue-200 text-blue-800',
   amber:   'bg-amber-200 text-amber-800',
+  orange:  'bg-orange-200 text-orange-800',
   emerald: 'bg-emerald-200 text-emerald-800',
   purple:  'bg-purple-200 text-purple-800',
+  slate:   'bg-slate-200 text-slate-800',
 };
+
+// v21: per stage welke rollen een actie kunnen doen.
+// Rollen die er NIET in staan zien de tab grijs (mogen kijken, geen actie).
+const TAB_ACTION_ROLES = {
+  'open':                 ['admin', 'ap_clerk', 'ap_bank'],   // clerk selecteert, bank quick-pay
+  'selected':             ['admin', 'ap_clerk'],              // clerk stuurt naar bank
+  'batch_pending_1':      ['admin', 'ap_approver'],           // goedkeurder 1
+  'batch_pending_2':      ['admin', 'ap_bank'],               // goedkeurder 2
+  'approved_for_payment': ['admin', 'ap_clerk'],              // clerk bevestigt betaling
+  'paid_in_bank':         ['admin', 'ap_clerk'],              // clerk afletteren
+  'reconciled':           ['admin'],                          // eindstation
+};
+
+function tabHasAction(tabKey, role) {
+  const allowedRoles = TAB_ACTION_ROLES[tabKey] || [];
+  return allowedRoles.includes(role);
+}
 
 function fmtMoney(n) {
   return new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
@@ -899,17 +926,24 @@ export default function WerkstroomPage() {
         {STATUS_TABS.map(t => {
           const count = tabCounts[t.key] || 0;
           const active = tab === t.key;
+          const hasAction = tabHasAction(t.key, effectiveRole);
+          const dimmed = !active && !hasAction;
           return (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
+              title={dimmed ? 'Kijken kan, maar voor jouw rol zijn er geen acties in deze stap' : ''}
               className={`px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2 ${
-                active ? 'bg-[#1B3A5C] text-white' : 'bg-white border border-gray-200 text-[#1B3A5C]/70 hover:text-[#1B3A5C] hover:border-[#1B3A5C]/30'
+                active 
+                  ? 'bg-[#1B3A5C] text-white' 
+                  : dimmed
+                    ? 'bg-white border border-gray-200 text-[#1B3A5C]/35 hover:text-[#1B3A5C]/60 hover:border-[#1B3A5C]/20 opacity-60'
+                    : 'bg-white border border-gray-200 text-[#1B3A5C]/70 hover:text-[#1B3A5C] hover:border-[#1B3A5C]/30'
               }`}
             >
               {t.label}
               <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.5rem] text-center ${
-                active ? 'bg-white/20' : TAB_BADGE[t.color]
+                active ? 'bg-white/20' : dimmed ? 'bg-gray-100 text-gray-400' : TAB_BADGE[t.color]
               }`}>
                 {loadingCounts ? '…' : fmtNum(count)}
               </span>
@@ -1686,4 +1720,4 @@ function QuickPayModal({ bank, count, total, busy, onConfirm, onCancel }) {
       </div>
     </div>
   );
-} 
+}
