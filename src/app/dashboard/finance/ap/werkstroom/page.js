@@ -1686,4 +1686,4 @@ function QuickPayModal({ bank, count, total, busy, onConfirm, onCancel }) {
       </div>
     </div>
   );
-}
+} 
