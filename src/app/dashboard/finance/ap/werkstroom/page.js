@@ -1,7 +1,24 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v19.js
+   BESTAND: ap_werkstroom_page_v20.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
-   (overschrijft v4, hernoemen naar page.js)
+   (overschrijft v19, hernoemen naar page.js)
+
+   v20 WIJZIGINGEN (BELANGRIJK):
+   - Nieuwe rolverdeling: ap_clerk, ap_approver, ap_bank, admin
+   - 7-staps werkstroom met 4-OGEN principe:
+     1. Openstaand (clerk)
+     2. Klaar voor betaling (clerk)
+     3. Bij goedkeurder 1 (approver)
+     4. Bij goedkeurder 2 (bank)
+     5. Vrijgegeven (clerk gaat naar bank)
+     6. Betaald in bank (clerk markeert na afschrift)
+     7. Afgeletterd (via Eagle agent)
+   - Quick-Pay knoppen verschoven naar 'ap_bank' + 'admin'
+   - assigned_ap_clerk filter VERWIJDERD — alle clerks zien alles
+   - 4-eyes check: goedkeurder #2 mag niet zelfde zijn als #1
+     batch_created_by mag niet beide goedkeuringen geven
+   - Batch-concept: bij "Naar bank" krijgt elke factuur batch_id + batch_bank
+   - VEREIST: migrate_v2_productie.sql moet eerst gedeployd zijn
 
    v19 WIJZIGINGEN:
    - source='manual' (constraint-veilig). Bank-info naar match_meta JSON.
@@ -137,11 +154,13 @@ async function fetchAllPaginated(queryBuilder, batchSize = 1000) {
 }
 
 const STATUS_TABS = [
-  { key: 'open',            label: 'Openstaand',            color: 'gray' },
-  { key: 'selected_by_ap',  label: 'Klaar voor indiening',  color: 'blue' },
-  { key: 'approver_review', label: 'Bij goedkeurder',       color: 'amber' },
-  { key: 'approved',        label: 'Goedgekeurd',           color: 'emerald' },
-  { key: 'at_bank',         label: 'Bij bank',              color: 'purple' },
+  { key: 'open',                 label: 'Openstaand',           color: 'gray' },
+  { key: 'selected',             label: 'Klaar voor betaling',  color: 'blue' },
+  { key: 'batch_pending_1',      label: 'Bij goedkeurder 1',    color: 'amber' },
+  { key: 'batch_pending_2',      label: 'Bij goedkeurder 2',    color: 'orange' },
+  { key: 'approved_for_payment', label: 'Vrijgegeven',          color: 'emerald' },
+  { key: 'paid_in_bank',         label: 'Betaald in bank',      color: 'purple' },
+  { key: 'reconciled',           label: 'Afgeletterd',          color: 'slate' },
 ];
 
 const TAB_BADGE = {
@@ -172,19 +191,35 @@ function daysUntilDue(dueDate) {
   return Math.round((due - today) / (1000 * 60 * 60 * 24));
 }
 
-const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at, selected_amount, paid_bank';
+const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at, selected_amount, paid_bank, batch_id, batch_bank, batch_created_at, batch_created_by, approver_1_at, approver_1_by, approver_2_at, approver_2_by, reconciled_by_clerk_at, reconciled_by_clerk_by';
 
 export default function WerkstroomPage() {
   const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
   const isAdmin = effectiveRole === 'admin';
+  const isApprover = effectiveRole === 'ap_approver';
+  const isBank = effectiveRole === 'ap_bank';
+
+  // v20: nieuwe capability matrix voor 4-rollen werkstroom
+  const canSelectForPayment   = ['admin', 'ap_clerk'].includes(effectiveRole);  // open → selected
+  const canSendToBank         = ['admin', 'ap_clerk'].includes(effectiveRole);  // selected → batch_pending_1 (was 'naar bank')
+  const canApprove1           = ['admin', 'ap_approver'].includes(effectiveRole);  // batch_pending_1 → batch_pending_2 (goedkeuring 1)
+  const canApprove2           = ['admin', 'ap_bank'].includes(effectiveRole);   // batch_pending_2 → approved_for_payment (goedkeuring 2)
+  const canMarkPaidInBank     = ['admin', 'ap_clerk'].includes(effectiveRole);  // approved_for_payment → paid_in_bank
+  const canMarkReconciled     = ['admin', 'ap_clerk'].includes(effectiveRole);  // paid_in_bank → reconciled (via Eagle)
+  const canReject             = ['admin', 'ap_approver', 'ap_bank'].includes(effectiveRole);
+  const canQuickPay           = ['admin', 'ap_bank'].includes(effectiveRole);   // MCB/RBC direct
+  const canManualWriteoff     = ['admin'].includes(effectiveRole);
+  const canRollback           = isAdmin;  // alleen admin mag stages terugdraaien
+
+  // Aliassen voor backwards-compat met bestaande code (kan later opgeruimd)
+  const canApprove = canApprove1 || canApprove2;  // generieke "kan goedkeuren"
+  const canMarkPaid = canQuickPay;  // oude naam, nu = Quick-Pay capability
 
   // Lokaal berekende capabilities — geen context-afhankelijkheid
-  const canApprove = ['admin', 'cfo', 'ap_approver'].includes(effectiveRole);
-  const canSendToBank = ['admin', 'ap_clerk'].includes(effectiveRole);
-  const canMarkPaid = ['admin', 'cfo'].includes(effectiveRole);
-  const canManualWriteoff = ['admin', 'cfo'].includes(effectiveRole);
+
+
 
   const [tab, setTab] = useState('open');
   const [tabCounts, setTabCounts] = useState({});
@@ -241,7 +276,6 @@ export default function WerkstroomPage() {
           .from('ap_invoices')
           .select('*', { count: 'exact', head: true })
           .eq('status', t.key);
-        if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
       });
       const results = await Promise.all(queries);
@@ -266,7 +300,6 @@ export default function WerkstroomPage() {
           .from('ap_invoices')
           .select(SELECT_COLS)
           .eq('status', statusKey);
-        if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
       });
       setTabRows(prev => ({ ...prev, [statusKey]: rows }));
@@ -518,30 +551,60 @@ export default function WerkstroomPage() {
       const clearRejection = { rejection_reason: null, rejected_at: null, rejected_by: null };
 
       if (actionKey === 'select') {
-        newStatus = 'selected_by_ap';
+        // open → selected (clerk maakt wensenlijst)
+        newStatus = 'selected';
         auditAction = 'selected';
         extraFields.selected_at = now;
         extraFields.selected_by = actualProfile.id;
         Object.assign(extraFields, clearRejection);
-      } else if (actionKey === 'submit') {
-        newStatus = 'approver_review';
-        auditAction = 'submitted';
+      } else if (actionKey === 'send_to_bank') {
+        // selected → batch_pending_1 — clerk kiest bank + maakt batch
+        if (!extra.bank || !['MCB', 'RBC', 'RBC_USD', 'BC', 'Multimart', 'RBC_Bonaire'].includes(extra.bank)) {
+          throw new Error('Bank moet gekozen worden voor "Naar bank" actie');
+        }
+        newStatus = 'batch_pending_1';
+        auditAction = 'sent_to_bank';
+        // Genereer 1 batch_id voor deze bulk-actie
+        const batchId = crypto.randomUUID();
+        extraFields.batch_id = batchId;
+        extraFields.batch_bank = extra.bank;
+        extraFields.batch_created_at = now;
+        extraFields.batch_created_by = actualProfile.id;
         extraFields.submitted_at = now;
         extraFields.submitted_by = actualProfile.id;
         Object.assign(extraFields, clearRejection);
-      } else if (actionKey === 'unselect') {
-        newStatus = 'open';
-        auditAction = 'unselected';
-        extraFields.selected_at = null;
-        extraFields.selected_by = null;
-        extraFields.selected_amount = null;
-      } else if (actionKey === 'approve') {
-        newStatus = 'approved';
-        auditAction = 'approved';
+      } else if (actionKey === 'approve_1') {
+        // batch_pending_1 → batch_pending_2 (goedkeuring 1 door approver)
+        newStatus = 'batch_pending_2';
+        auditAction = 'approved_1';
+        extraFields.approver_1_at = now;
+        extraFields.approver_1_by = actualProfile.id;
+        Object.assign(extraFields, clearRejection);
+      } else if (actionKey === 'approve_2') {
+        // batch_pending_2 → approved_for_payment (goedkeuring 2 door bank)
+        // 4-EYES CHECK: goedkeurder 2 ≠ goedkeurder 1 ≠ batch_creator
+        if (!isAdmin) {
+          const { data: checkRows } = await supabase
+            .from('ap_invoices')
+            .select('id, approver_1_by, batch_created_by')
+            .in('id', ids);
+          const violation = (checkRows || []).find(r => 
+            r.approver_1_by === actualProfile.id || r.batch_created_by === actualProfile.id
+          );
+          if (violation) {
+            throw new Error('4-ogen principe: u kunt geen batch goedkeuren waarvan u zelf de eerste goedkeuring of batch-creatie heeft gedaan.');
+          }
+        }
+        newStatus = 'approved_for_payment';
+        auditAction = 'approved_2';
+        extraFields.approver_2_at = now;
+        extraFields.approver_2_by = actualProfile.id;
+        // Behoud approved_at/approved_by voor backwards compat
         extraFields.approved_at = now;
         extraFields.approved_by = actualProfile.id;
         Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'reject') {
+        // afkeur door approver 1 of 2 → terug naar 'open' (clerk moet opnieuw selecteren)
         if (!extra.reason || !extra.reason.trim()) throw new Error('Afwijs-reden is verplicht');
         newStatus = 'open';
         auditAction = 'rejected';
@@ -549,19 +612,29 @@ export default function WerkstroomPage() {
         extraFields.selected_by = null;
         extraFields.submitted_at = null;
         extraFields.submitted_by = null;
+        extraFields.batch_id = null;
+        extraFields.batch_bank = null;
+        extraFields.batch_created_at = null;
+        extraFields.batch_created_by = null;
+        extraFields.approver_1_at = null;
+        extraFields.approver_1_by = null;
         extraFields.rejection_reason = extra.reason;
         extraFields.rejected_at = now;
         extraFields.rejected_by = actualProfile.id;
-      } else if (actionKey === 'send_to_bank') {
-        newStatus = 'at_bank';
-        auditAction = 'sent_to_bank';
-      } else if (actionKey === 'mark_paid') {
-        newStatus = 'paid';
-        auditAction = 'marked_paid';
+      } else if (actionKey === 'mark_paid_in_bank') {
+        // approved_for_payment → paid_in_bank (clerk bevestigt op afschrift)
+        newStatus = 'paid_in_bank';
+        auditAction = 'marked_paid_in_bank';
         extraFields.paid_at = now;
         extraFields.paid_by = actualProfile.id;
+      } else if (actionKey === 'mark_reconciled') {
+        // paid_in_bank → reconciled (na Eagle afletter)
+        newStatus = 'reconciled';
+        auditAction = 'marked_reconciled';
+        extraFields.reconciled_by_clerk_at = now;
+        extraFields.reconciled_by_clerk_by = actualProfile.id;
       } else if (actionKey === 'quick_pay') {
-        // Admin/CFO direct paid: status paid + bank + datum
+        // Quick-Pay direct: open → paid + bank + datum (door ap_bank of admin)
         if (!extra.bank || !['MCB', 'RBC'].includes(extra.bank)) {
           throw new Error('Bank moet MCB of RBC zijn');
         }
@@ -573,7 +646,7 @@ export default function WerkstroomPage() {
         extraFields.paid_bank = extra.bank;
         Object.assign(extraFields, clearRejection);
       } else if (actionKey === 'manual_writeoff') {
-        // V17: bank is nu verplicht, reden optioneel
+        // Admin-only: bank + datum verplicht
         if (!extra.bank || !['MCB', 'RBC', 'RBC_USD', 'BONAIRE', 'MULTIMART', 'BDC'].includes(extra.bank)) {
           throw new Error('Bank moet gekozen worden (MCB/RBC/etc)');
         }
@@ -584,39 +657,61 @@ export default function WerkstroomPage() {
         extraFields.paid_by = actualProfile.id;
         extraFields.paid_bank = extra.bank;
         Object.assign(extraFields, clearRejection);
-      } else if (actionKey === 'unsubmit') {
-        // Approver_review → Selected_by_ap. Mag door submitted_by of admin.
-        newStatus = 'selected_by_ap';
-        auditAction = 'rolled_back_submit';
+      } else if (actionKey === 'unselect') {
+        // Rollback: selected → open
+        newStatus = 'open';
+        auditAction = 'rolled_back_select';
+        extraFields.selected_at = null;
+        extraFields.selected_by = null;
+        extraFields.selected_amount = null;
+      } else if (actionKey === 'unsend_to_bank') {
+        // Rollback: batch_pending_1 → selected (admin only)
+        newStatus = 'selected';
+        auditAction = 'rolled_back_send_to_bank';
+        extraFields.batch_id = null;
+        extraFields.batch_bank = null;
+        extraFields.batch_created_at = null;
+        extraFields.batch_created_by = null;
         extraFields.submitted_at = null;
         extraFields.submitted_by = null;
-      } else if (actionKey === 'unapprove') {
-        // Approved → Approver_review. Mag door approved_by of admin.
-        newStatus = 'approver_review';
-        auditAction = 'rolled_back_approve';
+      } else if (actionKey === 'unapprove_1') {
+        // Rollback: batch_pending_2 → batch_pending_1 (approver of admin)
+        newStatus = 'batch_pending_1';
+        auditAction = 'rolled_back_approve_1';
+        extraFields.approver_1_at = null;
+        extraFields.approver_1_by = null;
+      } else if (actionKey === 'unapprove_2') {
+        // Rollback: approved_for_payment → batch_pending_2 (bank of admin)
+        newStatus = 'batch_pending_2';
+        auditAction = 'rolled_back_approve_2';
+        extraFields.approver_2_at = null;
+        extraFields.approver_2_by = null;
         extraFields.approved_at = null;
         extraFields.approved_by = null;
-      } else if (actionKey === 'unsend_to_bank') {
-        // At_bank → Approved. Alleen admin.
-        newStatus = 'approved';
-        auditAction = 'rolled_back_send_to_bank';
-      } else if (actionKey === 'unmark_paid') {
-        // Paid → At_bank. Mag door paid_by of admin.
-        newStatus = 'at_bank';
-        auditAction = 'rolled_back_mark_paid';
+      } else if (actionKey === 'unmark_paid_in_bank') {
+        // Rollback: paid_in_bank → approved_for_payment (clerk of admin)
+        newStatus = 'approved_for_payment';
+        auditAction = 'rolled_back_mark_paid_in_bank';
         extraFields.paid_at = null;
         extraFields.paid_by = null;
+      } else if (actionKey === 'unmark_reconciled') {
+        // Rollback: reconciled → paid_in_bank (admin)
+        newStatus = 'paid_in_bank';
+        auditAction = 'rolled_back_mark_reconciled';
+        extraFields.reconciled_by_clerk_at = null;
+        extraFields.reconciled_by_clerk_by = null;
       } else {
         throw new Error('Onbekende actie: ' + actionKey);
       }
 
       // Permission check voor rollback acties (non-admin)
-      if (['unselect', 'unsubmit', 'unapprove', 'unmark_paid'].includes(actionKey) && !isAdmin) {
+      if (['unselect', 'unsend_to_bank', 'unapprove_1', 'unapprove_2', 'unmark_paid_in_bank'].includes(actionKey) && !isAdmin) {
         const fieldMap = {
           unselect: 'selected_by',
-          unsubmit: 'submitted_by',
-          unapprove: 'approved_by',
-          unmark_paid: 'paid_by',
+          unsend_to_bank: 'batch_created_by',
+          unapprove_1: 'approver_1_by',
+          unapprove_2: 'approver_2_by',
+          unmark_paid_in_bank: 'paid_by',
         };
         const field = fieldMap[actionKey];
         const { data: checkRows, error: chkErr } = await supabase
@@ -910,10 +1005,16 @@ export default function WerkstroomPage() {
           tab={tab}
           isClerk={isClerk}
           isAdmin={isAdmin}
+          isApprover={isApprover}
+          isBank={isBank}
           onQuickPay={(bank) => setShowQuickPayModal(bank)}
-          canApprove={canApprove}
+          canSelectForPayment={canSelectForPayment}
           canSendToBank={canSendToBank}
-          canMarkPaid={canMarkPaid}
+          canApprove1={canApprove1}
+          canApprove2={canApprove2}
+          canMarkPaidInBank={canMarkPaidInBank}
+          canMarkReconciled={canMarkReconciled}
+          canQuickPay={canQuickPay}
           canManualWriteoff={canManualWriteoff}
           count={selectedCount}
           total={selectedTotal}
@@ -1017,7 +1118,7 @@ function Header({ onRefresh }) {
   );
 }
 
-function BulkBar({ tab, isClerk, isAdmin, canApprove, canSendToBank, canMarkPaid, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick, onQuickPay }) {
+function BulkBar({ tab, isClerk, isAdmin, isApprover, isBank, canSelectForPayment, canSendToBank, canApprove1, canApprove2, canMarkPaidInBank, canMarkReconciled, canQuickPay, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick, onQuickPay }) {
   return (
     <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
       <span className="text-[13px] font-semibold">
@@ -1028,24 +1129,25 @@ function BulkBar({ tab, isClerk, isAdmin, canApprove, canSendToBank, canMarkPaid
       </button>
 
       <div className="ml-auto flex items-center gap-2 flex-wrap">
-        {tab === 'open' && canMarkPaid && (
+        {/* ===== TAB: open ===== */}
+        {tab === 'open' && canQuickPay && (
           <>
             <button onClick={() => onQuickPay('MCB')} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-semibold hover:bg-blue-700 transition-all disabled:opacity-50"
-              title="Markeer direct betaald via MCB">
+              title="Markeer direct betaald via MCB (alleen ap_bank/admin)">
               💳 MCB direct
             </button>
             <button onClick={() => onQuickPay('RBC')} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-[12px] font-semibold hover:bg-purple-700 transition-all disabled:opacity-50"
-              title="Markeer direct betaald via RBC">
+              title="Markeer direct betaald via RBC (alleen ap_bank/admin)">
               💳 RBC direct
             </button>
           </>
         )}
-        {tab === 'open' && isClerk && (
+        {tab === 'open' && canSelectForPayment && (
           <button onClick={() => onAction('select')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-white text-[#1B3A5C] text-[12px] font-semibold hover:bg-gray-100 transition-all disabled:opacity-50">
-            {busy ? 'Bezig...' : '→ Selecteer voor indiening'}
+            {busy ? 'Bezig...' : '→ Selecteer voor betaling'}
           </button>
         )}
         {tab === 'open' && canManualWriteoff && (
@@ -1055,78 +1157,112 @@ function BulkBar({ tab, isClerk, isAdmin, canApprove, canSendToBank, canMarkPaid
             ⚐ Markeer extern betaald
           </button>
         )}
-        {tab === 'selected_by_ap' && isClerk && (
+
+        {/* ===== TAB: selected (klaar voor betaling) ===== */}
+        {tab === 'selected' && canSendToBank && (
           <>
             <button onClick={() => onAction('unselect')} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
               ← Terug naar openstaand
             </button>
-            <button onClick={() => onAction('submit')} disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50">
-              {busy ? 'Bezig...' : '✓ Dien in bij goedkeurder'}
+            <button onClick={() => onAction('send_to_bank', { bankPrompt: true })} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
+              title="Maak een batch met bank-keuze en stuur naar goedkeurder 1">
+              {busy ? 'Bezig...' : '→ Naar bank (kies bank)'}
             </button>
           </>
         )}
-        {tab === 'approver_review' && (isClerk || isAdmin) && (
-          <button onClick={() => onAction('unsubmit')} disabled={busy}
+
+        {/* ===== TAB: batch_pending_1 (Bij goedkeurder 1) ===== */}
+        {tab === 'batch_pending_1' && (canSendToBank || isAdmin) && (
+          <button onClick={() => onAction('unsend_to_bank')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
-            title={isAdmin ? 'Admin kan altijd terugdraaien' : 'Alleen je eigen ingediende facturen'}>
-            ↶ Trek terug (mijn ingediening)
+            title={isAdmin ? 'Admin kan altijd terugdraaien' : 'Alleen je eigen batch'}>
+            ↶ Trek batch terug
           </button>
         )}
-        {tab === 'approver_review' && canApprove && (
+        {tab === 'batch_pending_1' && canApprove1 && (
           <>
             <button onClick={onRejectClick} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700 transition-all disabled:opacity-50">
               ✗ Wijs af
             </button>
-            <button onClick={() => onAction('approve')} disabled={busy}
+            <button onClick={() => onAction('approve_1')} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50">
-              {busy ? 'Bezig...' : '✓ Keur goed'}
+              {busy ? 'Bezig...' : '✓ Goedkeuring 1 (controle)'}
             </button>
           </>
         )}
-        {tab === 'approved' && (canApprove || isAdmin) && (
-          <button onClick={() => onAction('unapprove')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
-            title={isAdmin ? 'Admin kan altijd terugdraaien' : 'Alleen je eigen goedgekeurde facturen'}>
-            ↶ Trek goedkeuring terug
+
+        {/* ===== TAB: batch_pending_2 (Bij goedkeurder 2) ===== */}
+        {tab === 'batch_pending_2' && (canApprove1 || isAdmin) && (
+          <button onClick={() => onAction('unapprove_1')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
+            ↶ Trek goedkeuring 1 terug
           </button>
         )}
-        {tab === 'approved' && canSendToBank && (
-          <button onClick={() => onAction('send_to_bank')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg bg-purple-500 text-white text-[12px] font-semibold hover:bg-purple-600 transition-all disabled:opacity-50">
-            {busy ? 'Bezig...' : '→ Markeer verzonden naar bank'}
+        {tab === 'batch_pending_2' && canApprove2 && (
+          <>
+            <button onClick={onRejectClick} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700 transition-all disabled:opacity-50">
+              ✗ Wijs af
+            </button>
+            <button onClick={() => onAction('approve_2')} disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
+              title="4-ogen: u mag geen batch goedkeuren die u zelf maakte of als #1 goedkeurde">
+              {busy ? 'Bezig...' : '✓ Goedkeuring 2 (finale vrijgave)'}
+            </button>
+          </>
+        )}
+
+        {/* ===== TAB: approved_for_payment (vrijgegeven, wacht op betaaluitvoering) ===== */}
+        {tab === 'approved_for_payment' && (canApprove2 || isAdmin) && (
+          <button onClick={() => onAction('unapprove_2')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
+            ↶ Trek goedkeuring 2 terug
           </button>
         )}
-        {tab === 'at_bank' && isAdmin && (
-          <button onClick={() => onAction('unsend_to_bank')} disabled={busy}
+        {tab === 'approved_for_payment' && canMarkPaidInBank && (
+          <button onClick={() => onAction('mark_paid_in_bank')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-purple-500 text-white text-[12px] font-semibold hover:bg-purple-600 transition-all disabled:opacity-50"
+            title="Bevestig dat de betaling op het bankafschrift is gezien">
+            {busy ? 'Bezig...' : '✓ Bevestig betaling uitgevoerd'}
+          </button>
+        )}
+
+        {/* ===== TAB: paid_in_bank ===== */}
+        {tab === 'paid_in_bank' && (canMarkPaidInBank || isAdmin) && (
+          <button onClick={() => onAction('unmark_paid_in_bank')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
+            ↶ Trek bevestiging terug
+          </button>
+        )}
+        {tab === 'paid_in_bank' && canMarkReconciled && (
+          <button onClick={() => onAction('mark_reconciled')} disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
+            title="Markeer als afgeletterd in Eagle (via Aflet Agent)">
+            {busy ? 'Bezig...' : '✓ Markeer afgeletterd'}
+          </button>
+        )}
+
+        {/* ===== TAB: reconciled (eindstation) ===== */}
+        {tab === 'reconciled' && isAdmin && (
+          <button onClick={() => onAction('unmark_reconciled')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
             title="Alleen admin">
-            ↶ Trek verzending terug
+            ↶ Trek afletter terug
           </button>
         )}
-        {tab === 'at_bank' && canMarkPaid && (
-          <button onClick={() => onAction('mark_paid')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50">
-            {busy ? 'Bezig...' : '✓ Bevestig betaald'}
-          </button>
+
+        {/* ===== Info-tekst voor onbevoegde rollen ===== */}
+        {tab === 'batch_pending_1' && !canApprove1 && (
+          <span className="text-[11px] text-white/60 italic">Goedkeuring 1: alleen door AP Goedkeurder</span>
         )}
-        {tab === 'paid' && (canMarkPaid || isAdmin) && (
-          <button onClick={() => onAction('unmark_paid')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50"
-            title={isAdmin ? 'Admin kan altijd terugdraaien' : 'Alleen je eigen bevestigde betalingen'}>
-            ↶ Trek betaling terug
-          </button>
+        {tab === 'batch_pending_2' && !canApprove2 && (
+          <span className="text-[11px] text-white/60 italic">Goedkeuring 2: alleen door AP Bank of admin</span>
         )}
-        {tab === 'approver_review' && !canApprove && (
-          <span className="text-[11px] text-white/60 italic">Goedkeuren kan alleen door goedkeurders/CFO/admin</span>
-        )}
-        {tab === 'approved' && !canSendToBank && (
-          <span className="text-[11px] text-white/60 italic">Naar bank versturen: AP Clerk of admin</span>
-        )}
-        {tab === 'at_bank' && !canMarkPaid && (
-          <span className="text-[11px] text-white/60 italic">Betaling bevestigen: CFO of admin</span>
+        {tab === 'approved_for_payment' && !canMarkPaidInBank && (
+          <span className="text-[11px] text-white/60 italic">Betaling bevestigen: AP Clerk of admin</span>
         )}
       </div>
     </div>
@@ -1242,8 +1378,8 @@ function EmptyState({ tab, hasFilter, isClerk }) {
 }
 
 function InvoiceTable({ invoices, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected, tab, userNames, sortBy, sortDesc, onSort, customAmounts, onCustomAmountChange }) {
-  const showSubmitter = tab === 'approver_review';
-  const showApprover = tab === 'approved' || tab === 'at_bank';
+  const showSubmitter = tab === 'batch_pending_1' || tab === 'batch_pending_2';
+  const showApprover = tab === 'batch_pending_2' || tab === 'approved_for_payment' || tab === 'paid_in_bank' || tab === 'reconciled';
   const showRejectionIndicator = tab === 'open';
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
