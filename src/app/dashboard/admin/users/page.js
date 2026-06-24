@@ -1,10 +1,10 @@
 /* ============================================================
-   BESTAND: page_admin_v11.js
+   BESTAND: page_admin_v12.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
    
-   WIJZIGING t.o.v. v10:
-   - Kortingen (sales_discounts) toegevoegd onder Omzet
+   WIJZIGING t.o.v. v11:
+   - Order Flow (logistics_order_flow) toegevoegd onder Logistiek
    ============================================================ */
 'use client';
 
@@ -29,6 +29,7 @@ var REPORTS = [
   { id: 'finance_ap', label: 'AP Dashboard', group: 'Finance', icon: '💼' },
   { id: 'finance_sandbox_ap', label: 'AP Sandbox', group: 'Finance', icon: '🧪' },
   { id: 'finance_reports', label: 'Finance Rapportages', group: 'Finance', icon: '📑' },
+  { id: 'logistics_order_flow', label: 'Order Flow', group: 'Logistiek', icon: '🚢' },
   { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },
   { id: 'files', label: 'Bestanden', group: 'Algemeen', icon: '📁' },
 ];
