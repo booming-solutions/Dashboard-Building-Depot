@@ -21,7 +21,7 @@ const fmt=n=>(n||0).toLocaleString('nl-NL',{minimumFractionDigits:0,maximumFract
 const fmtM=n=>{const a=Math.abs(n||0);return(n<0?'-':'')+(a>=1e6?(a/1e6).toFixed(2)+'M':(a/1e3).toFixed(0)+'K')};
 const fmtP=n=>(n||0).toFixed(1)+'%';
 const pctChg=(c,p)=>p?((c-p)/Math.abs(p)*100):0;
-const SN={'1':'Curaçao','B':'Bonaire'};
+const SN={'1':'Curaçao','B':'Bonaire','M':'Multimart'};
 
 function Pill({label,active,onClick}){
   return <button className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ${active?"bg-[#E84E1B] text-white border-[#E84E1B]":"bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]"}`} onClick={onClick}>{label}</button>;
