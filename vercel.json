@@ -1,15 +1,13 @@
-  {
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
       "path": "/api/cron/daily-report",
       "schedule": "15 23 * * *"
+    },
+    {
+      "path": "/api/marketing/scan-website",
+      "schedule": "0 7 * * 1"
     }
   ]
 }
-{
-    "$schema": "https://openapi.vercel.sh/vercel.json",
-    "bestaande-instellingen": "...",
-    "crons": [
-      { "path": "/api/marketing/scan-website", "schedule": "0 7 * * 1" }
-    ]
-  }
