@@ -3,6 +3,13 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN V27.17:
+   - Marketing menu toegevoegd (Website foto-status →
+     /dashboard/marketing/website). Zichtbaar voor
+     admin/cfo/manager (pas de rollenlijst aan op de regel
+     'const isMarketing = ...').
+   - Versie naar V27.17
+
    WIJZIGINGEN V27.16:
    - Logistiek menu toegevoegd met Order Flow portal
      (/dashboard/logistics/order-flow). Zichtbaar voor
@@ -61,7 +68,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.16';
+const APP_VERSION = 'V27.17';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -325,6 +332,12 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/logistics/order-flow', label: 'Order Flow' },
   ];
 
+  // Marketing menu — Website foto-status
+  const isMarketing = ['admin', 'cfo', 'manager'].includes(profile?.role);
+  const marketingItems = [
+    { href: '/dashboard/marketing/website', label: 'Website foto-status' },
+  ];
+
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const hrItems = hrItemsAll.filter(item => {
@@ -361,6 +374,7 @@ export default function DashboardLayout({ children }) {
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isFinance && <NavDropdown icon="💼" label="Finance" items={financeItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isLogistics && <NavDropdown icon="🚢" label="Logistiek" items={logisticsItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {isMarketing && <NavDropdown icon="📣" label="Marketing" items={marketingItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>
           {isAdmin && (
             <div className="mt-6 pt-4 border-t border-[#c5d4e6]">
