@@ -1,33 +1,25 @@
 // =============================================================================
-// Marketing › Website foto-status scraper  (v1)
+// Marketing › Website foto-status scraper  (v2)
 // Plaats als:  src/app/api/marketing/scan-website/route.js
 //
-// Wat het doet:
-//   - Loopt de top-level web-departments van Building Depot Curaçao af
-//   - Haalt per department alle producten op via de EZ-AD storefront-API
-//     (exact dezelfde request als de browser, inclusief scope-headers)
-//   - Leest `has_image` rechtstreeks uit de API (betrouwbaar, geen giswerk)
-//   - Parseert de Compass-dept-code uit `dept_name` ("41 BARBEQUE-COOLERS" -> "41")
-//   - Schrijft alles naar Supabase-tabel `website_photo_status` (upsert op sku+region)
+// Modi:
+//   /api/marketing/scan-website?dept_id=10404681&dry=1  -> test 1 categorie, niets schrijven
+//   /api/marketing/scan-website?dept_index=0            -> scan 1 department (op index), schrijft incrementeel
+//   /api/marketing/scan-website?snapshot=1              -> schrijf week-snapshot uit huidige data
+//   /api/marketing/scan-website                         -> volledige run (alle departments) + snapshot  [cron]
 //
-// Aanroepen:
-//   /api/marketing/scan-website?dept_id=10404681&dry=1   -> test één categorie, niets schrijven
-//   /api/marketing/scan-website?dept_id=10404681          -> test één categorie, wél schrijven
-//   /api/marketing/scan-website                           -> volledige run (alle departments)
-//   /api/marketing/scan-website?from=0&count=5            -> chunk: departments 0..4 (voor cron/batching)
+// De pagina ("Scan nu") loopt dept_index 0..N en sluit af met snapshot=1
+// (korte requests, live voortgang). De wekelijkse cron gebruikt de volledige run.
 // =============================================================================
 
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // Vercel Pro
+export const maxDuration = 300; // Vercel Pro (Fluid Compute)
 
-// ---- Supabase (service role: omzeilt RLS voor server-side writes) ------------
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// ---- EZ-AD storefront scope (Building Depot Curaçao) ------------------------
-// Publieke storefront-sleutels (browser stuurt ze met ACAO:*), in env voor netheid.
 const EZAD = {
   base:         process.env.EZAD_API_BASE     || 'https://api.ezadlive.com',
   businessSlug: process.env.EZAD_BUSINESS_SLUG,
@@ -40,8 +32,6 @@ const EZAD = {
 const REGION = 'CUR';
 
 // Top-level web-department-IDs (Building Depot Curaçao).
-// De parent-department geeft alle producten van z'n sub-departments terug.
-// (Klopt de telling in de testrun niet, dan schakelen we over op sub-dept-IDs.)
 const DEPARTMENTS = [
   10404578, // appliances
   10404365, // building
@@ -55,12 +45,10 @@ const DEPARTMENTS = [
   10404542, // sanitary ware
 ];
 
-const PAGE_LIMIT = 100;          // producten per pagina
-const MAX_PAGES_PER_DEPT = 200;  // veiligheidsrem
+const PAGE_LIMIT = 100;
+const MAX_PAGES_PER_DEPT = 200;
 const SORT = 'manufacturer-no';
 
-// Product-URL-patroon — TODO: bevestigen door op de site één product te openen
-// en de URL te checken. Pas zo nodig aan.
 const productUrl = (slug) => (slug ? `https://building-depot.com/product/${slug}` : null);
 
 function ezadHeaders() {
@@ -84,7 +72,6 @@ async function fetchDeptPage(deptId, page) {
   return res.json();
 }
 
-// "41 BARBEQUE-COOLERS" -> "41"  (leading zeros zoals afgesproken)
 function parseDeptCode(deptName) {
   if (!deptName) return null;
   const m = String(deptName).match(/^\s*(\d{1,3})\b/);
@@ -113,88 +100,127 @@ function mapProduct(p) {
   };
 }
 
+// Haal alle producten van 1 department op (geen schrijfactie), dedupe op sku.
+async function collectDept(deptId) {
+  let page = 1;
+  let lastPage = 1;
+  const seen = new Map();
+  while (page <= MAX_PAGES_PER_DEPT) {
+    const json = await fetchDeptPage(deptId, page);
+    const rows = json?.data?.data || [];
+    lastPage = json?.data?.last_page || page;
+    for (const p of rows) {
+      if (p?.sku) seen.set(String(p.sku), mapProduct(p));
+    }
+    if (rows.length === 0 || page >= lastPage) break;
+    page++;
+  }
+  return Array.from(seen.values());
+}
+
+async function upsertRows(supabase, rows) {
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await supabase
+      .from('website_photo_status')
+      .upsert(rows.slice(i, i + 500), { onConflict: 'sku,region' });
+    if (error) throw new Error(error.message);
+  }
+}
+
+// Schrijf een week-snapshot uit de huidige aggregatie.
+async function writeSnapshot(supabase) {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data } = await supabase.from('website_photo_summary').select('*').eq('region', REGION);
+  const rows = (data || []).map((r) => ({
+    snapshot_date: today,
+    region: REGION,
+    dept_code: r.dept_code,
+    dept_name: r.dept_name,
+    total_skus: r.total_skus,
+    with_photo: r.with_photo,
+    without_photo: r.without_photo,
+  }));
+  if (rows.length) {
+    const { error } = await supabase
+      .from('website_photo_history')
+      .upsert(rows, { onConflict: 'snapshot_date,region,dept_code' });
+    if (error) throw new Error(error.message);
+  }
+  return rows.length;
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
-  const testDept = searchParams.get('dept_id');           // één categorie testen
-  const dryRun = searchParams.get('dry') === '1';         // niets schrijven
-  const from = Number.parseInt(searchParams.get('from') || '0', 10);
-  const count = searchParams.get('count')
-    ? Number.parseInt(searchParams.get('count'), 10)
-    : null;
+  const dry = searchParams.get('dry') === '1';
+  const testDept = searchParams.get('dept_id');
+  const deptIndexParam = searchParams.get('dept_index');
+  const snapshotOnly = searchParams.get('snapshot') === '1';
 
   if (!EZAD.businessSlug || !EZAD.auth || !EZAD.storeId) {
-    return Response.json(
-      { error: 'Ontbrekende env-vars: EZAD_BUSINESS_SLUG, EZAD_AUTH, EZAD_STORE_ID' },
-      { status: 500 },
-    );
+    return Response.json({ error: 'Ontbrekende env-vars: EZAD_BUSINESS_SLUG, EZAD_AUTH, EZAD_STORE_ID' }, { status: 500 });
   }
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return Response.json(
-      { error: 'Ontbrekende Supabase env-vars (URL of SERVICE_ROLE_KEY)' },
-      { status: 500 },
-    );
+    return Response.json({ error: 'Ontbrekende Supabase env-vars (URL of SERVICE_ROLE_KEY)' }, { status: 500 });
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  const deptList = testDept
-    ? [Number(testDept)]
-    : DEPARTMENTS.slice(from, count ? from + count : undefined);
-
-  const seen = new Map(); // sku -> row  (dedupe over departments heen)
-  const perDept = [];
-
-  for (const deptId of deptList) {
-    let page = 1;
-    let deptCount = 0;
-    let lastPage = 1;
-    try {
-      while (page <= MAX_PAGES_PER_DEPT) {
-        const json = await fetchDeptPage(deptId, page);
-        const rows = json?.data?.data || [];
-        lastPage = json?.data?.last_page || page;
-        for (const p of rows) {
-          if (!p?.sku) continue;
-          seen.set(String(p.sku), mapProduct(p));
-          deptCount++;
-        }
-        if (rows.length === 0 || page >= lastPage) break;
-        page++;
-      }
-      perDept.push({ deptId, products: deptCount, pages: page });
-    } catch (e) {
-      perDept.push({ deptId, error: String(e?.message || e), pageReached: page });
+  try {
+    // --- Alleen snapshot ---
+    if (snapshotOnly) {
+      const n = await writeSnapshot(supabase);
+      return Response.json({ snapshot: true, rows: n });
     }
-  }
 
-  const rows = Array.from(seen.values());
-
-  let written = 0;
-  if (!dryRun && rows.length) {
-    const CHUNK = 500;
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const slice = rows.slice(i, i + CHUNK);
-      const { error } = await supabase
-        .from('website_photo_status')
-        .upsert(slice, { onConflict: 'sku,region' });
-      if (error) {
-        return Response.json({ error: error.message, written, perDept }, { status: 500 });
-      }
-      written += slice.length;
+    // --- Test 1 categorie ---
+    if (testDept) {
+      const rows = await collectDept(Number(testDept));
+      const withImg = rows.filter((r) => r.has_image).length;
+      if (!dry) await upsertRows(supabase, rows);
+      return Response.json({
+        dept_id: Number(testDept),
+        unique_skus: rows.length,
+        with_photo: withImg,
+        without_photo: rows.length - withImg,
+        written: dry ? 0 : rows.length,
+        dry,
+        sample: rows.slice(0, 3),
+      });
     }
-  }
 
-  const withImg = rows.filter((r) => r.has_image).length;
-  return Response.json({
-    region: REGION,
-    departments_scanned: deptList.length,
-    unique_skus: rows.length,
-    with_photo: withImg,
-    without_photo: rows.length - withImg,
-    coverage_pct: rows.length ? Math.round((withImg / rows.length) * 1000) / 10 : null,
-    written: dryRun ? 0 : written,
-    dry_run: dryRun,
-    perDept,
-    sample: rows.slice(0, 3), // handig om de mapping te controleren
-  });
+    // --- 1 department op index (client-gestuurde voortgang) ---
+    if (deptIndexParam != null) {
+      const idx = Number(deptIndexParam);
+      const deptId = DEPARTMENTS[idx];
+      if (deptId == null) return Response.json({ error: 'index buiten bereik' }, { status: 400 });
+      const rows = await collectDept(deptId);
+      await upsertRows(supabase, rows);
+      const next = idx + 1 < DEPARTMENTS.length ? idx + 1 : null;
+      return Response.json({
+        index: idx,
+        dept_id: deptId,
+        products: rows.length,
+        total_depts: DEPARTMENTS.length,
+        next_index: next,
+      });
+    }
+
+    // --- Volledige run (cron) ---
+    let total = 0;
+    const perDept = [];
+    for (const deptId of DEPARTMENTS) {
+      try {
+        const rows = await collectDept(deptId);
+        await upsertRows(supabase, rows);
+        total += rows.length;
+        perDept.push({ deptId, products: rows.length });
+      } catch (e) {
+        perDept.push({ deptId, error: String(e?.message || e) });
+      }
+    }
+    const snap = await writeSnapshot(supabase);
+    return Response.json({ region: REGION, total_upserted: total, snapshot_rows: snap, perDept });
+  } catch (e) {
+    return Response.json({ error: String(e?.message || e) }, { status: 500 });
+  }
 }
