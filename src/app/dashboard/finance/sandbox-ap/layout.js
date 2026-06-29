@@ -1,12 +1,25 @@
 /* ============================================================
-   BESTAND: layout_v2.js
+   BESTAND: sandbox_layout_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/layout.js
-   (overschrijft v1, hernoemen naar layout.js)
+   (overschrijft sandbox v2, hernoemen naar layout.js)
+   🧪 SANDBOX-MIRROR van productie — regel-voor-regel identiek aan live,
+   alleen aangepast:
+   - tabel  ap_invoices            → sandbox_ap_invoices
+   - route  /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
 
-   WIJZIGINGEN T.O.V. v1:
+
+   v3 WIJZIGINGEN:
+   - Nieuwe rol ap_bank toegevoegd (Tineke = Goedkeurder 2)
+   - Rol-label 'AP Goedkeurder' → 'Goedkeurder 1'
+   - Rol-label nieuw: 'Goedkeurder 2' voor ap_bank
+   - Namen achter "—" (bumLabel) verwijderd uit dropdown
+   - canApprove1 / canApprove2 / canBank capabilities toegevoegd
+   - allowedRoles uitgebreid met 'ap_bank'
+
+   v2 WIJZIGINGEN T.O.V. v1:
    - Role-switcher uitgebreid met ap_approver rol
    - Toegang gegeven aan ap_approver
-   - Groepering in de dropdown per rol (admin / cfo / ap_approver / ap_clerk)
+   - Groepering in de dropdown per rol
    ============================================================ */
 // 🧪 SANDBOX BESTAND — werkt op sandbox_ap_* tabellen, geen impact op live data.
 'use client';
@@ -29,10 +42,11 @@ export function useApRole() {
 const STORAGE_KEY = 'ap_effective_role';
 
 const ROLE_META = {
-  admin:       { label: 'Admin',           icon: '👑', color: 'bg-purple-50 text-purple-700 border-purple-200' },
-  cfo:         { label: 'CFO',             icon: '💼', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-  ap_approver: { label: 'AP Goedkeurder',  icon: '✅', color: 'bg-teal-50 text-teal-700 border-teal-200' },
-  ap_clerk:    { label: 'AP Clerk',        icon: '📋', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+  admin:       { label: 'Admin',         icon: '👑', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  ap_approver: { label: 'Goedkeurder 1', icon: '✅', color: 'bg-teal-50 text-teal-700 border-teal-200' },
+  ap_bank:     { label: 'Goedkeurder 2', icon: '🏦', color: 'bg-orange-50 text-orange-700 border-orange-200' },
+  ap_clerk:    { label: 'AP Clerk',      icon: '📋', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+  cfo:         { label: 'CFO (oud)',     icon: '💼', color: 'bg-blue-50 text-blue-700 border-blue-200' },
 };
 
 export default function APLayout({ children }) {
@@ -72,7 +86,7 @@ export default function APLayout({ children }) {
       const { data: apUsers } = await supabase
         .from('profiles')
         .select('id, full_name, role, ap_assigned_bums')
-        .in('role', ['admin', 'cfo', 'ap_approver', 'ap_clerk'])
+        .in('role', ['admin', 'ap_approver', 'ap_bank', 'ap_clerk', 'cfo'])
         .order('role')
         .order('full_name');
       setAllApUsers(apUsers || []);
@@ -119,7 +133,7 @@ export default function APLayout({ children }) {
   }
   
   // Access check
-  const allowedRoles = ['admin', 'cfo', 'ap_approver', 'ap_clerk'];
+  const allowedRoles = ['admin', 'cfo', 'ap_approver', 'ap_bank', 'ap_clerk'];
   const reportsList = Array.isArray(profile.allowed_reports) ? profile.allowed_reports : [];
   const hasAccess = allowedRoles.includes(profile.role) || reportsList.includes('finance_ap');
   
@@ -129,7 +143,7 @@ export default function APLayout({ children }) {
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
           <h2 className="text-[16px] font-bold text-amber-900 mb-2">Geen toegang tot Accounts Payable</h2>
           <p className="text-[13px] text-amber-800">
-            Deze module is alleen toegankelijk voor admins, CFO, AP-goedkeurders en AP Clerks. 
+            Deze module is alleen toegankelijk voor admins, AP Goedkeurders, AP Bank en AP Clerks. 
             Neem contact op met je administrator als je hier wel toegang toe moet hebben.
           </p>
         </div>
@@ -143,9 +157,15 @@ export default function APLayout({ children }) {
     : profile;
   
   // Derived capabilities (handig voor pagina's)
-  const canApprove = ['admin', 'cfo', 'ap_approver'].includes(effectiveProfile.role);
-  const canFinalize = ['admin', 'cfo'].includes(effectiveProfile.role);
-  const canSelect = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(effectiveProfile.role);
+  // v3: 4-rollen model
+  const canApprove1 = ['admin', 'ap_approver'].includes(effectiveProfile.role);
+  const canApprove2 = ['admin', 'ap_bank'].includes(effectiveProfile.role);
+  const canSelect   = ['admin', 'ap_clerk'].includes(effectiveProfile.role);
+  const canBank     = ['admin', 'ap_bank'].includes(effectiveProfile.role);
+  
+  // Backwards-compat aliassen (v2 capabilities — andere pages kunnen deze nog gebruiken)
+  const canApprove  = canApprove1 || canApprove2;
+  const canFinalize = canApprove2;
   
   const contextValue = {
     actualProfile: profile,
@@ -161,9 +181,13 @@ export default function APLayout({ children }) {
     isPlayingRole: isAdmin && effectiveProfile.id !== profile.id,
     
     // Derived capabilities
+    canApprove1,
+    canApprove2,
+    canSelect,
+    canBank,
+    // backwards-compat
     canApprove,
     canFinalize,
-    canSelect,
     
     canSwitchRoles: isAdmin,
     availableProfiles: allApUsers,
@@ -192,7 +216,7 @@ function RoleSwitcherBanner({ ctx }) {
   }, {});
   
   // Rol-volgorde in de dropdown
-  const roleOrder = ['admin', 'cfo', 'ap_approver', 'ap_clerk'];
+  const roleOrder = ['admin', 'ap_approver', 'ap_bank', 'ap_clerk', 'cfo'];
   
   return (
     <div className="mb-6 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex-wrap">
@@ -215,10 +239,9 @@ function RoleSwitcherBanner({ ctx }) {
             <optgroup key={role} label={`${meta.icon} ${meta.label}`}>
               {users.map(u => {
                 const isSelf = u.id === actualProfile.id;
-                const bumLabel = u.ap_assigned_bums?.length ? ` — ${u.ap_assigned_bums.join(', ')}` : '';
                 return (
                   <option key={u.id} value={u.id}>
-                    {u.full_name}{isSelf ? ' (mijzelf)' : ''}{bumLabel}
+                    {u.full_name}{isSelf ? ' (mijzelf)' : ''}
                   </option>
                 );
               })}
