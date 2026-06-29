@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: sandbox_ap_automatch_v1.js
+   BESTAND: sandbox_ap_automatch_page_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/auto-match/page.js
-   (overschrijft v1, hernoemen naar page.js bij upload)
+   (nieuwe sandbox-file, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v2 — regel-voor-regel identiek aan live,
+   alleen aangepast:
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+
 
    WIJZIGINGEN T.O.V. v1:
    - Status update: 'paid' → 'auto_matched' (tussenstatus)

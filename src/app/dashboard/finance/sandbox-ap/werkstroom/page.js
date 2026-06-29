@@ -2,10 +2,10 @@
    BESTAND: sandbox_ap_werkstroom_page_v21.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/werkstroom/page.js
    (overschrijft sandbox v8, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie — regel-voor-regel identiek aan live,
+   🧪 SANDBOX-MIRROR van productie v21 — regel-voor-regel identiek aan live,
    alleen aangepast:
-   - tabel  ap_invoices            → sandbox_ap_invoices
-   - route  /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
 
 
    v21 WIJZIGINGEN:
@@ -62,7 +62,7 @@
    - Partial payment ondersteuning: bij selectie op 'Openstaand' tab
      verschijnt rechts een input-veld met standaard de volledige balance.
      AP Clerk kan dit aanpassen naar het werkelijke te betalen bedrag.
-   - Nieuw veld in database: selected_amount (kolom op sandbox_ap_invoices).
+   - Nieuw veld in database: selected_amount (kolom op ap_invoices).
      Vereist run van ap_schema_v12_selected_amount.sql.
    - Doorgegeven aan vervolgfases: approver ziet aangepast bedrag.
 
@@ -286,7 +286,7 @@ export default function WerkstroomPage() {
     let cancelled = false;
     async function loadVendors() {
       const data = await fetchAllPaginated(() =>
-        supabase.from('ap_vendors').select('vendor_id, vendor_name').order('vendor_name')
+        supabase.from('sandbox_ap_vendors').select('vendor_id, vendor_name').order('vendor_name')
       );
       if (!cancelled) setAllVendors(data || []);
     }
@@ -829,7 +829,7 @@ export default function WerkstroomPage() {
           confirmed_by: actualProfile.id,
           created_by: actualProfile.id,
         }));
-        const { error: candErr } = await supabase.from('ap_match_candidates').insert(candidateRows);
+        const { error: candErr } = await supabase.from('sandbox_ap_match_candidates').insert(candidateRows);
         if (candErr) {
           console.error('match_candidate insert faalde:', candErr);
           alert('Let op: factuur is op betaald gezet maar verschijnt nog niet op afletter-werklijst.\n\nReden: ' + (candErr.message || candErr.code || 'onbekend') + '\n\nNeem contact op met admin.');
@@ -861,7 +861,7 @@ export default function WerkstroomPage() {
           created_by: actualProfile.id,
         }));
         if (candidateRows.length > 0) {
-          const { error: cErr } = await supabase.from('ap_match_candidates').insert(candidateRows);
+          const { error: cErr } = await supabase.from('sandbox_ap_match_candidates').insert(candidateRows);
           if (cErr) {
             console.error('Manual candidate insert mislukt:', cErr);
             alert('Let op: factuur is op betaald gezet maar verschijnt nog niet op afletter-werklijst.\n\nReden: ' + (cErr.message || cErr.code || 'onbekend') + '\n\nNeem contact op met admin.');
@@ -885,7 +885,7 @@ export default function WerkstroomPage() {
           ...(extra.paidDate ? { paid_date: extra.paidDate } : {}),
         },
       }));
-      if (auditRows.length > 0) await supabase.from('ap_audit_log').insert(auditRows);
+      if (auditRows.length > 0) await supabase.from('sandbox_ap_audit_log').insert(auditRows);
 
       // Verfris de bestemmingstab indien deze al geladen was
       if (tabRows[newStatus]) {

@@ -1,13 +1,18 @@
 /* ============================================================
-   BESTAND: sandbox_ap_match_pcs_v1.js
+   BESTAND: sandbox_ap_match_pcs_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/match/pcs/page.js
-   (nieuwe folders aanmaken: match/pcs/, hernoemen naar page.js)
+   (nieuwe sandbox-folders: match/pcs/, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v3 — regel-voor-regel identiek aan live,
+   alleen aangepast:
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+
 
    VEREIST: npm install xlsx (in project root, eenmalig)
 
    Functie: upload Payment Control Sheet Excel → parseert →
    matcht tegen openstaande facturen → toont resultaten →
-   importeert kandidaten naar sandbox_ap_match_candidates.
+   importeert kandidaten naar ap_match_candidates.
 
    WIJZIGINGEN v3 (na nog steeds lage match-rate in v2):
    - 2-TIER matching:

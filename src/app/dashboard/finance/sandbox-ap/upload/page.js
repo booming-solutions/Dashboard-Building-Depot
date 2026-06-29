@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: sandbox_ap_upload_v4.js
+   BESTAND: sandbox_ap_upload_page_v7.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/upload/page.js
-   (overschrijft v2, hernoemen naar page.js bij upload)
+   (nieuwe sandbox-file, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v7 — regel-voor-regel identiek aan live,
+   alleen aangepast:
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+
 
    WIJZIGINGEN T.O.V. v2:
    - PROJECT CLEAN UP integratie: bij elke upload worden confirmed
@@ -21,7 +26,7 @@
    - Parsen met Type-anker fix voor duizend-separator bug
    - Vergelijken met DB: nieuwe / bestaande / verdwenen / eagle-synced
    - Auto-toewijzing AP Clerk via vendor → BUM
-   - Nieuwe vendors automatisch toevoegen aan sandbox_ap_vendors
+   - Nieuwe vendors automatisch toevoegen aan ap_vendors
    - Bevestig → uitvoering + audit logging
    ============================================================ */
 // 🧪 SANDBOX BESTAND — werkt op sandbox_ap_* tabellen, geen impact op live data.
@@ -385,7 +390,7 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
   }
 
   const { data: uploadRow, error: uploadErr } = await supabase
-    .from('ap_uploads')
+    .from('sandbox_ap_uploads')
     .insert({
       filename,
       uploaded_by: currentUser.id,

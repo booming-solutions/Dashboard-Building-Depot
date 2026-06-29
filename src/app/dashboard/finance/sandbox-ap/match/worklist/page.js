@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: sandbox_ap_match_worklist_v2.js
+   BESTAND: sandbox_ap_match_worklist_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/match/worklist/page.js
-   (nieuwe folder: match/worklist/, hernoemen naar page.js)
+   (nieuwe sandbox-folder: match/worklist/, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v3 — regel-voor-regel identiek aan live,
+   alleen aangepast:
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+
 
    Afletter-werklijst (PROJECT CLEAN UP):
    - 4 tabs: Te bevestigen / Te verwerken / Verwerkt / Afgewezen

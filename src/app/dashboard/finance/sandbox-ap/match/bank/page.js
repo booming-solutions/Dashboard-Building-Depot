@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: sandbox_ap_match_bank_v1.js
+   BESTAND: sandbox_ap_match_bank_page_v6.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/match/bank/page.js
-   (nieuwe folder: match/bank/, hernoemen naar page.js)
+   (nieuwe sandbox-folder: match/bank/, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v6 — regel-voor-regel identiek aan live,
+   alleen aangepast:
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+
 
    VEREIST: package.json moet "pdfjs-dist": "^4.0.379" hebben.
    Zonder die regel werkt de upload niet.
@@ -9,10 +14,10 @@
    Functie: upload MCB of RBC bank statement PDF → parseert →
    filtert uitgaande betalingen → matcht tegen openstaande
    facturen → toont resultaten → importeert kandidaten naar
-   sandbox_ap_match_candidates met source='bank_mcb' of 'bank_rbc'.
+   ap_match_candidates met source='bank_mcb' of 'bank_rbc'.
 
    v6 WIJZIGINGEN:
-   - Vendor alias-groepen leest uit database (sandbox_ap_vendors.alias_group_id)
+   - Vendor alias-groepen leest uit database (ap_vendors.alias_group_id)
      ipv hardcoded constants. Werkt voor alle huidige + toekomstige
      groepen die admin via SQL of UI (komt nog) toevoegt.
    - Vereist eerst ap_schema_v11.sql gedraaid in Supabase.
@@ -126,7 +131,7 @@ function normalizeName(s) {
 // ====== VENDOR ALIAS-GROEPEN (uit database) ======
 // Vendors hebben een alias_group_id; alle vendors met dezelfde
 // group_id horen bij hetzelfde bedrijf. Wordt centraal beheerd
-// via sandbox_ap_vendor_alias_groups tabel (admin via SQL of UI).
+// via ap_vendor_alias_groups tabel (admin via SQL of UI).
 
 // Bouw vendor_id → Set(vendor_ids) map van vendors uit DB query.
 // Vendors zonder alias_group_id zitten alleen in hun eigen "groep".

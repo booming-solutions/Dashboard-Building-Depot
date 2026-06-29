@@ -2,10 +2,10 @@
    BESTAND: sandbox_ap_page_v9.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/page.js
    (overschrijft sandbox v1, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie v9 — regel-voor-regel identiek aan live,
+   🧪 SANDBOX-MIRROR van productie v9 (incl. bugfix) — regel-voor-regel identiek aan live,
    alleen aangepast:
-   - tabel  ap_invoices            → sandbox_ap_invoices
-   - route  /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
 
 
    v9 WIJZIGINGEN:
@@ -72,7 +72,7 @@ export default function APDashboard() {
 
       // Vendor master count (statisch, niet rol-afhankelijk in v1)
       const { count: vc } = await supabase
-        .from('ap_vendors')
+        .from('sandbox_ap_vendors')
         .select('*', { count: 'exact', head: true });
 
       // Totaal facturen — voor admin/cfo/approver: alles. Voor clerk: alleen toegewezen
@@ -141,7 +141,7 @@ export default function APDashboard() {
 
       // Pending match candidates (afletter werklijst)
       const { count: pc } = await supabase
-        .from('ap_match_candidates')
+        .from('sandbox_ap_match_candidates')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending');
 
@@ -149,7 +149,7 @@ export default function APDashboard() {
       let confirmedCandidates = 0;
       if (isClerk) {
         const { data: cfList } = await supabase
-          .from('ap_match_candidates')
+          .from('sandbox_ap_match_candidates')
           .select('invoice_id')
           .eq('status', 'confirmed');
         if (cfList && cfList.length > 0) {
@@ -162,7 +162,7 @@ export default function APDashboard() {
         }
       } else {
         const { count: cf } = await supabase
-          .from('ap_match_candidates')
+          .from('sandbox_ap_match_candidates')
           .select('*', { count: 'exact', head: true })
           .eq('status', 'confirmed');
         confirmedCandidates = cf || 0;

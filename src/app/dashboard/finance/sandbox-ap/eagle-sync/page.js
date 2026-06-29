@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: sandbox_ap_eagle_sync_v1.js
+   BESTAND: sandbox_ap_eagle_sync_page_v1.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/eagle-sync/page.js
-   (nieuwe file, hernoemen naar page.js bij upload)
+   (nieuwe sandbox-file, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v1 — regel-voor-regel identiek aan live,
+   alleen aangepast:
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+
 
    Folder "eagle-sync" wordt automatisch aangemaakt onder
    src/app/dashboard/finance/sandbox-ap/
