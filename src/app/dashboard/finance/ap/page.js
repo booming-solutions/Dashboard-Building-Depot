@@ -1,7 +1,13 @@
 /* ============================================================
-   BESTAND: ap_page_v8.js
+   BESTAND: ap_page_v9.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v7, hernoemen naar page.js)
+   (overschrijft v8, hernoemen naar page.js)
+
+   v9 WIJZIGINGEN:
+   - Bug fix: open-filter sluit nu ook reconciled + auto_matched uit
+     (telde ze eerder onterecht mee als openstaand).
+   - Bug fix: 'Klaar voor indiening' telt nu status 'selected'
+     i.p.v. de oude v1-stage 'selected_by_ap'.
 
    WIJZIGINGEN T.O.V. v7:
    - Werkstroom tegel werkend (href naar /werkstroom)
@@ -73,7 +79,7 @@ export default function APDashboard() {
         let q = supabase
           .from('ap_invoices')
           .select('vendor_id, balance, assigned_ap_clerk')
-          .not('status', 'in', '(paid,disappeared_from_export)');
+          .not('status', 'in', '(paid,disappeared_from_export,reconciled,auto_matched)');
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
       });
@@ -123,7 +129,7 @@ export default function APDashboard() {
       let selQuery = supabase
         .from('ap_invoices')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'selected_by_ap');
+        .eq('status', 'selected');
       if (isClerk) selQuery = selQuery.eq('assigned_ap_clerk', effectiveProfileId);
       const { count: sp } = await selQuery;
 
