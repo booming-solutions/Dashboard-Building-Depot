@@ -1,8 +1,18 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v15.js
+   BESTAND: page_negative_inventory_v16.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
    (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.26
+   VERSIE: v3.28.27
+
+   Wijzigingen t.o.v. v15:
+   - Trendgrafiek "Verloop in de tijd" toont nu wekelijkse snapshots
+     in plaats van dagelijkse.
+     · Anker = laatste beschikbare snapshot
+     · Telt steeds 7 dagen terug
+     · Bij ontbrekende dag: dichtstbijzijnde (max 6 dagen offset)
+     · Maximum 60 sampling-stappen voor performance (ruim genoeg)
+     · Werkt voor zowel de gewone trendData als trendDataPerBum
+       (stacked area variant)
 
    Wijzigingen t.o.v. v14:
    - Trendgrafiek "Verloop in de tijd" past zich nu aan op de BUM-filter.
@@ -69,6 +79,61 @@ var BUM_COLORS_NEG = {
 };
 function bumColor(bum) {
   return BUM_COLORS_NEG[String(bum || '').toUpperCase()] || { line: '#888', fill: 'rgba(136,136,136,0.55)' };
+}
+
+/* ── Weekly sampling helpers ──
+   Anker = laatste beschikbare datum. Tel steeds 7 dagen terug.
+   Als exact -7 dag geen snapshot heeft, pak dichtstbijzijnde (1 dag eerder/later, dan 2, etc).
+   Resultaat: ~weekly cadance terug in de tijd.
+   - pickWeeklyDateKeys: input gesorteerde array van YYYY-MM-DD strings → gesorteerde
+     subset van datums die ~7 dagen uit elkaar liggen.
+   - pickWeeklyDates: zelfde maar werkt op array van {date, ...} objecten. */
+function pickWeeklyDateKeys(sortedDates) {
+  if (!sortedDates || sortedDates.length === 0) return [];
+  var available = {};
+  sortedDates.forEach(function(d) { available[d] = true; });
+  // Anchor = laatste datum
+  var anchor = sortedDates[sortedDates.length - 1];
+  var earliest = sortedDates[0];
+  var picked = [];
+  var pickedSet = {};
+  // Werk in millis voor makkelijk +-7 dagen rekenen
+  var anchorMs = Date.parse(anchor + 'T00:00:00Z');
+  var earliestMs = Date.parse(earliest + 'T00:00:00Z');
+  var dayMs = 86400000;
+  var current = anchorMs;
+  // Maximum 26 weken (half jaar) terug om performance te beschermen
+  var safety = 0;
+  while (current >= earliestMs && safety < 60) {
+    safety++;
+    // Zoek dichtstbijzijnde beschikbare datum, max 6 dagen offset (anders zou je in een andere week komen)
+    var found = null;
+    for (var offset = 0; offset <= 6; offset++) {
+      var tryMs = current - offset * dayMs;
+      var tryStr = new Date(tryMs).toISOString().substring(0, 10);
+      if (available[tryStr] && !pickedSet[tryStr]) { found = tryStr; break; }
+      if (offset > 0) {
+        var tryMs2 = current + offset * dayMs;
+        var tryStr2 = new Date(tryMs2).toISOString().substring(0, 10);
+        if (available[tryStr2] && !pickedSet[tryStr2] && tryMs2 <= anchorMs) { found = tryStr2; break; }
+      }
+    }
+    if (found) {
+      picked.push(found);
+      pickedSet[found] = true;
+    }
+    current -= 7 * dayMs;
+  }
+  picked.sort();
+  return picked;
+}
+function pickWeeklyDates(allDays) {
+  if (!allDays || allDays.length === 0) return [];
+  var keys = allDays.map(function(d) { return d.date; });
+  var picked = pickWeeklyDateKeys(keys);
+  var pickedSet = {};
+  picked.forEach(function(p) { pickedSet[p] = true; });
+  return allDays.filter(function(d) { return pickedSet[d.date]; });
 }
 
 function fmtDate(d) {
@@ -482,9 +547,12 @@ export default function NegativeInventoryPage() {
       byDate[d].items += s.items_count || 0;
       byDate[d].value += parseFloat(s.total_negative_value) || 0;
     });
-    return Object.values(byDate)
+    var allDays = Object.values(byDate)
       .map(function(d) { return { date: d.date, items: d.items, value: Math.round(d.value) }; })
       .sort(function(a, b) { return a.date.localeCompare(b.date); });
+    // Weekly sampling: anchor = laatste beschikbare snapshot, ga steeds 7 dagen terug.
+    // Als de exacte -7 dag geen snapshot heeft, pak dichtstbijzijnde (1 dag eerder/later).
+    return pickWeeklyDates(allDays);
   }, [snapshots, store, selDept, selBum, deptToBum]);
 
   /* ── Trend per BUM (voor stacked area chart) ──
@@ -506,17 +574,19 @@ export default function NegativeInventoryPage() {
       byDate[d][bum] = (byDate[d][bum] || 0) + val;
       bumTotals[bum] = (bumTotals[bum] || 0) + val;
     });
-    var dates = Object.keys(byDate).sort();
+    var allDates = Object.keys(byDate).sort();
+    // Weekly sampling: anchor = laatste datum, ga steeds 7 dagen terug
+    var pickedDates = pickWeeklyDateKeys(allDates);
     // BUMs aanwezig in data, gesorteerd op totale grootte (grootste onderaan = eerste in array)
     var bumsPresent = Object.keys(bumTotals);
     bumsPresent.sort(function(a, b) { return bumTotals[b] - bumTotals[a]; });
     return {
-      dates: dates,
+      dates: pickedDates,
       bums: bumsPresent,
       // Voor elke (date, bum) → value (0 als ontbreekt)
-      values: dates.map(function(d) {
+      values: pickedDates.map(function(d) {
         var row = {};
-        bumsPresent.forEach(function(b) { row[b] = Math.round(byDate[d][b] || 0); });
+        bumsPresent.forEach(function(b) { row[b] = Math.round((byDate[d] || {})[b] || 0); });
         return row;
       }),
     };
