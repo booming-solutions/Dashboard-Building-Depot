@@ -1,8 +1,14 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v16.js
+   BESTAND: page_negative_inventory_v17.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
-   (hernoem naar page.js bij het plaatsen)
-   VERSIE: v3.28.27
+   VERSIE: v3.28.28
+
+   Wijzigingen t.o.v. v16:
+   - Dept 12 wordt samengevoegd met 11.
+     · Items: via @/lib/dept-merge helper
+     · Snapshots: inline merge (kolom heet 'department_code' i.p.v.
+       'dept_code'; ook items_count + waarde-velden worden bij elkaar
+       opgeteld per (date, region, mergedDeptCode))
 
    Wijzigingen t.o.v. v15:
    - Trendgrafiek "Verloop in de tijd" toont nu wekelijkse snapshots
@@ -59,6 +65,7 @@
 
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { createClient } from '@/lib/supabase';
+import { mergeDeptElevenTwelve } from '@/lib/dept-merge';
 import LoadingLogo from '@/components/LoadingLogo';
 import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, LineElement, PointElement, LineController, Tooltip, Legend, Filler } from 'chart.js';
@@ -257,7 +264,7 @@ export default function NegativeInventoryPage() {
       if (r.data.length < step) break;
       from += step;
     }
-    setItems(all);
+    setItems(mergeDeptElevenTwelve(all));
   }
 
   async function loadNotes() {
@@ -281,7 +288,35 @@ export default function NegativeInventoryPage() {
       if (r.data.length < step) break;
       from += step;
     }
-    setSnapshots(all);
+    // Merge dept 12 → 11 in snapshots. Snapshot tabel heeft 'department_code'
+    // (niet 'dept_code'), dus inline merge i.p.v. shared helper.
+    // Snapshots zijn al per (date, region, department_code) geaggregeerd, dus we
+    // moeten 11 en 12 op dezelfde sleutel optellen.
+    var nameOf11 = '';
+    all.forEach(function(s) {
+      if (String(s.department_code || '').trim() === '11' && s.department_name) {
+        nameOf11 = s.department_name;
+      }
+    });
+    var agg = {};
+    all.forEach(function(s) {
+      var code = String(s.department_code || '').trim();
+      var mergedCode = code === '12' ? '11' : code;
+      var key = s.snapshot_date + '|' + s.region + '|' + mergedCode;
+      if (!agg[key]) {
+        agg[key] = Object.assign({}, s, {
+          department_code: mergedCode,
+          department_name: mergedCode === '11' ? (nameOf11 || s.department_name) : s.department_name,
+          items_count: 0,
+          total_negative_value: 0,
+          total_negative_qty: 0,
+        });
+      }
+      agg[key].items_count += (s.items_count || 0);
+      agg[key].total_negative_value += (parseFloat(s.total_negative_value) || 0);
+      agg[key].total_negative_qty += (parseFloat(s.total_negative_qty) || 0);
+    });
+    setSnapshots(Object.values(agg));
   }
 
   async function loadFirstSeen() {

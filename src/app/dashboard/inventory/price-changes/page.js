@@ -1,7 +1,10 @@
 /* ============================================================
-   BESTAND: page_price_changes_v7.js
+   BESTAND: page_price_changes_v8.js
    KOPIEER NAAR: src/app/dashboard/inventory/price-changes/page.js
-   VERSIE: v7.0
+   VERSIE: v8.0
+
+   Wijzigingen t.o.v. v7:
+   - Dept 12 wordt samengevoegd met 11 (via @/lib/dept-merge)
 
    Wijzigingen t.o.v. v6:
    - Regio-pills gaan automatisch op "disabled" als er <2 snapshots zijn
@@ -28,6 +31,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
+import { mergeDeptElevenTwelve } from '@/lib/dept-merge';
 import LoadingLogo from '@/components/LoadingLogo';
 import ExcelExportButton from '@/components/ExcelExportButton';
 
@@ -178,7 +182,7 @@ export default function PriceChangesDashboard() {
       var fromRows = await loadAll(dateFrom);
       var toRows = await loadAll(dateTo);
 
-      setData({ from: fromRows, to: toRows });
+      setData({ from: mergeDeptElevenTwelve(fromRows), to: mergeDeptElevenTwelve(toRows) });
 
       // Departements ophalen
       var deptMap = {};

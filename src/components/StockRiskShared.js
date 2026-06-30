@@ -1,8 +1,13 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v10.js
+   BESTAND: StockRiskShared_v11.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.25
+   VERSIE: v3.28.28
+
+   Wijzigingen t.o.v. v10:
+   - Dept 12 wordt samengevoegd met 11 (bij omzet al gebeurd, nu ook
+     bij voorraad). Via shared helper @/lib/dept-merge.
+   - Vereist nieuwe file: src/lib/dept-merge.js
 
    Wijzigingen t.o.v. v9:
    - Nieuwe kolom MFG# tussen Dept en Item in detail-tabel
@@ -84,6 +89,7 @@
 
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { createClient } from '@/lib/supabase';
+import { mergeDeptElevenTwelve } from '@/lib/dept-merge';
 import LoadingLogo from '@/components/LoadingLogo';
 import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend, Filler } from 'chart.js';
@@ -523,7 +529,7 @@ export default function StockRiskShared({ bumFilter }) {
       dates.sort();
       setLastUpdate(dates[dates.length - 1]);
     }
-    setData(all); setLoading(false);
+    setData(mergeDeptElevenTwelve(all)); setLoading(false);
   }
 
   async function loadNosSnapshots() {

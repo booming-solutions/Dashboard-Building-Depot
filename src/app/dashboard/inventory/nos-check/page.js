@@ -1,8 +1,10 @@
 /* ============================================================
-   BESTAND: page_nos_check_v1.js
+   BESTAND: page_nos_check_v2.js
    KOPIEER NAAR: src/app/dashboard/inventory/nos-check/page.js
-   (NIEUWE map maken: nos-check)
-   VERSIE: v3.28.24
+   VERSIE: v3.28.28
+
+   Wijzigingen t.o.v. v1:
+   - Dept 12 wordt samengevoegd met 11 (via @/lib/dept-merge)
 
    NOS Check rapport — controle van NOS-classificatie tegen werkelijke verkoop.
 
@@ -24,6 +26,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
+import { mergeDeptElevenTwelve } from '@/lib/dept-merge';
 import LoadingLogo from '@/components/LoadingLogo';
 import ExcelExportButton from '@/components/ExcelExportButton';
 
@@ -84,7 +87,7 @@ export default function NosCheckPage() {
       if (r.data.length < step) break;
       from += step;
     }
-    setData(all);
+    setData(mergeDeptElevenTwelve(all));
     setLoading(false);
   }
 

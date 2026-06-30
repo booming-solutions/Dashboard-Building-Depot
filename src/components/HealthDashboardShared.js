@@ -1,7 +1,10 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared_v6.js
+   BESTAND: HealthDashboardShared_v7.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
-   VERSIE: v3.28.23
+   VERSIE: v3.28.28
+
+   Wijzigingen t.o.v. v6:
+   - Dept 12 wordt samengevoegd met 11 (via @/lib/dept-merge).
 
    Wijzigingen t.o.v. v5:
    - BUGFIX: BU-folder namen (HARDWARE, LIVING, etc) worden nu correct
@@ -36,6 +39,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
+import { mergeDeptElevenTwelve } from '@/lib/dept-merge';
 import LoadingLogo from '@/components/LoadingLogo';
 import ExcelExportButton from '@/components/ExcelExportButton';
 
@@ -142,7 +146,7 @@ export default function HealthDashboardShared({ bumFilter }) {
       dates.sort();
       setLastUpdate(dates[dates.length - 1]);
     }
-    setData(all); setLoading(false);
+    setData(mergeDeptElevenTwelve(all)); setLoading(false);
   }
 
   /* Aggregate items across stores within region */
@@ -162,11 +166,9 @@ export default function HealthDashboardShared({ bumFilter }) {
       if (!map[key]) {
         map[key] = {
           item: r.item_number, desc: r.item_description,
-          dept_code: r.effective_dept_code || r.dept_code,
-          dept_name: r.effective_dept_name || r.dept_name,
+          dept_code: r.dept_code, dept_name: r.dept_name,
           class_code: r.class_code, class_name: r.class_name,
-          bum: r.effective_bum_group || '',
-          vendor: r.vendor_name || '',
+          bum: r.bum || '', vendor: r.vendor_name || '',
           cost: (parseFloat(r.replacement_cost) || 0) * cFactor,
           qoh: 0, inv_value: 0,
           // Lead time = transit-tijd van leverancier naar magazijn.
