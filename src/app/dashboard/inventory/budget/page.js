@@ -1,7 +1,13 @@
 /* ============================================================
-   BESTAND: page.js (Voorraad vs Budget)
+   BESTAND: page_budget_v2.js
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
-   VERSIE: v3.29 — gemigreerd naar enriched view (afdelingen ipv BUMs)
+   VERSIE: v3.29.1 — dept 11+12 merge in UI
+
+   WIJZIGINGEN T.O.V. v3.29:
+   - Dept 12 wordt samengevoegd met 11 (in lijn met andere voorraad-rapporten)
+   - Doet de merge op BEIDE velden: raw dept_code (via @/lib/dept-merge helper)
+     en effective_dept_code (inline, want de view inventory_data_enriched doet
+     wel andere merges zoals 31+32→30, maar nog niet 11+12)
 
    WIJZIGINGEN T.O.V. v3.28.16:
    - inventory_data → inventory_data_enriched
@@ -15,6 +21,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
+import { mergeDeptElevenTwelve } from '@/lib/dept-merge';
 import LoadingLogo from '@/components/LoadingLogo';
 import ExcelExportButton from '@/components/ExcelExportButton';
 import { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, BarController, LineController, Tooltip, Legend } from 'chart.js';
@@ -108,7 +115,28 @@ export default function InventoryDashboard() {
     // Load bum_groups voor display namen + volgorde
     var bg = await supabase.from('bum_groups').select('*').eq('active', true).order('sort_order');
 
-    setData(all);
+    // Eerst: roll dept 12 → 11 op de raw dept_code velden (via shared helper).
+    // Daarna: ook op effective_dept_code/_name, want de pagina aggregeert op die velden.
+    // De inventory_data_enriched view doet al andere merges (31+32→30) maar nog niet 11+12.
+    var merged = mergeDeptElevenTwelve(all);
+    // Vind de effective_dept_name van afdeling 11 (als die voorkomt)
+    var effNameOf11 = '';
+    for (var i = 0; i < merged.length; i++) {
+      if (String(merged[i].effective_dept_code || '').trim() === '11' && merged[i].effective_dept_name) {
+        effNameOf11 = merged[i].effective_dept_name;
+        break;
+      }
+    }
+    merged = merged.map(function(r) {
+      if (String(r.effective_dept_code || '').trim() === '12') {
+        return Object.assign({}, r, {
+          effective_dept_code: '11',
+          effective_dept_name: effNameOf11 || r.effective_dept_name,
+        });
+      }
+      return r;
+    });
+    setData(merged);
     setQooData(qooMap);
     setBumGroups(bg.data || []);
     setLoading(false);
