@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: dept_merge_v1.js
+   BESTAND: dept_merge_v1.js  
    KOPIEER NAAR: src/lib/dept-merge.js
    (NIEUWE file, maak src/lib directory als die nog niet bestaat)
 
