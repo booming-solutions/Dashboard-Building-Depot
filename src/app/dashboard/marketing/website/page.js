@@ -2,13 +2,12 @@
    BESTAND: page.js
    KOPIEER NAAR: src/app/dashboard/marketing/website/page.js
 
-   Marketing › Website foto-status  (v3)
+   Marketing › Website foto-status  (v5)
+   - Standaard op Department, op nummer gesorteerd
+   - Detaillijst: volledige, sorteerbare tabel (klik op de koppen)
+     met voorraad + prijs, en een vinkje "foto nodig" (persistent)
    - BUM-indeling uit bum_groups + dept_bum_mapping (zoals sales)
-   - "Scan nu" loopt nu department voor department (live voortgang,
-     korte requests, geen timeout) en sluit af met een snapshot
    - Δ-kolom: verschil in 'zonder foto' t.o.v. de vorige meting
-     (uit website_photo_history) — groen = vooruitgang
-   - Robuust tegen niet-JSON antwoorden van de scan
    ============================================================ */
 'use client';
 
@@ -50,7 +49,7 @@ export default function WebsitePhotoStatusPage() {
   const supabase = createClient();
 
   const [region, setRegion] = useState('CUR');
-  const [groupBy, setGroupBy] = useState('bum');
+  const [groupBy, setGroupBy] = useState('dept');
   const [summary, setSummary] = useState([]);
   const [missing, setMissing] = useState([]);
   const [history, setHistory] = useState([]);
@@ -61,6 +60,7 @@ export default function WebsitePhotoStatusPage() {
   const [scanMsg, setScanMsg] = useState('');
   const [role, setRole] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const [detailSort, setDetailSort] = useState({ col: 'num_inventory', dir: 'desc' });
 
   const [bumGroups, setBumGroups] = useState([]);
   const [deptBumMapping, setDeptBumMapping] = useState([]);
@@ -142,7 +142,7 @@ export default function WebsitePhotoStatusPage() {
     while (true) {
       const { data, error } = await supabase
         .from('website_photo_status')
-        .select('sku,title,dept_code,dept_name,product_url,brand_name')
+        .select('sku,title,dept_code,dept_name,product_url,brand_name,num_inventory,price,flagged_for_photo')
         .eq('region', region).eq('has_image', false)
         .order('dept_code', { ascending: true }).order('sku', { ascending: true })
         .range(from, from + step - 1);
@@ -232,7 +232,18 @@ export default function WebsitePhotoStatusPage() {
     const base = baselineWithout(g.key);
     g.delta = base == null ? null : g.without - base;
   });
-  groups.sort((a, b) => b.without - a.without);
+  if (groupBy === 'dept') {
+    groups.sort((a, b) => {
+      const na = parseInt(a.key, 10);
+      const nb = parseInt(b.key, 10);
+      if (Number.isNaN(na) && Number.isNaN(nb)) return 0;
+      if (Number.isNaN(na)) return 1;
+      if (Number.isNaN(nb)) return -1;
+      return na - nb;
+    });
+  } else {
+    groups.sort((a, b) => b.without - a.without);
+  }
 
   function detailFor(groupKey) {
     if (groupBy === 'dept') return missing.filter((m) => (m.dept_code || '—') === groupKey);
@@ -240,7 +251,7 @@ export default function WebsitePhotoStatusPage() {
   }
 
   function exportCsv() {
-    const rows = [['SKU', 'Titel', 'Dept', 'BUM', 'Merk', 'Product-URL']];
+    const rows = [['SKU', 'Titel', 'Dept', 'BUM', 'Merk', 'Voorraad', 'Prijs', 'Foto nodig', 'Product-URL']];
     for (const m of missing) {
       rows.push([
         m.sku || '',
@@ -248,6 +259,9 @@ export default function WebsitePhotoStatusPage() {
         m.dept_name || m.dept_code || '',
         labelFor(groupCodeFor(m.dept_code)),
         m.brand_name || '',
+        m.num_inventory != null ? m.num_inventory : '',
+        m.price != null ? m.price : '',
+        m.flagged_for_photo ? 'ja' : '',
         m.product_url || '',
       ]);
     }
@@ -260,6 +274,54 @@ export default function WebsitePhotoStatusPage() {
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  // Vinkje "foto nodig" — optimistisch, persistent in de tabel
+  async function toggleFlag(m) {
+    const next = !m.flagged_for_photo;
+    setMissing((prev) => prev.map((x) => (x.sku === m.sku ? { ...x, flagged_for_photo: next } : x)));
+    const { error } = await supabase
+      .from('website_photo_status')
+      .update({ flagged_for_photo: next, flagged_at: next ? new Date().toISOString() : null })
+      .eq('region', region).eq('sku', m.sku);
+    if (error) {
+      setMissing((prev) => prev.map((x) => (x.sku === m.sku ? { ...x, flagged_for_photo: !next } : x)));
+    }
+  }
+
+  function sortDetail(rows) {
+    const { col, dir } = detailSort;
+    const mul = dir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (col === 'num_inventory' || col === 'price' || col === 'flagged_for_photo') {
+        const va = (col === 'flagged_for_photo' ? (a[col] ? 1 : 0) : a[col]) ?? -Infinity;
+        const vb = (col === 'flagged_for_photo' ? (b[col] ? 1 : 0) : b[col]) ?? -Infinity;
+        return (va - vb) * mul;
+      }
+      const va = (a[col] || '').toString().toLowerCase();
+      const vb = (b[col] || '').toString().toLowerCase();
+      return va < vb ? -1 * mul : va > vb ? 1 * mul : 0;
+    });
+  }
+
+  function toggleSort(col) {
+    setDetailSort((s) =>
+      s.col === col
+        ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+        : { col, dir: (col === 'num_inventory' || col === 'price' || col === 'flagged_for_photo') ? 'desc' : 'asc' },
+    );
+  }
+
+  const SortTh = ({ col, label, align }) => {
+    const active = detailSort.col === col;
+    return (
+      <th
+        onClick={() => toggleSort(col)}
+        className={`px-3 py-2 font-semibold cursor-pointer select-none hover:text-[#1B3A5C] ${align === 'right' ? 'text-right' : ''}`}
+      >
+        {label}{active ? (detailSort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+      </th>
+    );
+  };
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -366,22 +428,37 @@ export default function WebsitePhotoStatusPage() {
                     {open && (
                       <tr>
                         <td colSpan={6} className="bg-gray-50/60 px-4 py-3">
-                          <div className="max-h-80 overflow-auto rounded-lg border border-gray-100 bg-white">
+                          <div className="mb-2 text-[11px] text-[#1B3A5C]/40">
+                            {detail.length} SKU&apos;s zonder foto
+                            {detail.filter((d) => d.flagged_for_photo).length > 0
+                              ? ` · ${detail.filter((d) => d.flagged_for_photo).length} gemarkeerd`
+                              : ''}
+                          </div>
+                          <div className="max-h-[60vh] overflow-auto rounded-lg border border-gray-100 bg-white">
                             <table className="w-full text-[12px]">
-                              <thead className="sticky top-0 bg-white">
+                              <thead className="sticky top-0 bg-white z-10">
                                 <tr className="text-left text-[10px] uppercase tracking-wider text-[#1B3A5C]/40 border-b border-gray-100">
-                                  <th className="px-3 py-2 font-semibold">SKU</th>
-                                  <th className="px-3 py-2 font-semibold">Titel</th>
-                                  <th className="px-3 py-2 font-semibold">Department</th>
-                                  <th className="px-3 py-2 font-semibold"></th>
+                                  <th className="px-3 py-2 font-semibold w-8" title="Markeer: foto nodig">📷</th>
+                                  <SortTh col="sku" label="SKU" />
+                                  <SortTh col="title" label="Titel" />
+                                  <SortTh col="dept_name" label="Department" />
+                                  <SortTh col="num_inventory" label="Voorraad" align="right" />
+                                  <SortTh col="price" label="Prijs" align="right" />
+                                  <th className="px-3 py-2"></th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {detail.map((m) => (
-                                  <tr key={m.sku} className="border-b border-gray-50">
+                                {sortDetail(detail).map((m) => (
+                                  <tr key={m.sku} className={`border-b border-gray-50 ${m.flagged_for_photo ? 'bg-amber-50/60' : ''}`}>
+                                    <td className="px-3 py-1.5">
+                                      <input type="checkbox" checked={!!m.flagged_for_photo} onChange={() => toggleFlag(m)}
+                                        className="accent-[#1B3A5C] cursor-pointer" title="Foto nodig" />
+                                    </td>
                                     <td className="px-3 py-1.5 font-mono text-[#1B3A5C]/70">{m.sku}</td>
                                     <td className="px-3 py-1.5 text-[#1B3A5C]/80">{m.title || '—'}</td>
                                     <td className="px-3 py-1.5 text-[#1B3A5C]/50">{m.dept_name || m.dept_code || '—'}</td>
+                                    <td className="px-3 py-1.5 text-right text-[#1B3A5C]/70">{m.num_inventory != null ? NF.format(m.num_inventory) : '—'}</td>
+                                    <td className="px-3 py-1.5 text-right text-[#1B3A5C]/70">{m.price != null ? NF.format(m.price) : '—'}</td>
                                     <td className="px-3 py-1.5 text-right">
                                       {m.product_url && (
                                         <a href={m.product_url} target="_blank" rel="noopener noreferrer" className="text-[#1B3A5C] hover:underline font-medium">Bekijk →</a>
@@ -409,4 +486,4 @@ export default function WebsitePhotoStatusPage() {
       </p>
     </div>
   );
-}
+}  
