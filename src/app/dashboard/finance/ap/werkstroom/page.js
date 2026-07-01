@@ -1,7 +1,13 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v21.js
+   BESTAND: ap_werkstroom_page_v22.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
-   (overschrijft v19, hernoemen naar page.js)
+   (overschrijft v21, hernoemen naar page.js)
+
+   v22 WIJZIGINGEN:
+   - BankPromptModal gebouwd: "Naar bank" opent nu een modal met bank-keuze
+     (MCB / RBC / RBC_USD / BC / Multimart / RBC_Bonaire) i.p.v. direct te
+     falen op de ontbrekende extra.bank. Bevestigen maakt de batch en zet
+     de facturen door naar batch_pending_1 (Bij goedkeurder 1).
 
    v21 WIJZIGINGEN:
    - Tab-knoppen worden grijs/gedimmed voor rollen die in die tab geen actie
@@ -263,6 +269,7 @@ export default function WerkstroomPage() {
   const [error, setError] = useState(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showMarkPaidModal, setShowMarkPaidModal] = useState(false);
+  const [showBankModal, setShowBankModal] = useState(false); // v22: bank-keuze bij "Naar bank"
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -1057,6 +1064,7 @@ export default function WerkstroomPage() {
           onDeselect={deselectAll}
           onRejectClick={() => setShowRejectModal(true)}
           onMarkPaidClick={() => setShowMarkPaidModal(true)}
+          onSendToBankClick={() => setShowBankModal(true)}
         />
       )}
 
@@ -1094,6 +1102,19 @@ export default function WerkstroomPage() {
             setShowMarkPaidModal(false);
           }}
           onCancel={() => setShowMarkPaidModal(false)}
+        />
+      )}
+
+      {showBankModal && (
+        <BankPromptModal
+          count={selectedCount}
+          total={selectedTotal}
+          busy={busy}
+          onConfirm={(bank) => {
+            doAction('send_to_bank', { bank });
+            setShowBankModal(false);
+          }}
+          onCancel={() => setShowBankModal(false)}
         />
       )}
 
@@ -1152,7 +1173,7 @@ function Header({ onRefresh }) {
   );
 }
 
-function BulkBar({ tab, isClerk, isAdmin, isApprover, isBank, canSelectForPayment, canSendToBank, canApprove1, canApprove2, canMarkPaidInBank, canMarkReconciled, canQuickPay, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick, onQuickPay }) {
+function BulkBar({ tab, isClerk, isAdmin, isApprover, isBank, canSelectForPayment, canSendToBank, canApprove1, canApprove2, canMarkPaidInBank, canMarkReconciled, canQuickPay, canManualWriteoff, count, total, busy, onAction, onDeselect, onRejectClick, onMarkPaidClick, onQuickPay, onSendToBankClick }) {
   return (
     <div className="bg-[#1B3A5C] rounded-xl p-3 mb-4 shadow-sm flex items-center gap-3 flex-wrap text-white">
       <span className="text-[13px] font-semibold">
@@ -1199,7 +1220,7 @@ function BulkBar({ tab, isClerk, isAdmin, isApprover, isBank, canSelectForPaymen
               className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
               ← Terug naar openstaand
             </button>
-            <button onClick={() => onAction('send_to_bank', { bankPrompt: true })} disabled={busy}
+            <button onClick={onSendToBankClick} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
               title="Maak een batch met bank-keuze en stuur naar goedkeurder 1">
               {busy ? 'Bezig...' : '→ Naar bank (kies bank)'}
@@ -1662,6 +1683,72 @@ function SortableHeader({ field, label, current, desc, onSort, align }) {
   );
 }
 
+
+function BankPromptModal({ count, total, busy, onConfirm, onCancel }) {
+  const BANKS = [
+    { value: 'MCB',          label: 'MCB' },
+    { value: 'RBC',          label: 'RBC' },
+    { value: 'RBC_USD',      label: 'RBC USD' },
+    { value: 'BC',           label: 'Banco di Caribe (BC)' },
+    { value: 'Multimart',    label: 'Multimart' },
+    { value: 'RBC_Bonaire',  label: 'RBC Bonaire' },
+  ];
+  const [bank, setBank] = useState('');
+
+  // Enter = bevestigen (mits bank gekozen), Escape = annuleren
+  useEffect(() => {
+    function handler(e) {
+      if (e.key === 'Enter' && !busy && bank) onConfirm(bank);
+      if (e.key === 'Escape') onCancel();
+    }
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [bank, busy, onConfirm, onCancel]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onCancel}>
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+        <h3 className="text-[16px] font-bold text-[#1B3A5C] mb-2">
+          🏦 Naar bank — kies bank
+        </h3>
+        <p className="text-[13px] text-[#1B3A5C]/70 mb-4">
+          {count} {count === 1 ? 'factuur' : 'facturen'} ·
+          totaal XCG {fmtMoney(total)}
+        </p>
+        <p className="text-[12px] text-[#1B3A5C]/60 mb-3">
+          Deze actie maakt één batch met de gekozen bank en zet de geselecteerde
+          facturen door naar <strong>Bij goedkeurder 1</strong>.
+        </p>
+        <label className="block text-[12px] font-semibold text-[#1B3A5C]/70 mb-1">
+          Bank
+        </label>
+        <select
+          value={bank}
+          onChange={e => setBank(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-[13px] bg-white focus:outline-none focus:border-[#1B3A5C] mb-4 cursor-pointer"
+          autoFocus>
+          <option value="" disabled>— Kies een bank —</option>
+          {BANKS.map(b => (
+            <option key={b.value} value={b.value}>{b.label}</option>
+          ))}
+        </select>
+        <p className="text-[10px] text-[#1B3A5C]/40 italic mb-4">
+          Tip: druk op Enter om te bevestigen, Escape om te annuleren.
+        </p>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onCancel}
+            className="px-3 py-2 rounded-lg bg-gray-100 text-[#1B3A5C]/70 text-[12px] font-semibold hover:bg-gray-200">
+            Annuleer
+          </button>
+          <button onClick={() => onConfirm(bank)} disabled={busy || !bank}
+            className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 disabled:opacity-50">
+            {busy ? 'Bezig...' : (bank ? `✓ Maak batch (${bank})` : '✓ Maak batch')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function QuickPayModal({ bank, count, total, busy, onConfirm, onCancel }) {
   const today = new Date().toISOString().substring(0, 10);
