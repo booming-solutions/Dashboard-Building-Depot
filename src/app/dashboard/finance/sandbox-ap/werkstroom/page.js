@@ -1,12 +1,16 @@
 /* ============================================================
-   BESTAND: sandbox_ap_werkstroom_page_v22.js
+   BESTAND: sandbox_ap_werkstroom_page_v23.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/werkstroom/page.js
-   (overschrijft sandbox v21, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie v22 — regel-voor-regel identiek aan live,
+   (overschrijft sandbox v22, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v23 — regel-voor-regel identiek aan live,
    alleen aangepast:
    - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
    - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
 
+
+   v23 WIJZIGINGEN:
+   - Tab-label 'Klaar voor betaling' → 'Verzenden naar bank'.
+   - Modal-bevestigknop 'Maak batch' → 'In bank gezet'.
 
    v22 WIJZIGINGEN:
    - BankPromptModal gebouwd: "Naar bank" opent nu een modal met bank-keuze
@@ -26,7 +30,7 @@
    - Nieuwe rolverdeling: ap_clerk, ap_approver, ap_bank, admin
    - 7-staps werkstroom met 4-OGEN principe:
      1. Openstaand (clerk)
-     2. Klaar voor betaling (clerk)
+     2. Verzenden naar bank (clerk)
      3. Bij goedkeurder 1 (approver)
      4. Bij goedkeurder 2 (bank)
      5. Vrijgegeven (clerk gaat naar bank)
@@ -175,7 +179,7 @@ async function fetchAllPaginated(queryBuilder, batchSize = 1000) {
 
 const STATUS_TABS = [
   { key: 'open',                 label: 'Openstaand',           color: 'gray' },
-  { key: 'selected',             label: 'Klaar voor betaling',  color: 'blue' },
+  { key: 'selected',             label: 'Verzenden naar bank',  color: 'blue' },
   { key: 'batch_pending_1',      label: 'Bij goedkeurder 1',    color: 'amber' },
   { key: 'batch_pending_2',      label: 'Bij goedkeurder 2',    color: 'orange' },
   { key: 'approved_for_payment', label: 'Vrijgegeven',          color: 'emerald' },
@@ -1748,7 +1752,7 @@ function BankPromptModal({ count, total, busy, onConfirm, onCancel }) {
           </button>
           <button onClick={() => onConfirm(bank)} disabled={busy || !bank}
             className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 disabled:opacity-50">
-            {busy ? 'Bezig...' : (bank ? `✓ Maak batch (${bank})` : '✓ Maak batch')}
+            {busy ? 'Bezig...' : (bank ? `✓ In bank gezet (${bank})` : '✓ In bank gezet')}
           </button>
         </div>
       </div>
