@@ -1,7 +1,20 @@
 /* ============================================================
-   BESTAND: route_email_v23.js
+   BESTAND: route_email_v24.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v24:
+   - Twee nieuwe Order Flow rapporten toegevoegd:
+     * 'order_flow_po'    (Openstaande_POs.xlsx)  -> tabel order_flow
+       Detectie: "PO Header" + "Total Cost Dollars", GEEN "Item Number".
+       processOrderFlowPo roept SQL-functie order_flow_ingest aan
+       (upsert; logistieke velden blijven onaangeroerd).
+     * 'order_flow_items' (Openstaande_POs_SKU_detail.xlsx) -> order_flow_items
+       Detectie: "PO Header" + "Item Number" + "Purchase Quantity On Order".
+       processOrderFlowItems roept SQL-functie order_flow_ingest_items aan.
+   - Beide detecties staan VOOR po_deliveries; ze botsen niet met
+     bestaande feeds want alleen deze twee hebben kolom "PO Header".
+   - Vereiste SQL (al aangemaakt): order_flow_ingest(jsonb),
+     order_flow_ingest_items(jsonb), tabellen order_flow / order_flow_items.
    WIJZIGING v23:
    - processBuying leest nu de kolom "MFG Part #" en slaat op
      in nieuwe buying_data.mfg_part_number kolom
@@ -122,6 +135,22 @@ function detectFileType(columns) {
       cols.some(function(c) { return c.includes('sales units'); }) &&
       cols.some(function(c) { return c.includes('department group'); })) {
     return 'buying';
+  }
+
+  // Order Flow — SKU-detail (Openstaande_POs_SKU_detail):
+  // PO Header + Item Number + Purchase Quantity On Order
+  if (cols.some(function(c) { return c.includes('po header'); }) &&
+      cols.some(function(c) { return c.includes('item number'); }) &&
+      cols.some(function(c) { return c.includes('purchase quantity on order') || c.includes('order inventory'); })) {
+    return 'order_flow_items';
+  }
+
+  // Order Flow — PO header (Openstaande_POs):
+  // PO Header + Total Cost Dollars, en GEEN Item Number
+  if (cols.some(function(c) { return c.includes('po header'); }) &&
+      cols.some(function(c) { return c.includes('total cost'); }) &&
+      !cols.some(function(c) { return c.includes('item number'); })) {
+    return 'order_flow_po';
   }
 
   // PO Deliveries: has "PO Detail" + "Item Number" + "Date Expected" + "QOO Rounded Quantity"
@@ -1263,6 +1292,94 @@ async function processPoDeliveries(json) {
   return { table: 'po_deliveries', rows_imported: totalInserted };
 }
 
+/* ── Process ORDER FLOW — PO header (Openstaande_POs.xlsx) ──
+   Upsert naar order_flow via SQL-functie order_flow_ingest.
+   Administratieve velden worden bijgewerkt; logistieke velden
+   (bol_number, container_no, customs_date, dc_received_date,
+   chassis_return_date, store1_date, ...) blijven onaangeroerd. */
+async function processOrderFlowPo(json) {
+  var keys = Object.keys(json[0] || {});
+  function iso(v) {
+    if (v == null || v === '') return null;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (typeof v === 'number') return new Date((v - 25569) * 86400000).toISOString().slice(0, 10);
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+  var rows = json.map(function(row) {
+    return {
+      po_number: String(row[findCol(keys, ['po header'])] || '').trim(),
+      vendor_code: String(row[findCol(keys, ['vendor code'])] || ''),
+      vendor_name: String(row[findCol(keys, ['vendor name'])] || ''),
+      dept: String(row[findCol(keys, ['group items'])] || ''),
+      order_store: String(row[findCol(keys, ['store number'])] || ''),
+      po_created_date: iso(row[findCol(keys, ['creation date'])]),
+      eta: iso(row[findCol(keys, ['date expected'])]),
+      po_status: String(row[findCol(keys, ['p.o. status', 'po status', 'status'])] || ''),
+      buyer_id: String(row[findCol(keys, ['buyers id', 'buyer'])] || ''),
+      total_cost: parseFloat(String(row[findCol(keys, ['total cost'])] || '').replace(/,/g, '')) || null,
+    };
+  }).filter(function(r) { return r.po_number; });
+
+  console.log('Order Flow PO header rows: ' + rows.length);
+  if (!rows.length) return { table: 'order_flow', rows_imported: 0 };
+
+  var total = 0;
+  for (var i = 0; i < rows.length; i += 2000) {
+    var chunk = rows.slice(i, i + 2000);
+    var res = await getSupabase().rpc('order_flow_ingest', { p: chunk });
+    if (res.error) { console.error('order_flow_ingest error: ' + res.error.message); continue; }
+    total += (res.data || 0);
+  }
+  console.log('Order Flow: upserted ' + total + ' PO headers');
+  return { table: 'order_flow', rows_imported: total };
+}
+
+/* ── Process ORDER FLOW — SKU-regels (Openstaande_POs_SKU_detail.xlsx) ──
+   Upsert naar order_flow_items via SQL-functie order_flow_ingest_items. */
+async function processOrderFlowItems(json) {
+  var keys = Object.keys(json[0] || {});
+  function iso(v) {
+    if (v == null || v === '') return null;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (typeof v === 'number') return new Date((v - 25569) * 86400000).toISOString().slice(0, 10);
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+  function num(v) {
+    if (v == null || v === '') return null;
+    var n = parseFloat(String(v).replace(/,/g, ''));
+    return isNaN(n) ? null : n;
+  }
+  var rows = json.map(function(row) {
+    return {
+      po_number: String(row[findCol(keys, ['po header'])] || '').trim(),
+      item_number: String(row[findCol(keys, ['item number'])] || '').trim(),
+      item_description: String(row[findCol(keys, ['item description'])] || ''),
+      dept_code: String(row[findCol(keys, ['department code'])] || ''),
+      dept_name: String(row[findCol(keys, ['department name'])] || ''),
+      qoo: num(row[findCol(keys, ['purchase quantity on order'])]),
+      avg_cost: num(row[findCol(keys, ['average cost'])]),
+      order_value: num(row[findCol(keys, ['order inventory'])]),
+      date_expected: iso(row[findCol(keys, ['date expected'])]),
+      po_status: String(row[findCol(keys, ['p.o. status', 'po status', 'status'])] || ''),
+    };
+  }).filter(function(r) { return r.po_number && r.item_number; });
+
+  console.log('Order Flow SKU rows: ' + rows.length);
+  if (!rows.length) return { table: 'order_flow_items', rows_imported: 0 };
+
+  var total = 0;
+  for (var i = 0; i < rows.length; i += 2000) {
+    var chunk = rows.slice(i, i + 2000);
+    var res = await getSupabase().rpc('order_flow_ingest_items', { p: chunk });
+    if (res.error) { console.error('order_flow_ingest_items error: ' + res.error.message); continue; }
+    total += (res.data || 0);
+  }
+  console.log('Order Flow: upserted ' + total + ' SKU-regels');
+  return { table: 'order_flow_items', rows_imported: total };
+}
+
 /* ══════════════════════════════════════════════
    MAIN HANDLER
    ══════════════════════════════════════════════ */
@@ -1334,6 +1451,10 @@ export async function POST(request) {
       result = await processPriceChanges(json);
     } else if (fileType === 'po_deliveries') {
       result = await processPoDeliveries(json);
+    } else if (fileType === 'order_flow_po') {
+      result = await processOrderFlowPo(json);
+    } else if (fileType === 'order_flow_items') {
+      result = await processOrderFlowItems(json);
     } else {
       console.error('Unknown file type. Columns: ' + columns.join(', '));
       return Response.json({ 
