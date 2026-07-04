@@ -22,7 +22,12 @@ import { createClient } from '@/lib/supabase';
 import VesselMap from '@/components/VesselMap';
 
 const fmtUSD = (n) => (n == null ? '—' : new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n)));
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('nl-NL') : '—');
+const fmtDate = (d) => {
+  if (!d) return '—';
+  const s = String(d).slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  return m ? `${+m[3]}-${+m[2]}-${m[1]}` : new Date(d).toLocaleDateString('nl-NL');
+};
 const toInput = (d) => (d ? String(d).slice(0, 10) : '');
 const STATUSES = ['open', 'in_transit', 'customs', 'received', 'closed'];
 const PAY_TERMS = [['deposit_final', 'Aanbetaling + eindfactuur'], ['prepaid', 'Alles vooraf'], ['on_account', 'Op rekening / achteraf']];
@@ -233,7 +238,7 @@ export default function OrderFlowPage() {
       if (filter.etaFrom && (!r.eta || String(r.eta).slice(0, 10) < filter.etaFrom)) return false;
       if (filter.etaTo && (!r.eta || String(r.eta).slice(0, 10) > filter.etaTo)) return false;
       if (q) {
-        const hay = `${r.po_number || ''} ${r.vendor_name || ''} ${r.vendor_code || ''} ${r.dept || ''} ${r.container_no || ''} ${r.order_store || ''}`.toLowerCase();
+        const hay = `${r.po_number || ''} ${r.vendor_name || ''} ${r.vendor_code || ''} ${r.dept_display || r.dept || ''} ${r.container_no || ''} ${r.order_store || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -334,7 +339,7 @@ export default function OrderFlowPage() {
           <div className="of-detail-head">
             <div>
               <div className="of-card-title">PO {sel.po_number}{isBonaireMultimart(sel) && <span className="star"> *</span>}</div>
-              <div className="of-sub">{sel.vendor_name || sel.vendor_code || '—'} · {sel.dept || 'afd. —'} · store {sel.order_store || '—'} · totaal {fmtUSD(sel.total_cost)}</div>
+              <div className="of-sub">{sel.vendor_name || sel.vendor_code || '—'} · {sel.dept_display || sel.dept || 'afd. —'} · store {sel.order_store || '—'} · totaal {fmtUSD(sel.total_cost)}</div>
               {isBonaireMultimart(sel) && <div className="warnline">* Bonaire/Multimart — deze flow is tot op heden nog niet ingericht.</div>}
               {sel.final_payment_late && <div className="warnline">⚠ Laatste betaling valt minder dan 3 dagen vóór de douanedatum — risico voor de paper release.</div>}
             </div>
@@ -453,7 +458,7 @@ export default function OrderFlowPage() {
               <thead><tr>
                 <Th k="po_number">PO</Th>
                 <Th k="vendor_name">Leverancier</Th>
-                <Th k="dept">Afd.</Th>
+                <Th k="dept_display">Afd.</Th>
                 <Th k="order_store">Store</Th>
                 <Th k="eta">ETA</Th>
                 <th>Map</th>
@@ -469,7 +474,7 @@ export default function OrderFlowPage() {
                   <tr key={r.id} className={`${r.in_demurrage_window ? 'danger' : ''} ${sel?.id === r.id ? 'selected' : ''}`} onClick={() => selectRow(r)}>
                     <td className="po">{r.po_number}{isBonaireMultimart(r) && <span className="star"> *</span>}</td>
                     <td>{r.vendor_name || r.vendor_code || '—'}</td>
-                    <td>{r.dept || '—'}</td>
+                    <td>{r.dept_display || r.dept || '—'}</td>
                     <td>{r.order_store || '—'}</td>
                     <td>{fmtDate(r.eta)}{r.eta_source === 'vesselfinder' && <span className="vf" title="ETA via VesselFinder"> ⚓</span>}</td>
                     <td className="mapcell">{r.vessel_lat != null ? <button className="shipbtn" title="Toon op kaart" onClick={(e) => openShip(r, e)}>🚢</button> : ''}</td>

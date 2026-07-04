@@ -3,6 +3,11 @@
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
 
+   WIJZIGINGEN V27.18:
+   - Logistiek menu: 'Schepen (wereldkaart)' toegevoegd
+     (/dashboard/logistics/vessel-map).
+   - Versie naar V27.18
+
    WIJZIGINGEN V27.17:
    - Marketing menu toegevoegd (Website foto-status →
      /dashboard/marketing/website). Zichtbaar voor
@@ -68,7 +73,7 @@ import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
 
-const APP_VERSION = 'V27.17';
+const APP_VERSION = 'V27.18';
 
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
@@ -330,6 +335,7 @@ export default function DashboardLayout({ children }) {
   const isLogistics = ['admin', 'cfo', 'manager', 'ap_approver', 'ap_clerk'].includes(profile?.role);
   const logisticsItems = [
     { href: '/dashboard/logistics/order-flow', label: 'Order Flow' },
+    { href: '/dashboard/logistics/vessel-map', label: 'Schepen (wereldkaart)' },
   ];
 
   // Marketing menu — Website foto-status
