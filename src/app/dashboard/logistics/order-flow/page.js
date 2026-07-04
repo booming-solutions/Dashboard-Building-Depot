@@ -24,7 +24,6 @@ const fmtUSD = (n) => (n == null ? '—' : new Intl.NumberFormat('nl-NL', { styl
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('nl-NL') : '—');
 const toInput = (d) => (d ? String(d).slice(0, 10) : '');
 const STATUSES = ['open', 'in_transit', 'customs', 'received', 'closed'];
-const PO_RE = /^([12]\d{4}|[BMR]\d{4})$/;
 const PAY_TERMS = [['deposit_final', 'Aanbetaling + eindfactuur'], ['prepaid', 'Alles vooraf'], ['on_account', 'Op rekening / achteraf']];
 const SEALINES = [
   ['AUTO', 'Automatisch (detecteer)'], ['MAEU', 'Maersk'], ['MSCU', 'MSC'], ['CMDU', 'CMA CGM'],
@@ -75,8 +74,8 @@ export default function OrderFlowPage() {
   const [rem, setRem] = useState({ assignee_email: '', message: '', due_at: '' });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-  const [np, setNp] = useState({ po_number: '', vendor_name: '', dept: '', eta: '', total_cost: '' });
   const [filter, setFilter] = useState({ q: '', store: '', etaFrom: '', etaTo: '' });
+  const [sort, setSort] = useState({ key: 'eta', dir: 'asc' });
   const panelRef = useRef(null);
 
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 4000); };
@@ -178,20 +177,6 @@ export default function OrderFlowPage() {
     } catch (e) { flash('Netwerkfout: ' + e.message); } finally { setTracking(false); }
   }
 
-  async function addPo() {
-    const po = np.po_number.trim().toUpperCase();
-    if (!PO_RE.test(po)) { flash('PO-nummer moet 5 tekens zijn: 1/2 + 4 cijfers, of B/M/R + 4 cijfers.'); return; }
-    setBusy(true);
-    const { error } = await supabase.from('order_flow').insert({
-      po_number: po, vendor_name: np.vendor_name || null, dept: np.dept || null,
-      eta: np.eta || null, total_cost: np.total_cost ? Number(np.total_cost) : null,
-    });
-    setBusy(false);
-    if (error) { flash('Toevoegen mislukt: ' + error.message); return; }
-    setNp({ po_number: '', vendor_name: '', dept: '', eta: '', total_cost: '' });
-    await loadRows(); flash('PO toegevoegd');
-  }
-
   async function deletePo(id, po, e) {
     e?.stopPropagation();
     if (!confirm(`PO ${po} verwijderen?`)) return;
@@ -251,6 +236,28 @@ export default function OrderFlowPage() {
       return true;
     });
   }, [rows, filter]);
+
+  const sorted = useMemo(() => {
+    const { key, dir } = sort;
+    const numeric = key === 'demurrage_est_usd';
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      let av = a[key], bv = b[key];
+      const an = av == null || av === '', bn = bv == null || bv === '';
+      if (an && bn) return 0;
+      if (an) return 1;   // lege waarden altijd onderaan
+      if (bn) return -1;
+      const r = numeric ? (Number(av) - Number(bv)) : String(av).localeCompare(String(bv), 'nl');
+      return dir === 'asc' ? r : -r;
+    });
+    return arr;
+  }, [filtered, sort]);
+
+  const Th = ({ k, cls, children }) => (
+    <th className={`${cls || ''} sortable`} onClick={() => setSort((s) => ({ key: k, dir: s.key === k && s.dir === 'asc' ? 'desc' : 'asc' }))}>
+      {children}{sort.key === k ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+    </th>
+  );
 
   const kpi = useMemo(() => {
     const mean = (arr) => (arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : null);
@@ -397,17 +404,7 @@ export default function OrderFlowPage() {
         </div>
       )}
 
-      <div className="of-card">
-        <div className="of-card-title">Nieuwe PO toevoegen</div>
-        <div className="of-add">
-          <input placeholder="PO-nummer (1/2/B/M/R + 4 cijfers)" value={np.po_number} onChange={(e) => setNp({ ...np, po_number: e.target.value })} />
-          <input placeholder="Leverancier" value={np.vendor_name} onChange={(e) => setNp({ ...np, vendor_name: e.target.value })} />
-          <input placeholder="Afdeling" value={np.dept} onChange={(e) => setNp({ ...np, dept: e.target.value })} />
-          <input type="date" title="ETA" value={np.eta} onChange={(e) => setNp({ ...np, eta: e.target.value })} />
-          <input type="number" placeholder="PO-totaal (USD)" value={np.total_cost} onChange={(e) => setNp({ ...np, total_cost: e.target.value })} />
-          <button className="btn primary" disabled={busy} onClick={addPo}>Toevoegen</button>
-        </div>
-      </div>
+      <div className="of-note">Nieuwe PO&apos;s komen automatisch binnen uit de dagelijkse Compass-import — handmatig toevoegen is niet nodig. Foutieve PO-nummers (geen 5 tekens beginnend met 1/2/B/M/R) worden bij de import automatisch overgeslagen.</div>
 
       {err && <div className="of-error">Fout: {err}</div>}
 
@@ -426,9 +423,21 @@ export default function OrderFlowPage() {
         {loading ? <div className="of-empty">Laden…</div> : rows.length === 0 ? <div className="of-empty">Nog geen PO&apos;s.</div> : filtered.length === 0 ? <div className="of-empty">Geen PO&apos;s voldoen aan de filter.</div> : (
           <div className="of-tablewrap">
             <table className="of-table">
-              <thead><tr><th>PO</th><th>Leverancier</th><th>Afd.</th><th>Store</th><th>ETA</th><th>Douane</th><th>Chassis</th><th>Demurrage</th><th>Container</th><th>Status</th><th></th></tr></thead>
+              <thead><tr>
+                <Th k="po_number">PO</Th>
+                <Th k="vendor_name">Leverancier</Th>
+                <Th k="dept">Afd.</Th>
+                <Th k="order_store">Store</Th>
+                <Th k="eta">ETA</Th>
+                <Th k="customs_date">Douane</Th>
+                <Th k="chassis_return_date">Chassis</Th>
+                <Th k="demurrage_est_usd" cls="num">Demurrage</Th>
+                <Th k="container_no">Container</Th>
+                <Th k="status">Status</Th>
+                <th></th>
+              </tr></thead>
               <tbody>
-                {filtered.map((r) => (
+                {sorted.map((r) => (
                   <tr key={r.id} className={`${r.in_demurrage_window ? 'danger' : ''} ${sel?.id === r.id ? 'selected' : ''}`} onClick={() => selectRow(r)}>
                     <td className="po">{r.po_number}{isBonaireMultimart(r) && <span className="star"> *</span>}</td>
                     <td>{r.vendor_name || r.vendor_code || '—'}</td>
@@ -493,6 +502,9 @@ const css = `
 .fsearch{flex:1 1 280px;min-width:200px}
 .frange{display:flex;align-items:center;gap:6px;font-size:12px;color:#6b7280}
 .frange input{padding:6px 8px}
+.of-table th.sortable{cursor:pointer;user-select:none}
+.of-table th.sortable:hover{color:#1B3A5C}
+.of-note{background:#eef3f9;color:#334155;border-radius:10px;padding:10px 14px;font-size:12px;margin-bottom:16px}
 .of-add{display:grid;grid-template-columns:1.4fr 1.4fr 1fr 1fr 1fr auto;gap:8px}
 .of-add input{padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;width:100%}
 .of-error{background:#fef2f2;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:16px}
