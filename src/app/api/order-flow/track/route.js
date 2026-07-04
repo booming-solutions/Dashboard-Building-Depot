@@ -105,6 +105,11 @@ export async function POST(req) {
   const patch = {
     pol_name: pol.name || null,
     pod_name: dest.name || null,
+    pol_lat: (pol.lat ?? null),
+    pol_lng: (pol.lng ?? null),
+    pod_lat: (dest.lat ?? null),
+    pod_lng: (dest.lng ?? null),
+    carrier: g.carrier || null,
     vessel_name: vessel.name || null,
     vessel_imo: vessel.imo || null,
     vessel_mmsi: vessel.mmsi || null,

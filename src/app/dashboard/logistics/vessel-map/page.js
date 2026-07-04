@@ -12,7 +12,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import VesselMap from '@/components/VesselMap';
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('nl-NL') : '—');
+const fmtDate = (d) => {
+  if (!d) return '—';
+  const s = String(d).slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  return m ? `${+m[3]}-${+m[2]}-${m[1]}` : new Date(d).toLocaleDateString('nl-NL');
+};
+const mapPos = (r) => {
+  if (r.vessel_lat != null && r.vessel_lng != null) return { lat: +r.vessel_lat, lng: +r.vessel_lng, live: true, place: r.vessel_name };
+  if (r.pod_lat != null && r.pod_lng != null) return { lat: +r.pod_lat, lng: +r.pod_lng, live: false, place: r.pod_name };
+  if (r.pol_lat != null && r.pol_lng != null) return { lat: +r.pol_lat, lng: +r.pol_lng, live: false, place: r.pol_name };
+  return null;
+};
 
 export default function VesselMapPage() {
   const [supabase] = useState(() => createClient());
@@ -24,8 +35,8 @@ export default function VesselMapPage() {
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from('order_flow')
-        .select('id, po_number, vendor_name, container_no, eta, vessel_name, vessel_lat, vessel_lng, tracking_updated_at')
-        .not('vessel_lat', 'is', null);
+        .select('id, po_number, vendor_name, container_no, eta, carrier, vessel_name, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, tracking_updated_at')
+        .or('vessel_lat.not.is.null,pod_lat.not.is.null,pol_lat.not.is.null');
       setRows(data || []);
       setLoading(false);
     })();
@@ -55,10 +66,15 @@ export default function VesselMapPage() {
       if (hay.includes(term)) return true;
       if (skuPOs && skuPOs.has(r.po_number)) return true;
       return false;
-    }).map((r) => ({
-      id: r.id, po_number: r.po_number, vendor_name: r.vendor_name, container_no: r.container_no,
-      eta: fmtDate(r.eta), name: r.vessel_name, lat: Number(r.vessel_lat), lng: Number(r.vessel_lng),
-    }));
+    }).map((r) => {
+      const p = mapPos(r);
+      return {
+        id: r.id, po_number: r.po_number, vendor_name: r.vendor_name, container_no: r.container_no,
+        eta: fmtDate(r.eta), name: r.vessel_name, carrier: r.carrier,
+        live: p ? p.live : true, place: p ? p.place : null,
+        lat: p ? p.lat : null, lng: p ? p.lng : null,
+      };
+    }).filter((v) => v.lat != null);
   }, [rows, q, skuPOs]);
 
   return (

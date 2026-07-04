@@ -64,12 +64,16 @@ export default function VesselMap({ vessels = [], focusId = null, height = 420 }
       const pts = [];
       vessels.forEach((v) => {
         if (v.lat == null || v.lng == null || isNaN(v.lat) || isNaN(v.lng)) return;
-        const icon = L.divIcon({ html: '🚢', className: 'vf-ship', iconSize: [26, 26], iconAnchor: [13, 13] });
+        const glyph = v.live === false ? '📍' : '🚢';
+        const icon = L.divIcon({ html: glyph, className: 'vf-ship', iconSize: [26, 26], iconAnchor: [13, 13] });
         const m = L.marker([v.lat, v.lng], { icon }).addTo(map);
+        const posNote = v.live === false ? `Laatst bekend: ${esc(v.place || '—')}` : 'Live scheepspositie';
         m.bindPopup(
-          `<div style="font:13px system-ui,Arial"><b>${esc(v.name || 'Schip')}</b><br/>`
+          `<div style="font:13px system-ui,Arial"><b>${esc(v.name || v.place || 'Schip')}</b><br/>`
           + `PO ${esc(v.po_number || '—')}<br/>${esc(v.vendor_name || '')}<br/>`
-          + `Container ${esc(v.container_no || '—')}<br/>ETA ${esc(v.eta || '—')}</div>`
+          + (v.carrier ? `Rederij ${esc(v.carrier)}<br/>` : '')
+          + `Container ${esc(v.container_no || '—')}<br/>ETA ${esc(v.eta || '—')}<br/>`
+          + `<span style="color:#6b7280">${posNote}</span></div>`
         );
         markersRef.current[v.id] = m;
         pts.push([v.lat, v.lng]);
