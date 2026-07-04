@@ -36,8 +36,8 @@ export default function VesselMapPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('order_flow')
-        .select('id, po_number, vendor_name, container_no, eta, carrier, vessel_name, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, tracking_updated_at')
+      const { data } = await supabase.from('order_flow_containers')
+        .select('id, container_no, eta, carrier, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, order_flow ( po_number, vendor_name )')
         .or('vessel_lat.not.is.null,pod_lat.not.is.null,pol_lat.not.is.null');
       setRows(data || []);
       setLoading(false);
@@ -63,17 +63,18 @@ export default function VesselMapPage() {
   const vessels = useMemo(() => {
     const term = q.trim().toLowerCase();
     return rows.filter((r) => {
+      const po = r.order_flow?.po_number || '';
       if (!term) return true;
-      const hay = `${r.po_number || ''} ${r.vendor_name || ''} ${r.container_no || ''}`.toLowerCase();
+      const hay = `${po} ${r.order_flow?.vendor_name || ''} ${r.container_no || ''}`.toLowerCase();
       if (hay.includes(term)) return true;
-      if (skuPOs && skuPOs.has(r.po_number)) return true;
+      if (skuPOs && skuPOs.has(po)) return true;
       return false;
     }).map((r) => {
       const p = mapPos(r);
       return {
-        id: r.id, po_number: r.po_number, vendor_name: r.vendor_name, container_no: r.container_no,
+        id: r.id, po_number: r.order_flow?.po_number, vendor_name: r.order_flow?.vendor_name, container_no: r.container_no,
         eta: fmtDate(r.eta), name: r.vessel_name, carrier: r.carrier,
-        live: p ? p.live : true, place: p ? p.place : null,
+        imo: r.vessel_imo, live: p ? p.live : true, place: p ? p.place : null,
         lat: p ? p.lat : null, lng: p ? p.lng : null,
       };
     }).filter((v) => v.lat != null);

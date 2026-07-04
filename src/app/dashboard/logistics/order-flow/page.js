@@ -46,6 +46,7 @@ const mapPos = (r) => {
   if (r.pol_lat != null && r.pol_lng != null) return { lat: +r.pol_lat, lng: +r.pol_lng, live: false, place: r.pol_name };
   return null;
 };
+const tokens = (str) => String(str || '').split(/[\s,;]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
 
 function Journey({ steps, demUsd, demDays }) {
   return (
@@ -81,7 +82,6 @@ export default function OrderFlowPage() {
   const [items, setItems] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [tracking, setTracking] = useState(false);
   const [comments, setComments] = useState([]);
   const [reminders, setReminders] = useState([]);
   const [commentText, setCommentText] = useState('');
@@ -92,6 +92,10 @@ export default function OrderFlowPage() {
   const [sort, setSort] = useState({ key: 'eta', dir: 'asc' });
   const [showMap, setShowMap] = useState(false);
   const [mapFocus, setMapFocus] = useState(null);
+  const [containers, setContainers] = useState([]);
+  const [allContainers, setAllContainers] = useState([]);
+  const [newCont, setNewCont] = useState('');
+  const [trackingId, setTrackingId] = useState(null);
   const panelRef = useRef(null);
 
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 4000); };
@@ -110,6 +114,7 @@ export default function OrderFlowPage() {
       const { data: adm } = await supabase.rpc('is_admin');
       setIsAdmin(adm === true);
       await loadRows();
+      await loadAllContainers();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -130,8 +135,6 @@ export default function OrderFlowPage() {
       dc_received_date: toInput(row.dc_received_date),
       chassis_return_date: toInput(row.chassis_return_date),
       store1_date: toInput(row.store1_date),
-      container_no: row.container_no || '',
-      sealine: row.sealine || 'AUTO',
       payment_terms: row.payment_terms || 'deposit_final',
       deposit_paid_at: toInput(row.deposit_paid_at),
       final_paid_at: toInput(row.final_paid_at),
@@ -146,6 +149,7 @@ export default function OrderFlowPage() {
       supabase.from('order_flow_reminders').select('*').eq('po_id', row.id).order('due_at', { ascending: true }),
     ]);
     setItems(it || []); setComments(cm || []); setReminders(rm || []);
+    loadContainers(row.id);
     setTimeout(() => panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   }
 
@@ -158,8 +162,6 @@ export default function OrderFlowPage() {
       customs_date: D(edit.customs_date), import_duties_paid_date: D(edit.import_duties_paid_date),
       transport_to_dc_date: D(edit.transport_to_dc_date), dc_received_date: D(edit.dc_received_date),
       chassis_return_date: D(edit.chassis_return_date), store1_date: D(edit.store1_date),
-      container_no: edit.container_no ? edit.container_no.trim().toUpperCase() : null,
-      sealine: edit.sealine || 'AUTO',
       payment_terms: edit.payment_terms || 'deposit_final',
       deposit_paid_at: D(edit.deposit_paid_at), final_paid_at: D(edit.final_paid_at),
       dc_store: edit.dc_store === '' ? null : Number(edit.dc_store),
@@ -174,23 +176,52 @@ export default function OrderFlowPage() {
     await refreshRow(sel.id);
   }
 
-  async function trackVessel() {
+  async function loadContainers(poId) {
+    const { data } = await supabase.from('order_flow_containers').select('*').eq('po_id', poId).order('created_at', { ascending: true });
+    setContainers(data || []);
+  }
+  async function loadAllContainers() {
+    const { data } = await supabase.from('order_flow_containers')
+      .select('id, po_id, container_no, eta, carrier, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, order_flow ( po_number, vendor_name )')
+      .or('vessel_lat.not.is.null,pod_lat.not.is.null,pol_lat.not.is.null');
+    setAllContainers(data || []);
+  }
+  async function addContainers(str) {
     if (!sel) return;
-    const c = (edit.container_no || '').trim();
-    if (c.length !== 11) { flash('Containernummer moet 11 tekens zijn (4 letters + 7 cijfers).'); return; }
-    setTracking(true);
+    const list = [...new Set(tokens(str))];
+    if (!list.length) return;
+    const rows = list.map((cn) => ({ po_id: sel.id, container_no: cn, sealine: 'AUTO' }));
+    const { error } = await supabase.from('order_flow_containers').upsert(rows, { onConflict: 'po_id,container_no', ignoreDuplicates: true });
+    if (error) { flash('Toevoegen mislukt: ' + error.message); return; }
+    setNewCont(''); await loadContainers(sel.id); await loadAllContainers();
+    flash(list.length > 1 ? `${list.length} containers toegevoegd` : 'Container toegevoegd');
+  }
+  function onPasteContainers(e) {
+    const t = e.clipboardData.getData('text');
+    if (tokens(t).length > 1) { e.preventDefault(); addContainers(t); }
+  }
+  async function updateContainer(id, field, val) {
+    const v = field === 'container_no' ? String(val).trim().toUpperCase() : val;
+    const { error } = await supabase.from('order_flow_containers').update({ [field]: v }).eq('id', id);
+    if (error) { flash('Opslaan mislukt: ' + error.message); return; }
+    await loadContainers(sel.id); await loadAllContainers();
+  }
+  async function removeContainer(id) {
+    if (!confirm('Container verwijderen?')) return;
+    await supabase.from('order_flow_containers').delete().eq('id', id);
+    await loadContainers(sel.id); await loadAllContainers();
+  }
+  async function trackContainer(id) {
+    setTrackingId(id);
     try {
-      await saveEdits();
-      const res = await fetch('/api/order-flow/track', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ po_id: sel.id }),
-      });
+      const res = await fetch('/api/order-flow/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ container_id: id }) });
       const j = await res.json();
       if (!res.ok) { flash(j.error || 'Ophalen mislukt'); return; }
-      if (j.status === 'processing') { flash(j.message); }
-      else if (j.status === 'error') { flash('VesselFinder: ' + j.message); }
-      else { flash(`ETA ${fmtDate(j.eta)} · ${j.carrier || ''} · schip ${j.vessel || '—'} (nog ${j.containers_remaining} containers over)`); }
-      await refreshRow(sel.id);
-    } catch (e) { flash('Netwerkfout: ' + e.message); } finally { setTracking(false); }
+      if (j.status === 'processing') flash(j.message);
+      else if (j.status === 'error') flash('VesselFinder: ' + j.message);
+      else flash(`ETA ${fmtDate(j.eta)} · ${j.carrier || ''} · ${j.vessel || '—'} (nog ${j.containers_remaining} containers over)`);
+      await loadContainers(sel.id); await loadAllContainers(); if (sel) await refreshRow(sel.id);
+    } catch (e) { flash('Netwerkfout: ' + e.message); } finally { setTrackingId(null); }
   }
 
   async function deletePo(id, po, e) {
@@ -301,19 +332,27 @@ export default function OrderFlowPage() {
 
   const itemsTotal = useMemo(() => items.reduce((s, i) => s + (Number(i.order_value) || 0), 0), [items]);
 
-  const vessels = useMemo(() => rows.map((r) => {
-    const p = mapPos(r);
+  const vessels = useMemo(() => allContainers.map((c) => {
+    const p = mapPos(c);
     if (!p) return null;
     return {
-      id: r.id, po_number: r.po_number, vendor_name: r.vendor_name, container_no: r.container_no,
-      eta: r.eta ? fmtDate(r.eta) : '—', name: r.vessel_name, carrier: r.carrier,
-      live: p.live, place: p.place, lat: p.lat, lng: p.lng,
+      id: c.id, po_id: c.po_id, po_number: c.order_flow?.po_number, vendor_name: c.order_flow?.vendor_name,
+      container_no: c.container_no, eta: c.eta ? fmtDate(c.eta) : '—', name: c.vessel_name, carrier: c.carrier,
+      imo: c.vessel_imo, live: p.live, place: p.place, lat: p.lat, lng: p.lng,
     };
-  }).filter(Boolean), [rows]);
+  }).filter(Boolean), [allContainers]);
+
+  const containersByPo = useMemo(() => {
+    const m = {};
+    vessels.forEach((v) => { (m[v.po_id] = m[v.po_id] || []).push(v); });
+    return m;
+  }, [vessels]);
 
   function openShip(r, e) {
     e?.stopPropagation();
-    setMapFocus(r.id); setShowMap(true);
+    const vs = containersByPo[r.id];
+    setMapFocus(vs && vs[0] ? vs[0].id : null);
+    setShowMap(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -359,20 +398,34 @@ export default function OrderFlowPage() {
 
           <Journey steps={selSteps} demUsd={sel.demurrage_est_usd} demDays={sel.demurrage_days} />
 
-          {(sel.vessel_name || sel.tracking_status) && (
-            <div className="track">
-              {sel.tracking_status === 'success'
-                ? <>{sel.vessel_lat != null ? '🚢' : '📍'} <b>{sel.vessel_name || sel.pod_name || '—'}</b>{sel.carrier ? ` · ${sel.carrier}` : ''} · voortgang {sel.tracking_progress ?? '—'}% · {sel.pol_name || '—'} → {sel.pod_name || '—'} · {sel.vessel_lat != null ? `positie ${sel.vessel_lat}, ${sel.vessel_lng}` : `geen live positie (laatst bekend: ${sel.pod_name || sel.pol_name || '—'})`}</>
-                : <>VesselFinder: {sel.tracking_message || sel.tracking_status}</>}
-            </div>
-          )}
+          <div className="of-block-title">Containers <span className="of-sub">({containers.length})</span></div>
+          <div className="cont-add">
+            <input placeholder="Plak containernummer(s) — meerdere mag (spatie, komma of enter)" value={newCont}
+              onChange={(e) => setNewCont(e.target.value)}
+              onPaste={onPasteContainers}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addContainers(newCont); } }} />
+            <button className="btn" onClick={() => addContainers(newCont)}>Toevoegen</button>
+          </div>
+          <div className="cont-list">
+            {containers.length === 0 && <div className="of-sub">Nog geen containers. Plak hierboven één of meerdere nummers.</div>}
+            {containers.map((c) => (
+              <div key={c.id} className="cont-row">
+                <input className="cno" defaultValue={c.container_no} placeholder="ABCD1234567" onBlur={(e) => updateContainer(c.id, 'container_no', e.target.value)} />
+                <select value={c.sealine || 'AUTO'} onChange={(e) => updateContainer(c.id, 'sealine', e.target.value)}>{SEALINES.map(([code, n]) => <option key={code} value={code}>{n}</option>)}</select>
+                <button className="btn" disabled={trackingId === c.id} onClick={() => trackContainer(c.id)}>{trackingId === c.id ? 'Ophalen…' : 'ETA ophalen'}</button>
+                <button className="link del" title="Verwijderen" onClick={() => removeContainer(c.id)}>✕</button>
+                <div className="cont-info">
+                  {c.tracking_status === 'success'
+                    ? <>{c.vessel_lat != null ? '🚢' : '📍'} {c.vessel_name || c.pod_name || '—'}{c.carrier ? ` · ${c.carrier}` : ''} · ETA {c.eta ? fmtDate(c.eta) : '—'} · {c.tracking_progress ?? '—'}%{mapPos(c) && <> · <button className="link" onClick={() => { setMapFocus(c.id); setShowMap(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>kaart</button></>}</>
+                    : c.tracking_status ? <span className="of-sub">VesselFinder: {c.tracking_message || c.tracking_status}</span>
+                      : <span className="of-sub">Nog niet opgehaald</span>}
+                </div>
+              </div>
+            ))}
+          </div>
 
           <div className="of-block-title">Bewerken</div>
           <div className="edit-grid">
-            <label>Container-nr (11 tekens)<input value={edit.container_no} onChange={(e) => setEdit({ ...edit, container_no: e.target.value })} placeholder="ABCD1234567" /></label>
-            <label>Rederij<select value={edit.sealine} onChange={(e) => setEdit({ ...edit, sealine: e.target.value })}>{SEALINES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
-            <div className="save-cell"><button className="btn" disabled={tracking} onClick={trackVessel}>{tracking ? 'Ophalen…' : 'ETA ophalen via VesselFinder'}</button></div>
-
             <label>PO goedgekeurd<input type="date" value={edit.po_approved_date} onChange={(e) => setEdit({ ...edit, po_approved_date: e.target.value })} /></label>
             <label>Onderweg sinds<input type="date" value={edit.in_transit_date} onChange={(e) => setEdit({ ...edit, in_transit_date: e.target.value })} /></label>
             <label>Douanedatum<input type="date" value={edit.customs_date} onChange={(e) => setEdit({ ...edit, customs_date: e.target.value })} /></label>
@@ -476,7 +529,7 @@ export default function OrderFlowPage() {
                 <Th k="customs_date">Douane</Th>
                 <Th k="chassis_return_date">Chassis</Th>
                 <Th k="demurrage_est_usd" cls="num">Demurrage</Th>
-                <Th k="container_no">Container</Th>
+                <Th k="container_count" cls="num">Cont.</Th>
                 <Th k="status">Status</Th>
                 <th></th>
               </tr></thead>
@@ -488,11 +541,11 @@ export default function OrderFlowPage() {
                     <td>{r.dept_display || r.dept || '—'}</td>
                     <td>{r.order_store || '—'}</td>
                     <td>{fmtDate(r.eta)}{r.eta_source === 'vesselfinder' && <span className="vf" title="ETA via VesselFinder"> ⚓</span>}</td>
-                    <td className="mapcell">{(() => { const p = mapPos(r); return p ? <button className="shipbtn" title={p.live ? 'Live positie — toon op kaart' : 'Laatst bekende haven — toon op kaart'} onClick={(e) => openShip(r, e)}>{p.live ? '🚢' : '📍'}</button> : ''; })()}</td>
+                    <td className="mapcell">{(() => { const vs = containersByPo[r.id]; if (!vs || !vs.length) return ''; const live = vs.some((v) => v.live); return <button className="shipbtn" title="Toon containers op kaart" onClick={(e) => openShip(r, e)}>{live ? '🚢' : '📍'}</button>; })()}</td>
                     <td>{fmtDate(r.customs_date)}</td>
                     <td>{fmtDate(r.chassis_return_date)}</td>
                     <td className="num"><span className={`dem ${demColor(r.demurrage_est_usd)}`}>{r.demurrage_est_usd != null ? fmtUSD(r.demurrage_est_usd) : '—'}</span></td>
-                    <td>{r.container_no || '—'}{r.carrier && <div className="of-sub">{r.carrier}</div>}</td>
+                    <td className="num">{r.container_count || 0}</td>
                     <td>{r.status || 'open'}</td>
                     <td>{isAdmin && <button className="link del" onClick={(e) => deletePo(r.id, r.po_number, e)}>verwijder</button>}</td>
                   </tr>
@@ -536,6 +589,14 @@ const css = `
 .jbadge{margin-top:6px;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;display:inline-block}
 .jbadge.g{background:#dcfce7;color:#166534}.jbadge.o{background:#fef3c7;color:#92400e}.jbadge.r{background:#fee2e2;color:#b91c1c}
 .track{background:#f0f6ff;border:1px solid #dbeafe;border-radius:8px;padding:8px 12px;font-size:12px;color:#1e3a5c;margin:8px 0}
+.cont-add{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px}
+.cont-add input{padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px}
+.cont-list{display:flex;flex-direction:column;gap:8px}
+.cont-row{display:grid;grid-template-columns:160px 190px auto auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid #eef0f2;border-radius:8px}
+.cont-row .cno{padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;text-transform:uppercase}
+.cont-row select{padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
+.cont-info{grid-column:1 / -1;font-size:12px;color:#374151}
+@media(max-width:1000px){.cont-row{grid-template-columns:1fr 1fr}}
 .of-block-title{font-weight:600;font-size:13px;margin:14px 0 8px;color:#374151}
 .edit-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:end}
 .edit-grid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7280}
