@@ -76,6 +76,7 @@ export default function OrderFlowPage() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
   const [np, setNp] = useState({ po_number: '', vendor_name: '', dept: '', eta: '', total_cost: '' });
+  const [filter, setFilter] = useState({ q: '', store: '', etaFrom: '', etaTo: '' });
   const panelRef = useRef(null);
 
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 4000); };
@@ -234,6 +235,22 @@ export default function OrderFlowPage() {
     await supabase.from('order_flow_reminders').update({ status }).eq('id', id);
     if (sel) await selectRow(sel);
   }
+
+  const storeOpts = useMemo(() => Array.from(new Set(rows.map((r) => r.order_store).filter(Boolean))).sort(), [rows]);
+
+  const filtered = useMemo(() => {
+    const q = filter.q.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (filter.store && String(r.order_store || '') !== filter.store) return false;
+      if (filter.etaFrom && (!r.eta || String(r.eta).slice(0, 10) < filter.etaFrom)) return false;
+      if (filter.etaTo && (!r.eta || String(r.eta).slice(0, 10) > filter.etaTo)) return false;
+      if (q) {
+        const hay = `${r.po_number || ''} ${r.vendor_name || ''} ${r.vendor_code || ''} ${r.dept || ''} ${r.container_no || ''} ${r.order_store || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [rows, filter]);
 
   const kpi = useMemo(() => {
     const mean = (arr) => (arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : null);
@@ -395,13 +412,23 @@ export default function OrderFlowPage() {
       {err && <div className="of-error">Fout: {err}</div>}
 
       <div className="of-card">
-        <div className="of-card-title">Alle PO&apos;s <span className="of-sub">— klik een rij voor de reis</span></div>
-        {loading ? <div className="of-empty">Laden…</div> : rows.length === 0 ? <div className="of-empty">Nog geen PO&apos;s.</div> : (
+        <div className="of-card-title">Alle PO&apos;s <span className="of-sub">— {filtered.length} van {rows.length} · klik een rij voor de reis</span></div>
+        <div className="filterbar">
+          <input className="fsearch" placeholder="Zoek op PO, leverancier, afdeling of container…" value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} />
+          <select value={filter.store} onChange={(e) => setFilter({ ...filter, store: e.target.value })}>
+            <option value="">Alle stores</option>
+            {storeOpts.map((s) => <option key={s} value={s}>store {s}</option>)}
+          </select>
+          <label className="frange">ETA van<input type="date" value={filter.etaFrom} onChange={(e) => setFilter({ ...filter, etaFrom: e.target.value })} /></label>
+          <label className="frange">t/m<input type="date" value={filter.etaTo} onChange={(e) => setFilter({ ...filter, etaTo: e.target.value })} /></label>
+          {(filter.q || filter.store || filter.etaFrom || filter.etaTo) && <button className="link" onClick={() => setFilter({ q: '', store: '', etaFrom: '', etaTo: '' })}>wissen</button>}
+        </div>
+        {loading ? <div className="of-empty">Laden…</div> : rows.length === 0 ? <div className="of-empty">Nog geen PO&apos;s.</div> : filtered.length === 0 ? <div className="of-empty">Geen PO&apos;s voldoen aan de filter.</div> : (
           <div className="of-tablewrap">
             <table className="of-table">
               <thead><tr><th>PO</th><th>Leverancier</th><th>Afd.</th><th>Store</th><th>ETA</th><th>Douane</th><th>Chassis</th><th>Demurrage</th><th>Container</th><th>Status</th><th></th></tr></thead>
               <tbody>
-                {rows.map((r) => (
+                {filtered.map((r) => (
                   <tr key={r.id} className={`${r.in_demurrage_window ? 'danger' : ''} ${sel?.id === r.id ? 'selected' : ''}`} onClick={() => selectRow(r)}>
                     <td className="po">{r.po_number}{isBonaireMultimart(r) && <span className="star"> *</span>}</td>
                     <td>{r.vendor_name || r.vendor_code || '—'}</td>
@@ -461,6 +488,11 @@ const css = `
 .edit-grid input,.edit-grid select{padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px}
 .save-cell{display:flex;align-items:center;gap:10px}
 .saved{color:#166534;font-size:13px;font-weight:500}
+.filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.filterbar input,.filterbar select{padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px}
+.fsearch{flex:1 1 280px;min-width:200px}
+.frange{display:flex;align-items:center;gap:6px;font-size:12px;color:#6b7280}
+.frange input{padding:6px 8px}
 .of-add{display:grid;grid-template-columns:1.4fr 1.4fr 1fr 1fr 1fr auto;gap:8px}
 .of-add input{padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;width:100%}
 .of-error{background:#fef2f2;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:16px}
