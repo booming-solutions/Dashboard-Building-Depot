@@ -10,7 +10,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import VesselMap from '@/components/VesselMap';
+import dynamic from 'next/dynamic';
+
+const VesselMap = dynamic(() => import('@/components/VesselMap'), { ssr: false, loading: () => <div style={{ height: 580, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>Kaart laden…</div> });
 
 const fmtDate = (d) => {
   if (!d) return '—';
