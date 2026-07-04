@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import VesselMap from '@/components/VesselMap';
 
 const fmtUSD = (n) => (n == null ? '—' : new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n)));
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('nl-NL') : '—');
@@ -76,6 +77,8 @@ export default function OrderFlowPage() {
   const [toast, setToast] = useState(null);
   const [filter, setFilter] = useState({ q: '', store: '', etaFrom: '', etaTo: '' });
   const [sort, setSort] = useState({ key: 'eta', dir: 'asc' });
+  const [showMap, setShowMap] = useState(false);
+  const [mapFocus, setMapFocus] = useState(null);
   const panelRef = useRef(null);
 
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 4000); };
@@ -285,6 +288,19 @@ export default function OrderFlowPage() {
 
   const itemsTotal = useMemo(() => items.reduce((s, i) => s + (Number(i.order_value) || 0), 0), [items]);
 
+  const vessels = useMemo(() => rows
+    .filter((r) => r.vessel_lat != null && r.vessel_lng != null)
+    .map((r) => ({
+      id: r.id, po_number: r.po_number, vendor_name: r.vendor_name, container_no: r.container_no,
+      eta: r.eta ? fmtDate(r.eta) : '—', name: r.vessel_name, lat: Number(r.vessel_lat), lng: Number(r.vessel_lng),
+    })), [rows]);
+
+  function openShip(r, e) {
+    e?.stopPropagation();
+    setMapFocus(r.id); setShowMap(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   return (
     <div className="of-wrap">
       <style>{css}</style>
@@ -301,6 +317,17 @@ export default function OrderFlowPage() {
         <div className={`kpi ${kpi.dem ? 'warn' : ''}`}><span>{fmtUSD(kpi.dem)}</span>gem. demurrage</div>
         <div className={`kpi ${kpi.inWindow ? 'warn' : ''}`}><span>{kpi.inWindow}</span>in demurrage-venster</div>
       </div>
+
+      {showMap && (
+        <div className="of-card">
+          <div className="of-detail-head">
+            <div className="of-card-title">Schepen op de kaart <span className="of-sub">{vessels.length} met live positie (via VesselFinder)</span></div>
+            <button className="link" onClick={() => setShowMap(false)}>sluiten ✕</button>
+          </div>
+          {vessels.length === 0 ? <div className="of-empty">Nog geen schepen met een live positie. Haal eerst een ETA op via VesselFinder.</div>
+            : <VesselMap vessels={vessels} focusId={mapFocus} height={380} />}
+        </div>
+      )}
 
       {sel && (
         <div className="of-card hl" ref={panelRef}>
@@ -429,6 +456,7 @@ export default function OrderFlowPage() {
                 <Th k="dept">Afd.</Th>
                 <Th k="order_store">Store</Th>
                 <Th k="eta">ETA</Th>
+                <th>Map</th>
                 <Th k="customs_date">Douane</Th>
                 <Th k="chassis_return_date">Chassis</Th>
                 <Th k="demurrage_est_usd" cls="num">Demurrage</Th>
@@ -444,6 +472,7 @@ export default function OrderFlowPage() {
                     <td>{r.dept || '—'}</td>
                     <td>{r.order_store || '—'}</td>
                     <td>{fmtDate(r.eta)}{r.eta_source === 'vesselfinder' && <span className="vf" title="ETA via VesselFinder"> ⚓</span>}</td>
+                    <td className="mapcell">{r.vessel_lat != null ? <button className="shipbtn" title="Toon op kaart" onClick={(e) => openShip(r, e)}>🚢</button> : ''}</td>
                     <td>{fmtDate(r.customs_date)}</td>
                     <td>{fmtDate(r.chassis_return_date)}</td>
                     <td className="num"><span className={`dem ${demColor(r.demurrage_est_usd)}`}>{r.demurrage_est_usd != null ? fmtUSD(r.demurrage_est_usd) : '—'}</span></td>
@@ -523,6 +552,9 @@ const css = `
 .dem{padding:2px 6px;border-radius:5px;font-weight:600}
 .dem.g{background:#dcfce7;color:#166534}.dem.o{background:#fef3c7;color:#92400e}.dem.r{background:#fee2e2;color:#b91c1c}
 .vf{color:#1d4ed8}
+.mapcell{text-align:center}
+.shipbtn{background:none;border:none;cursor:pointer;font-size:16px;padding:0;line-height:1}
+.shipbtn:hover{transform:scale(1.2)}
 .link{background:none;border:none;color:#1d4ed8;cursor:pointer;font-size:13px;padding:0;text-decoration:underline}
 .link.del{color:#b91c1c}
 .btn{padding:8px 14px;border:1px solid #d1d5db;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
