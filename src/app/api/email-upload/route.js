@@ -1,7 +1,17 @@
 /* ============================================================
-   BESTAND: route_email_v24.js
+   BESTAND: route_email_v25.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
+   WIJZIGING v25:
+   - Voorraad-/inkoopbestanden hebben geen "Department Group" meer.
+     BUM wordt nu afgeleid uit "Department Code" via tabel public.dept_bum.
+     (Detectie accepteert Department Group OF Department Code.)
+   - Bestanden zijn nu PER STORE. buying_data blijft per regio: de per-store
+     regels worden per (BUM, regio, item) geaggregeerd -> dashboards/NOS
+     ongewijzigd. Store-groep "MMC" (Multimart) wordt nu ook herkend.
+   - Nieuwe dagelijkse momentopname public.stock_snapshots (per SKU per store,
+     alleen items op open PO's) voor de opboek-detectie (DC/winkel).
+   - Vereiste SQL vooraf: dept_bum + stock_snapshots (STAP 25/26).
    WIJZIGING v24:
    - Twee nieuwe Order Flow rapporten toegevoegd:
      * 'order_flow_po'    (Openstaande_POs.xlsx)  -> tabel order_flow
@@ -129,11 +139,12 @@ function detectFileType(columns) {
     return 'inventory';
   }
 
-  // Buying data: has "Item Number" + "Quantity on Hand" + "Sales Units" + "Department Group"
+  // Buying data: "Item Number" + "Quantity on Hand" + "Sales Units" + (Department Group OF Department Code)
   if (cols.some(function(c) { return c.includes('item number'); }) &&
       cols.some(function(c) { return c.includes('quantity on hand'); }) &&
       cols.some(function(c) { return c.includes('sales units'); }) &&
-      cols.some(function(c) { return c.includes('department group'); })) {
+      (cols.some(function(c) { return c.includes('department group'); }) ||
+       cols.some(function(c) { return c.includes('department code'); }))) {
     return 'buying';
   }
 
@@ -664,6 +675,51 @@ async function processTickets(json) {
 }
 
 /* ── Process BUYING data (per BUM, full replace) ── */
+/* ── Entiteit op basis van store: 1/2/3/4/5/9=Curacao, A/B=Bonaire, M=Multimart ── */
+function entityOf(s) {
+  s = String(s || '').trim().toUpperCase();
+  if (s === 'A' || s === 'B') return 'Bonaire';
+  if (s === 'M') return 'Multimart';
+  return 'Curacao';
+}
+
+/* ── Dagelijkse voorraad-momentopname PER SKU PER STORE ──
+   Alleen voor artikelen die op een open PO staan (order_flow_items),
+   zodat de tabel klein blijft. Dit is de historie voor opboek-detectie. */
+async function writeStockSnapshot(json, keys, deptBum) {
+  var poItems = {};
+  var pi = await getSupabase().from('order_flow_items').select('item_number');
+  if (pi.error) { console.error('snapshot: order_flow_items laden mislukt: ' + pi.error.message); return; }
+  (pi.data || []).forEach(function(x) { poItems[String(x.item_number).trim()] = true; });
+  if (!Object.keys(poItems).length) { console.log('snapshot: geen PO-items, overslaan'); return; }
+
+  var today = new Date().toISOString().slice(0, 10);
+  var seen = {};
+  var out = [];
+  json.forEach(function(row) {
+    var item = String(row[findCol(keys, ['item number'])] || '').trim();
+    if (!item || !poItems[item]) return;
+    var store = String(row[findCol(keys, ['store number'])] || '').trim();
+    if (!store) return;
+    var dept = String(row[findCol(keys, ['department code'])] || '').trim();
+    if (/^\d$/.test(dept)) dept = '0' + dept;
+    var qoh = parseFloat(row[findCol(keys, ['quantity on hand'])] || 0);
+    if (Number.isNaN(qoh)) qoh = 0;
+    var k = store + '|' + item;
+    if (seen[k] === undefined) { seen[k] = out.length; out.push({ snapshot_date: today, store_number: store, entity: entityOf(store), item_number: item, dept_code: dept, bum: deptBum[dept] || null, qoh: qoh }); }
+    else { out[seen[k]].qoh += qoh; }
+  });
+
+  var n = 0;
+  for (var i = 0; i < out.length; i += 500) {
+    var b = out.slice(i, i + 500);
+    var res = await getSupabase().from('stock_snapshots').upsert(b, { onConflict: 'snapshot_date,store_number,item_number' });
+    if (res.error) { console.error('stock_snapshots upsert error: ' + res.error.message); continue; }
+    n += b.length;
+  }
+  console.log('stock_snapshots: ' + n + ' rijen weggeschreven voor ' + today);
+}
+
 async function processBuying(json) {
   // Verzamel ALLE keys die in ANY rij voorkomen (niet alleen rij 1)
   // Reden: SheetJS skipt lege cellen, dus rij 1 kan kolommen missen
@@ -674,13 +730,22 @@ async function processBuying(json) {
   }
   var keys = Object.keys(keysSet);
 
-  // Detect BUM from data
-  var bumCol = findCol(keys, ['department group']);
-  var allBums = {};
-  json.forEach(function(row) { var b = String(row[bumCol] || '').trim().toUpperCase(); if (b) allBums[b] = true; });
-  var bumList = Object.keys(allBums);
-  if (!bumList.length) throw new Error('No BUM (Department Group) found in buying data');
-  console.log('BUM(s) in file: ' + bumList.join(', '));
+  // BUM-mapping laden (afdeling -> BUM) uit dept_bum tabel
+  var deptBum = {};
+  try {
+    var mp = await getSupabase().from('dept_bum').select('dept_code, bum');
+    (mp.data || []).forEach(function(m) { deptBum[String(m.dept_code).trim()] = String(m.bum || '').trim().toUpperCase(); });
+  } catch (e) { console.error('dept_bum laden mislukt: ' + e.message); }
+  var bumCol = findCol(keys, ['department group']); // fallback als de kolom nog bestaat
+  function bumOf(row) {
+    var dc = String(row[findCol(keys, ['department code'])] || '').trim();
+    if (/^\d$/.test(dc)) dc = '0' + dc;
+    if (deptBum[dc]) return deptBum[dc];
+    return String(row[bumCol] || '').trim().toUpperCase();
+  }
+
+  // Dagelijkse per-store momentopname (voor opboek-detectie) — vóór aggregatie
+  try { await writeStockSnapshot(json, keys, deptBum); } catch (e) { console.error('snapshot mislukt: ' + e.message); }
 
   // Find the 12 sales columns (they contain "Sales Units")
   var salesCols = keys.filter(function(k) { return k.toLowerCase().includes('sales units') && !k.toLowerCase().includes('total') && !k.toLowerCase().includes('period'); });
@@ -733,8 +798,8 @@ async function processBuying(json) {
     // store_number blijft leeg bij buying imports (Compass export is
     // geaggregeerd, niet per fysieke store). Filtering in dashboard
     // gebeurt op regio.
-    var rawStore = String(row[findCol(keys, ['store group', 'store number', 'store'])] || '').trim().toUpperCase();
-    var regio = rawStore === 'CUR' || rawStore === 'BON' ? rawStore : null;
+    var rawStore = String(row[findCol(keys, ['store group'])] || '').trim().toUpperCase();
+    var regio = (rawStore === 'CUR' || rawStore === 'BON' || rawStore === 'MMC') ? rawStore : null;
 
     var r = {
       store_number: '',
@@ -759,7 +824,7 @@ async function processBuying(json) {
       mfg_part_number: String(row[findCol(keys, ['mfg part', 'manufacturer part', 'mfg#', 'mfg part #'])] || '').trim(),
       replacement_cost: parseFloat(row[findCol(keys, ['replacement cost'])] || 0),
       inv_value_at_cost: parseFloat(row[findCol(keys, ['inventory value', 'inv value'])] || 0),
-      bum: String(row[bumCol] || '').trim().toUpperCase(),
+      bum: bumOf(row),
       upload_date: new Date().toISOString().split('T')[0],
     };
     Object.assign(r, salesObj);
@@ -767,6 +832,23 @@ async function processBuying(json) {
   });
 
   console.log('Active rows: ' + rows.length + ', dead stock skipped: ' + skippedDead + ', summary/empty rows skipped: ' + skippedSummary);
+
+  // Bestanden zijn nu PER STORE. buying_data blijft per regio -> aggregeren
+  // per (BUM, regio, item): som van QOH/committed/available/on_order/waarde/sales.
+  var aggMap = {};
+  rows.forEach(function(r) {
+    var key = r.bum + '|' + r.regio + '|' + r.item_number;
+    if (!aggMap[key]) { aggMap[key] = Object.assign({}, r); }
+    else {
+      var a = aggMap[key];
+      a.qoh += r.qoh; a.qty_committed += r.qty_committed; a.qty_available += r.qty_available;
+      a.qty_on_order += r.qty_on_order; a.inv_value_at_cost += r.inv_value_at_cost;
+      for (var mm = 1; mm <= 12; mm++) { var mk = 'sales_m' + String(mm).padStart(2, '0'); a[mk] = (a[mk] || 0) + (r[mk] || 0); }
+    }
+  });
+  rows = Object.values(aggMap);
+  var bumList = Object.keys(rows.reduce(function(acc, r) { if (r.bum) acc[r.bum] = 1; return acc; }, {}));
+  console.log('Na aggregatie naar regio: ' + rows.length + ' rijen; BUM(s): ' + bumList.join(', '));
 
   // Determine unique (BUM, regio) combinations in the new file
   // Then delete only those combinations — niet per BUM, niet per store_number.
