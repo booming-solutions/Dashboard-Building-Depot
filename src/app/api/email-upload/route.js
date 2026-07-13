@@ -1,30 +1,22 @@
 /* ============================================================
-   BESTAND: route_email_v25.js
+   BESTAND: route_email_v24.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
    (vervangt de huidige route.js)
-   WIJZIGING v25:
-   - Voorraad-/inkoopbestanden hebben geen "Department Group" meer.
-     BUM wordt nu afgeleid uit "Department Code" via tabel public.dept_bum.
-     (Detectie accepteert Department Group OF Department Code.)
-   - Bestanden zijn nu PER STORE. buying_data blijft per regio: de per-store
-     regels worden per (BUM, regio, item) geaggregeerd -> dashboards/NOS
-     ongewijzigd. Store-groep "MMC" (Multimart) wordt nu ook herkend.
-   - Nieuwe dagelijkse momentopname public.stock_snapshots (per SKU per store,
-     alleen items op open PO's) voor de opboek-detectie (DC/winkel).
-   - Vereiste SQL vooraf: dept_bum + stock_snapshots (STAP 25/26).
-   WIJZIGING v24:
-   - Twee nieuwe Order Flow rapporten toegevoegd:
-     * 'order_flow_po'    (Openstaande_POs.xlsx)  -> tabel order_flow
-       Detectie: "PO Header" + "Total Cost Dollars", GEEN "Item Number".
-       processOrderFlowPo roept SQL-functie order_flow_ingest aan
-       (upsert; logistieke velden blijven onaangeroerd).
-     * 'order_flow_items' (Openstaande_POs_SKU_detail.xlsx) -> order_flow_items
-       Detectie: "PO Header" + "Item Number" + "Purchase Quantity On Order".
-       processOrderFlowItems roept SQL-functie order_flow_ingest_items aan.
-   - Beide detecties staan VOOR po_deliveries; ze botsen niet met
-     bestaande feeds want alleen deze twee hebben kolom "PO Header".
-   - Vereiste SQL (al aangemaakt): order_flow_ingest(jsonb),
-     order_flow_ingest_items(jsonb), tabellen order_flow / order_flow_items.
+
+   CRITICAL BUGFIX v24:
+   - Compass exports voor Daniel, John, Gijs (nieuw naamgevingsformaat
+     "AI Voorraden <Naam> <REGIO>") werden niet herkend als buying_data
+     omdat ze geen "Department Group" kolom hebben.
+     Gevolg: sinds ~mei 2026 alleen Henk en Pascal (Ivo) worden ververst;
+     Daniel/John/Gijs data was verouderd.
+   - Fix 1: detectFileType herkent nu ook buying files zonder "Department
+     Group" (alternatieve signatuur: Store Group + Sales Units + Item Number
+     + Quantity on Hand + geen "now"/"month" kolom)
+   - Fix 2: processBuying accepteert nu filename en leidt BUM daaruit af
+     als "Department Group" kolom ontbreekt.
+     Mapping: pascal/ivo → PASCAL, henk → HENK, john → JOHN,
+              daniel → DANIEL, gijs → GIJS
+
    WIJZIGING v23:
    - processBuying leest nu de kolom "MFG Part #" en slaat op
      in nieuwe buying_data.mfg_part_number kolom
@@ -139,29 +131,24 @@ function detectFileType(columns) {
     return 'inventory';
   }
 
-  // Buying data: "Item Number" + "Quantity on Hand" + "Sales Units" + (Department Group OF Department Code)
+  // Buying data: has "Item Number" + "Quantity on Hand" + "Sales Units" + "Department Group"
   if (cols.some(function(c) { return c.includes('item number'); }) &&
       cols.some(function(c) { return c.includes('quantity on hand'); }) &&
       cols.some(function(c) { return c.includes('sales units'); }) &&
-      (cols.some(function(c) { return c.includes('department group'); }) ||
-       cols.some(function(c) { return c.includes('department code'); }))) {
+      cols.some(function(c) { return c.includes('department group'); })) {
     return 'buying';
   }
 
-  // Order Flow — SKU-detail (Openstaande_POs_SKU_detail):
-  // PO Header + Item Number + Purchase Quantity On Order
-  if (cols.some(function(c) { return c.includes('po header'); }) &&
-      cols.some(function(c) { return c.includes('item number'); }) &&
-      cols.some(function(c) { return c.includes('purchase quantity on order') || c.includes('order inventory'); })) {
-    return 'order_flow_items';
-  }
-
-  // Order Flow — PO header (Openstaande_POs):
-  // PO Header + Total Cost Dollars, en GEEN Item Number
-  if (cols.some(function(c) { return c.includes('po header'); }) &&
-      cols.some(function(c) { return c.includes('total cost'); }) &&
-      !cols.some(function(c) { return c.includes('item number'); })) {
-    return 'order_flow_po';
+  // Alt buying data (nieuwere "AI Voorraden" exports, sinds ~mei 2026):
+  // heeft geen "Department Group" kolom meer, maar wel dezelfde structuur.
+  // Signatuur: Item Number + Quantity on Hand + Sales Units + Store Group (i.p.v. Department Group)
+  // BUM moet dan uit filename komen (gebeurt in processBuying).
+  if (cols.some(function(c) { return c.includes('item number'); }) &&
+      cols.some(function(c) { return c.includes('quantity on hand'); }) &&
+      cols.some(function(c) { return c.includes('sales units'); }) &&
+      cols.some(function(c) { return c.includes('store group'); }) &&
+      !cols.some(function(c) { return c === 'now' || c.includes('month'); })) {
+    return 'buying';
   }
 
   // PO Deliveries: has "PO Detail" + "Item Number" + "Date Expected" + "QOO Rounded Quantity"
@@ -675,52 +662,7 @@ async function processTickets(json) {
 }
 
 /* ── Process BUYING data (per BUM, full replace) ── */
-/* ── Entiteit op basis van store: 1/2/3/4/5/9=Curacao, A/B=Bonaire, M=Multimart ── */
-function entityOf(s) {
-  s = String(s || '').trim().toUpperCase();
-  if (s === 'A' || s === 'B') return 'Bonaire';
-  if (s === 'M') return 'Multimart';
-  return 'Curacao';
-}
-
-/* ── Dagelijkse voorraad-momentopname PER SKU PER STORE ──
-   Alleen voor artikelen die op een open PO staan (order_flow_items),
-   zodat de tabel klein blijft. Dit is de historie voor opboek-detectie. */
-async function writeStockSnapshot(json, keys, deptBum) {
-  var poItems = {};
-  var pi = await getSupabase().from('order_flow_items').select('item_number');
-  if (pi.error) { console.error('snapshot: order_flow_items laden mislukt: ' + pi.error.message); return; }
-  (pi.data || []).forEach(function(x) { poItems[String(x.item_number).trim()] = true; });
-  if (!Object.keys(poItems).length) { console.log('snapshot: geen PO-items, overslaan'); return; }
-
-  var today = new Date().toISOString().slice(0, 10);
-  var seen = {};
-  var out = [];
-  json.forEach(function(row) {
-    var item = String(row[findCol(keys, ['item number'])] || '').trim();
-    if (!item || !poItems[item]) return;
-    var store = String(row[findCol(keys, ['store number'])] || '').trim();
-    if (!store) return;
-    var dept = String(row[findCol(keys, ['department code'])] || '').trim();
-    if (/^\d$/.test(dept)) dept = '0' + dept;
-    var qoh = parseFloat(row[findCol(keys, ['quantity on hand'])] || 0);
-    if (Number.isNaN(qoh)) qoh = 0;
-    var k = store + '|' + item;
-    if (seen[k] === undefined) { seen[k] = out.length; out.push({ snapshot_date: today, store_number: store, entity: entityOf(store), item_number: item, dept_code: dept, bum: deptBum[dept] || null, qoh: qoh }); }
-    else { out[seen[k]].qoh += qoh; }
-  });
-
-  var n = 0;
-  for (var i = 0; i < out.length; i += 500) {
-    var b = out.slice(i, i + 500);
-    var res = await getSupabase().from('stock_snapshots').upsert(b, { onConflict: 'snapshot_date,store_number,item_number' });
-    if (res.error) { console.error('stock_snapshots upsert error: ' + res.error.message); continue; }
-    n += b.length;
-  }
-  console.log('stock_snapshots: ' + n + ' rijen weggeschreven voor ' + today);
-}
-
-async function processBuying(json) {
+async function processBuying(json, filename) {
   // Verzamel ALLE keys die in ANY rij voorkomen (niet alleen rij 1)
   // Reden: SheetJS skipt lege cellen, dus rij 1 kan kolommen missen
   var keysSet = {};
@@ -730,22 +672,43 @@ async function processBuying(json) {
   }
   var keys = Object.keys(keysSet);
 
-  // BUM-mapping laden (afdeling -> BUM) uit dept_bum tabel
-  var deptBum = {};
-  try {
-    var mp = await getSupabase().from('dept_bum').select('dept_code, bum');
-    (mp.data || []).forEach(function(m) { deptBum[String(m.dept_code).trim()] = String(m.bum || '').trim().toUpperCase(); });
-  } catch (e) { console.error('dept_bum laden mislukt: ' + e.message); }
-  var bumCol = findCol(keys, ['department group']); // fallback als de kolom nog bestaat
-  function bumOf(row) {
-    var dc = String(row[findCol(keys, ['department code'])] || '').trim();
-    if (/^\d$/.test(dc)) dc = '0' + dc;
-    if (deptBum[dc]) return deptBum[dc];
-    return String(row[bumCol] || '').trim().toUpperCase();
+  // BUM detectie:
+  // 1. Probeer eerst de "Department Group" kolom (oude Compass exports)
+  // 2. Fallback: leid BUM af uit filename (nieuwere "AI Voorraden ..." exports)
+  var bumCol = findCol(keys, ['department group']);
+  var allBums = {};
+  if (bumCol) {
+    json.forEach(function(row) { var b = String(row[bumCol] || '').trim().toUpperCase(); if (b) allBums[b] = true; });
+  }
+  var bumList = Object.keys(allBums);
+
+  // Fallback: filename-based BUM detectie
+  // Mapping op basis van keywords in filename. "Ivo" = Pascal (custom naam).
+  var bumFromFilename = null;
+  if (!bumList.length && filename) {
+    var lower = String(filename).toLowerCase();
+    var fnameMap = [
+      ['pascal', 'PASCAL'],
+      ['ivo', 'PASCAL'],       // Ivo = Pascal
+      ['henk', 'HENK'],
+      ['john', 'JOHN'],
+      ['daniel', 'DANIEL'],
+      ['gijs', 'GIJS'],
+    ];
+    for (var fi = 0; fi < fnameMap.length; fi++) {
+      if (lower.indexOf(fnameMap[fi][0]) !== -1) {
+        bumFromFilename = fnameMap[fi][1];
+        break;
+      }
+    }
+    if (bumFromFilename) {
+      bumList = [bumFromFilename];
+      console.log('BUM derived from filename: ' + bumFromFilename + ' (filename=' + filename + ')');
+    }
   }
 
-  // Dagelijkse per-store momentopname (voor opboek-detectie) — vóór aggregatie
-  try { await writeStockSnapshot(json, keys, deptBum); } catch (e) { console.error('snapshot mislukt: ' + e.message); }
+  if (!bumList.length) throw new Error('No BUM (Department Group) found in buying data — and could not derive from filename: ' + (filename || 'unknown'));
+  console.log('BUM(s) in file: ' + bumList.join(', '));
 
   // Find the 12 sales columns (they contain "Sales Units")
   var salesCols = keys.filter(function(k) { return k.toLowerCase().includes('sales units') && !k.toLowerCase().includes('total') && !k.toLowerCase().includes('period'); });
@@ -798,8 +761,8 @@ async function processBuying(json) {
     // store_number blijft leeg bij buying imports (Compass export is
     // geaggregeerd, niet per fysieke store). Filtering in dashboard
     // gebeurt op regio.
-    var rawStore = String(row[findCol(keys, ['store group'])] || '').trim().toUpperCase();
-    var regio = (rawStore === 'CUR' || rawStore === 'BON' || rawStore === 'MMC') ? rawStore : null;
+    var rawStore = String(row[findCol(keys, ['store group', 'store number', 'store'])] || '').trim().toUpperCase();
+    var regio = rawStore === 'CUR' || rawStore === 'BON' ? rawStore : null;
 
     var r = {
       store_number: '',
@@ -824,7 +787,7 @@ async function processBuying(json) {
       mfg_part_number: String(row[findCol(keys, ['mfg part', 'manufacturer part', 'mfg#', 'mfg part #'])] || '').trim(),
       replacement_cost: parseFloat(row[findCol(keys, ['replacement cost'])] || 0),
       inv_value_at_cost: parseFloat(row[findCol(keys, ['inventory value', 'inv value'])] || 0),
-      bum: bumOf(row),
+      bum: bumCol ? String(row[bumCol] || '').trim().toUpperCase() : (bumFromFilename || ''),
       upload_date: new Date().toISOString().split('T')[0],
     };
     Object.assign(r, salesObj);
@@ -832,23 +795,6 @@ async function processBuying(json) {
   });
 
   console.log('Active rows: ' + rows.length + ', dead stock skipped: ' + skippedDead + ', summary/empty rows skipped: ' + skippedSummary);
-
-  // Bestanden zijn nu PER STORE. buying_data blijft per regio -> aggregeren
-  // per (BUM, regio, item): som van QOH/committed/available/on_order/waarde/sales.
-  var aggMap = {};
-  rows.forEach(function(r) {
-    var key = r.bum + '|' + r.regio + '|' + r.item_number;
-    if (!aggMap[key]) { aggMap[key] = Object.assign({}, r); }
-    else {
-      var a = aggMap[key];
-      a.qoh += r.qoh; a.qty_committed += r.qty_committed; a.qty_available += r.qty_available;
-      a.qty_on_order += r.qty_on_order; a.inv_value_at_cost += r.inv_value_at_cost;
-      for (var mm = 1; mm <= 12; mm++) { var mk = 'sales_m' + String(mm).padStart(2, '0'); a[mk] = (a[mk] || 0) + (r[mk] || 0); }
-    }
-  });
-  rows = Object.values(aggMap);
-  var bumList = Object.keys(rows.reduce(function(acc, r) { if (r.bum) acc[r.bum] = 1; return acc; }, {}));
-  console.log('Na aggregatie naar regio: ' + rows.length + ' rijen; BUM(s): ' + bumList.join(', '));
 
   // Determine unique (BUM, regio) combinations in the new file
   // Then delete only those combinations — niet per BUM, niet per store_number.
@@ -1374,94 +1320,6 @@ async function processPoDeliveries(json) {
   return { table: 'po_deliveries', rows_imported: totalInserted };
 }
 
-/* ── Process ORDER FLOW — PO header (Openstaande_POs.xlsx) ──
-   Upsert naar order_flow via SQL-functie order_flow_ingest.
-   Administratieve velden worden bijgewerkt; logistieke velden
-   (bol_number, container_no, customs_date, dc_received_date,
-   chassis_return_date, store1_date, ...) blijven onaangeroerd. */
-async function processOrderFlowPo(json) {
-  var keys = Object.keys(json[0] || {});
-  function iso(v) {
-    if (v == null || v === '') return null;
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
-    if (typeof v === 'number') return new Date((v - 25569) * 86400000).toISOString().slice(0, 10);
-    var d = new Date(v);
-    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-  }
-  var rows = json.map(function(row) {
-    return {
-      po_number: String(row[findCol(keys, ['po header'])] || '').trim(),
-      vendor_code: String(row[findCol(keys, ['vendor code'])] || ''),
-      vendor_name: String(row[findCol(keys, ['vendor name'])] || ''),
-      dept: String(row[findCol(keys, ['group items'])] || ''),
-      order_store: String(row[findCol(keys, ['store number'])] || ''),
-      po_created_date: iso(row[findCol(keys, ['creation date'])]),
-      eta: iso(row[findCol(keys, ['date expected'])]),
-      po_status: String(row[findCol(keys, ['p.o. status', 'po status', 'status'])] || ''),
-      buyer_id: String(row[findCol(keys, ['buyers id', 'buyer'])] || ''),
-      total_cost: parseFloat(String(row[findCol(keys, ['total cost'])] || '').replace(/,/g, '')) || null,
-    };
-  }).filter(function(r) { return r.po_number; });
-
-  console.log('Order Flow PO header rows: ' + rows.length);
-  if (!rows.length) return { table: 'order_flow', rows_imported: 0 };
-
-  var total = 0;
-  for (var i = 0; i < rows.length; i += 2000) {
-    var chunk = rows.slice(i, i + 2000);
-    var res = await getSupabase().rpc('order_flow_ingest', { p: chunk });
-    if (res.error) { console.error('order_flow_ingest error: ' + res.error.message); continue; }
-    total += (res.data || 0);
-  }
-  console.log('Order Flow: upserted ' + total + ' PO headers');
-  return { table: 'order_flow', rows_imported: total };
-}
-
-/* ── Process ORDER FLOW — SKU-regels (Openstaande_POs_SKU_detail.xlsx) ──
-   Upsert naar order_flow_items via SQL-functie order_flow_ingest_items. */
-async function processOrderFlowItems(json) {
-  var keys = Object.keys(json[0] || {});
-  function iso(v) {
-    if (v == null || v === '') return null;
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
-    if (typeof v === 'number') return new Date((v - 25569) * 86400000).toISOString().slice(0, 10);
-    var d = new Date(v);
-    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-  }
-  function num(v) {
-    if (v == null || v === '') return null;
-    var n = parseFloat(String(v).replace(/,/g, ''));
-    return isNaN(n) ? null : n;
-  }
-  var rows = json.map(function(row) {
-    return {
-      po_number: String(row[findCol(keys, ['po header'])] || '').trim(),
-      item_number: String(row[findCol(keys, ['item number'])] || '').trim(),
-      item_description: String(row[findCol(keys, ['item description'])] || ''),
-      dept_code: String(row[findCol(keys, ['department code'])] || ''),
-      dept_name: String(row[findCol(keys, ['department name'])] || ''),
-      qoo: num(row[findCol(keys, ['purchase quantity on order'])]),
-      avg_cost: num(row[findCol(keys, ['average cost'])]),
-      order_value: num(row[findCol(keys, ['order inventory'])]),
-      date_expected: iso(row[findCol(keys, ['date expected'])]),
-      po_status: String(row[findCol(keys, ['p.o. status', 'po status', 'status'])] || ''),
-    };
-  }).filter(function(r) { return r.po_number && r.item_number; });
-
-  console.log('Order Flow SKU rows: ' + rows.length);
-  if (!rows.length) return { table: 'order_flow_items', rows_imported: 0 };
-
-  var total = 0;
-  for (var i = 0; i < rows.length; i += 2000) {
-    var chunk = rows.slice(i, i + 2000);
-    var res = await getSupabase().rpc('order_flow_ingest_items', { p: chunk });
-    if (res.error) { console.error('order_flow_ingest_items error: ' + res.error.message); continue; }
-    total += (res.data || 0);
-  }
-  console.log('Order Flow: upserted ' + total + ' SKU-regels');
-  return { table: 'order_flow_items', rows_imported: total };
-}
-
 /* ══════════════════════════════════════════════
    MAIN HANDLER
    ══════════════════════════════════════════════ */
@@ -1524,7 +1382,7 @@ export async function POST(request) {
     } else if (fileType === 'tickets') {
       result = await processTickets(json);
     } else if (fileType === 'buying') {
-      result = await processBuying(json);
+      result = await processBuying(json, filename);
     } else if (fileType === 'negative_inventory') {
       result = await processNegativeInventory(json);
     } else if (fileType === 'sales') {
@@ -1533,10 +1391,6 @@ export async function POST(request) {
       result = await processPriceChanges(json);
     } else if (fileType === 'po_deliveries') {
       result = await processPoDeliveries(json);
-    } else if (fileType === 'order_flow_po') {
-      result = await processOrderFlowPo(json);
-    } else if (fileType === 'order_flow_items') {
-      result = await processOrderFlowItems(json);
     } else {
       console.error('Unknown file type. Columns: ' + columns.join(', '));
       return Response.json({ 
