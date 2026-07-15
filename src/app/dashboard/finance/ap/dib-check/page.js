@@ -37,14 +37,10 @@ import { PDFDocument } from 'pdf-lib';
 import JSZip from 'jszip';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// pdf.js worker. Bundler-variant (werkt met Next.js 14 / webpack 5).
-// Faalt de worker met een 404, vervang deze regel door de CDN-variant:
-//   pdfjsLib.GlobalWorkerOptions.workerSrc =
-//     `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+// pdf.js worker via CDN (versie-exact). Voorkomt dat webpack/Terser de
+// worker-.mjs probeert te bundelen/minificeren (dat faalt op import/export).
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 const MEMBER_ENTITY = { '7107': 'BDT Curaçao', '7269': 'Bonaire' };
 
