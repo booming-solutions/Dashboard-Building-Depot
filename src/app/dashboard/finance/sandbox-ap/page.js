@@ -1,12 +1,15 @@
 /* ============================================================
-   BESTAND: sandbox_ap_page_v9.js
+   BESTAND: sandbox_ap_page_v10.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/page.js
-   (overschrijft sandbox v1, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie v9 (incl. bugfix) — regel-voor-regel identiek aan live,
+   (overschrijft sandbox v9, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v10 — regel-voor-regel identiek aan live,
    alleen aangepast:
    - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
    - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
 
+
+   v10 WIJZIGINGEN:
+   - Nieuwe tegel 'DIB Controle' → /dashboard/finance/sandbox-ap/dib-check
 
    v9 WIJZIGINGEN:
    - Bug fix: open-filter sluit nu ook reconciled + auto_matched uit
@@ -393,6 +396,13 @@ export default function APDashboard() {
             label="Bank Statement Import"
             desc="MCB + RBC PDF parsen voor automatische matching"
             cleanup
+            available
+          />
+          <ActionCard
+            href="/dashboard/finance/sandbox-ap/dib-check"
+            icon="🔎"
+            label="DIB Controle"
+            desc="Do it Best open items vergelijken & ontbrekende facturen splitsen"
             available
           />
           <ActionCard

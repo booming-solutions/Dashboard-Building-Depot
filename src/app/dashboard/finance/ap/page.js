@@ -1,7 +1,10 @@
 /* ============================================================
-   BESTAND: ap_page_v9.js
+   BESTAND: ap_page_v10.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v8, hernoemen naar page.js)
+   (overschrijft v9, hernoemen naar page.js)
+
+   v10 WIJZIGINGEN:
+   - Nieuwe tegel 'DIB Controle' → /dashboard/finance/ap/dib-check
 
    v9 WIJZIGINGEN:
    - Bug fix: open-filter sluit nu ook reconciled + auto_matched uit
@@ -387,6 +390,13 @@ export default function APDashboard() {
             label="Bank Statement Import"
             desc="MCB + RBC PDF parsen voor automatische matching"
             cleanup
+            available
+          />
+          <ActionCard
+            href="/dashboard/finance/ap/dib-check"
+            icon="🔎"
+            label="DIB Controle"
+            desc="Do it Best open items vergelijken & ontbrekende facturen splitsen"
             available
           />
           <ActionCard
