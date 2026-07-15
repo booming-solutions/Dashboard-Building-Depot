@@ -1,7 +1,18 @@
 /* ============================================================
-   BESTAND: ap_match_worklist_page_v3.js
+   BESTAND: ap_match_worklist_page_v5.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/worklist/page.js
-   (nieuwe folder: match/worklist/, hernoemen naar page.js)
+   (overschrijft v4, hernoemen naar page.js)
+
+   v5 WIJZIGINGEN:
+   - Nieuwe sorteerbare kolom 'Bank' (toont invoice.paid_bank, de bank
+     waarmee de betaling in de portal is gemarkeerd). Leeg = '—'.
+
+   v4 WIJZIGINGEN:
+   - Sorteerbare kolomkoppen (klik = sorteren, nogmaals = omkeren).
+     Lege/null-waarden zakken altijd naar onderen.
+   - Zoekveld op leverancier (naam of vendor-id) in de filterbalk.
+   - Beide werken samen met de bestaande Bron/Clerk-filters en
+     met de selectie (select-all volgt de gefilterde/gezochte set).
 
    Afletter-werklijst (PROJECT CLEAN UP):
    - 4 tabs: Te bevestigen / Te verwerken / Verwerkt / Afgewezen
@@ -96,6 +107,9 @@ export default function MatchWorklistPage() {
   const [error, setError] = useState(null);
   const [sourceFilter, setSourceFilter] = useState('all');
   const [clerkFilter, setClerkFilter] = useState('all');
+  const [vendorSearch, setVendorSearch] = useState('');
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
   const [apClerks, setApClerks] = useState([]);
   const [showRejectModal, setShowRejectModal] = useState(false);
 
@@ -224,8 +238,58 @@ export default function MatchWorklistPage() {
         list = list.filter(r => r.assigned_ap_clerk === clerkFilter);
       }
     }
+    // Zoek op leverancier (naam of vendor-id)
+    const q = vendorSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter(r => {
+        const naam = r.invoice?.vendor_name?.toLowerCase() || '';
+        const vid = String(r.invoice?.vendor_id ?? '').toLowerCase();
+        return naam.includes(q) || vid.includes(q);
+      });
+    }
+    // Sorteren op aangeklikte kolom
+    if (sortKey) {
+      const accessor = (r) => {
+        switch (sortKey) {
+          case 'source':   return r.source || '';
+          case 'vendor':   return r.invoice?.vendor_name?.toLowerCase() || '';
+          case 'invoice':  return r.invoice?.invoice_number?.toLowerCase() || '';
+          case 'matched':  return parseFloat(r.matched_amount);
+          case 'portal':   return r.invoice
+                             ? (parseFloat(r.invoice.original_amount) || Math.abs(parseFloat(r.invoice.balance)))
+                             : null;
+          case 'date':     return r.matched_date || '';
+          case 'bank':     return r.invoice?.paid_bank?.toLowerCase() || '';
+          case 'score':    return (r.match_score != null) ? Number(r.match_score) : null;
+          case 'clerk':    return r.assigned_ap_clerk_name?.toLowerCase() || '';
+          case 'action':   return (r.confirmed_by_name || r.processed_by_name || r.rejected_by_name || '').toLowerCase();
+          default:         return '';
+        }
+      };
+      const dir = sortDir === 'asc' ? 1 : -1;
+      list = [...list].sort((a, b) => {
+        const va = accessor(a), vb = accessor(b);
+        // lege/null-waarden altijd onderaan, ongeacht richting
+        const aEmpty = va === '' || va == null || (typeof va === 'number' && isNaN(va));
+        const bEmpty = vb === '' || vb == null || (typeof vb === 'number' && isNaN(vb));
+        if (aEmpty && bEmpty) return 0;
+        if (aEmpty) return 1;
+        if (bEmpty) return -1;
+        if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+        return String(va).localeCompare(String(vb), 'nl') * dir;
+      });
+    }
     return list;
-  }, [rows, tab, sourceFilter, clerkFilter]);
+  }, [rows, tab, sourceFilter, clerkFilter, vendorSearch, sortKey, sortDir]);
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
 
   function toggleSel(id) {
     const next = new Set(selectedIds);
@@ -518,6 +582,21 @@ export default function MatchWorklistPage() {
             Filter: jouw toegewezen vendors
           </span>
         )}
+        <div className="relative">
+          <input
+            type="text"
+            value={vendorSearch}
+            onChange={e => setVendorSearch(e.target.value)}
+            placeholder="Zoek leverancier of vendor-id..."
+            className="pl-7 pr-7 py-1.5 rounded-lg border border-gray-200 text-[12px] bg-white focus:outline-none focus:border-[#1B3A5C] w-[230px]" />
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[#1B3A5C]/30 text-[12px]">🔍</span>
+          {vendorSearch && (
+            <button onClick={() => setVendorSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#1B3A5C]/40 hover:text-[#1B3A5C] text-[14px] leading-none">
+              ×
+            </button>
+          )}
+        </div>
         <div className="text-[11px] text-[#1B3A5C]/50 ml-auto">
           {fmtNum(filteredRows.length)} kandidaten
         </div>
@@ -595,13 +674,33 @@ export default function MatchWorklistPage() {
           onSelectAll={selectAllFiltered}
           onDeselect={deselectAll}
           allSelected={selectedIds.size > 0 && selectedIds.size === filteredRows.length}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={handleSort}
         />
       )}
     </div>
   );
 }
 
-function CandidateTable({ rows, tab, showAssignedClerk, selectedIds, onToggle, onSelectAll, onDeselect, allSelected }) {
+function SortableTH({ label, sortKey, colKey, sortDir, onSort, align = 'left' }) {
+  const active = sortKey === colKey;
+  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  return (
+    <th
+      onClick={() => onSort(colKey)}
+      className={`p-2 ${alignCls} font-semibold text-[#1B3A5C]/70 cursor-pointer select-none hover:bg-gray-100 transition-colors`}>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className={`text-[9px] ${active ? 'text-[#1B3A5C]' : 'text-[#1B3A5C]/25'}`}>
+          {active ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </span>
+    </th>
+  );
+}
+
+function CandidateTable({ rows, tab, showAssignedClerk, selectedIds, onToggle, onSelectAll, onDeselect, allSelected, sortKey, sortDir, onSort }) {
   const showCheckbox = tab === 'pending' || tab === 'confirmed';
   let actionLabel = '';
   if (tab === 'confirmed') actionLabel = 'Toegewezen aan';
@@ -621,18 +720,19 @@ function CandidateTable({ rows, tab, showAssignedClerk, selectedIds, onToggle, o
                     className="cursor-pointer" />
                 )}
               </th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Bron</th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Vendor</th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Factuur</th>
-              <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Bron bedrag</th>
-              <th className="p-2 text-right font-semibold text-[#1B3A5C]/70">Portal bedrag</th>
-              <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">Betaaldatum</th>
-              <th className="p-2 text-center font-semibold text-[#1B3A5C]/70">Score</th>
+              <SortableTH label="Bron"          colKey="source"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTH label="Vendor"        colKey="vendor"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTH label="Factuur"       colKey="invoice" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTH label="Bron bedrag"   colKey="matched" sortKey={sortKey} sortDir={sortDir} onSort={onSort} align="right" />
+              <SortableTH label="Portal bedrag" colKey="portal"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} align="right" />
+              <SortableTH label="Betaaldatum"   colKey="date"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTH label="Bank"          colKey="bank"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTH label="Score"         colKey="score"   sortKey={sortKey} sortDir={sortDir} onSort={onSort} align="center" />
               {showAssignedClerk && tab !== 'rejected' && (
-                <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">AP Clerk</th>
+                <SortableTH label="AP Clerk"    colKey="clerk"   sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               )}
               {actionLabel && (
-                <th className="p-2 text-left font-semibold text-[#1B3A5C]/70">{actionLabel}</th>
+                <SortableTH label={actionLabel} colKey="action"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               )}
             </tr>
           </thead>
@@ -708,6 +808,11 @@ function CandidateRow({ row, tab, showAssignedClerk, selected, onToggle }) {
         <span className="ml-1 text-[10px] text-[#1B3A5C]/40">XCG</span>
       </td>
       <td className="p-2 text-[#1B3A5C]/70 whitespace-nowrap">{fmtDate(row.matched_date)}</td>
+      <td className="p-2 whitespace-nowrap">
+        {inv && inv.paid_bank
+          ? <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">{inv.paid_bank}</span>
+          : <span className="text-[#1B3A5C]/30 italic text-[11px]">—</span>}
+      </td>
       <td className="p-2 text-center">
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${confColor}`}>
           {row.match_score ? Math.round(row.match_score) : row.confidence}
