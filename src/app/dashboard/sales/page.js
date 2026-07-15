@@ -106,10 +106,47 @@ export default function SalesDashboard(){
   const[deptBumMapping,setDeptBumMapping]=useState([]);  // [{dept_code, bum_group_code, valid_from, valid_until}]
   // Daily pulse: actuals laatste dag + LY zelfde dag
   const[dailyRows,setDailyRows]=useState([]);  // sales_data_enriched rijen voor laatste dag + LY-dag
+  // Date range filter (naast maand pills): wanneer actief overschrijft het maand-filter
+  const[dateFrom,setDateFrom]=useState('');
+  const[dateTo,setDateTo]=useState('');
+  const[rangeRows,setRangeRows]=useState([]);  // sales_data_enriched voor CY + LY range
+  const[rangeLoading,setRangeLoading]=useState(false);
   const monthlyRef=useRef(null);const gmRef=useRef(null);const mgrRef=useRef(null);const deptRef=useRef(null);const chartsRef=useRef({});
   const supabase=createClient();
 
   useEffect(()=>{loadData();checkAuth();},[]);
+
+  // Fetch daily rows voor date-range (CY periode + zelfde periode LY)
+  useEffect(()=>{
+    if(!dateFrom||!dateTo)return;
+    if(dateFrom>dateTo)return;
+    let cancelled=false;
+    async function fetchRange(){
+      setRangeLoading(true);
+      const step=1000;
+      // Bereken LY range: dezelfde MM-DD, jaar -1
+      const[fy,fm,fd]=dateFrom.split('-').map(Number);
+      const[ty,tm,td]=dateTo.split('-').map(Number);
+      const lyFrom=`${fy-1}-${String(fm).padStart(2,'0')}-${String(fd).padStart(2,'0')}`;
+      const lyTo=`${ty-1}-${String(tm).padStart(2,'0')}-${String(td).padStart(2,'0')}`;
+      // Twee ranges: [dateFrom..dateTo] en [lyFrom..lyTo]
+      async function loadOne(fromDate,toDate){
+        let out=[],from=0;
+        while(true){
+          const{data:rr}=await supabase.from('sales_data_enriched').select('*').gte('sale_date',fromDate).lte('sale_date',toDate).range(from,from+step-1);
+          if(!rr||!rr.length)break;
+          out=out.concat(rr);
+          if(rr.length<step)break;
+          from+=step;
+        }
+        return out;
+      }
+      const[cy,ly]=await Promise.all([loadOne(dateFrom,dateTo),loadOne(lyFrom,lyTo)]);
+      if(!cancelled){setRangeRows([...cy,...ly]);setRangeLoading(false)}
+    }
+    fetchRange();
+    return()=>{cancelled=true};
+  },[dateFrom,dateTo,supabase]);
 
   async function loadData(){
     let allSales=[],allBudget=[],from=0;const step=1000;
@@ -167,6 +204,7 @@ export default function SalesDashboard(){
   const maxDataMonth=useMemo(()=>{let m=0;data.forEach(r=>{if(r.year===currentYear&&r.month>m)m=r.month});return m},[data,currentYear]);
 
   function needsProrate(m){
+    if(isRangeActive)return false;  // Range-modus overrult prorate; range zelf beperkt al de dagen
     if(!dayFrac.month||dayFrac.frac>=0.99)return false;
     if(m!==dayFrac.month||dayFrac.year!==currentYear)return false;
     if(isAll)return false;  // 'Alle' = volledig jaar, geen prorate
@@ -177,8 +215,27 @@ export default function SalesDashboard(){
   function matchMonth(m){if(isAll)return true;if(isYTD)return m<=maxDataMonth;if(selectedMonths)return selectedMonths.includes(m);return true}
 
   // BUM filter werkt nu op effective_bum_group (afdelings-code, niet persoonsnaam)
-  const filtered=useMemo(()=>data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===currentYear&&matchMonth(r.month))),[data,store,currentYear,months,bum,dept,maxDataMonth]);
-  const priorFiltered=useMemo(()=>data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===priorYear&&matchMonth(r.month))),[data,store,priorYear,months,bum,dept,maxDataMonth]);
+  const isRangeActive=!!(dateFrom&&dateTo&&dateFrom<=dateTo);
+  const filtered=useMemo(()=>{
+    if(isRangeActive){
+      // Range-modus: dagrijen filteren op CY-periode en filters
+      const[fy,fm,fd]=dateFrom.split('-').map(Number);
+      const[ty,tm,td]=dateTo.split('-').map(Number);
+      const lyFrom=`${fy-1}-${String(fm).padStart(2,'0')}-${String(fd).padStart(2,'0')}`;
+      return rangeRows.filter(r=>r.sale_date>=dateFrom&&r.sale_date<=dateTo&&(store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept));
+    }
+    return data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===currentYear&&matchMonth(r.month)));
+  },[isRangeActive,rangeRows,dateFrom,dateTo,data,store,currentYear,months,bum,dept,maxDataMonth]);
+  const priorFiltered=useMemo(()=>{
+    if(isRangeActive){
+      const[fy,fm,fd]=dateFrom.split('-').map(Number);
+      const[ty,tm,td]=dateTo.split('-').map(Number);
+      const lyFrom=`${fy-1}-${String(fm).padStart(2,'0')}-${String(fd).padStart(2,'0')}`;
+      const lyTo=`${ty-1}-${String(tm).padStart(2,'0')}-${String(td).padStart(2,'0')}`;
+      return rangeRows.filter(r=>r.sale_date>=lyFrom&&r.sale_date<=lyTo&&(store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept));
+    }
+    return data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===priorYear&&matchMonth(r.month)));
+  },[isRangeActive,rangeRows,dateFrom,dateTo,data,store,priorYear,months,bum,dept,maxDataMonth]);
   const salesType=budgetMode==='target'?'target_sales':'cgf_sales';
   const marginType=budgetMode==='target'?'target_margin':'cgf_margin';
 
@@ -436,7 +493,12 @@ export default function SalesDashboard(){
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:'22px',fontWeight:900}}>Omzet en Marge</h1>
-          <p className="text-[13px] text-[#6b5240]">Building Depot{lastDate?` — data t/m ${lastDate.getDate()} ${MN[lastDate.getMonth()]} ${lastDate.getFullYear()}`:''}</p>
+          <p className="text-[13px] text-[#6b5240]">Building Depot{lastDate?` — data t/m ${lastDate.getDate()} ${MN[lastDate.getMonth()]} ${lastDate.getFullYear()}`:''}{isRangeActive?(function(){
+            const[fy,fm,fd]=dateFrom.split('-').map(Number);
+            const[ty,tm,td]=dateTo.split('-').map(Number);
+            const same=dateFrom===dateTo;
+            return same?` · Periode: ${fd} ${MN[fm-1]} ${fy}`:` · Periode: ${fd} ${MN[fm-1]} ${fy===ty?'':fy+' '} t/m ${td} ${MN[tm-1]} ${ty}`;
+          })():''}</p>
         </div>
         <div className="flex items-center gap-3">
           {isBonaire?(
@@ -482,7 +544,33 @@ export default function SalesDashboard(){
       {tab==='actuals'&&<>
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
-        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span></div>
+        <div className={"flex flex-wrap items-center gap-3 "+(isRangeActive?'opacity-40':'')}><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere{isRangeActive&&' — uitgeschakeld door datum-range'}</span></div>
+        {(function(){
+          const today=lastDate||new Date();
+          const ymd=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          const yesterday=new Date(today);yesterday.setDate(today.getDate()-1);
+          const weekStart=new Date(today);weekStart.setDate(today.getDate()-((today.getDay()+6)%7));
+          const last7=new Date(today);last7.setDate(today.getDate()-6);
+          function setRange(f,t){setDateFrom(f);setDateTo(t)}
+          return(
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Periode</span>
+              <div className="flex gap-1 items-center flex-wrap">
+                <Pill label="Vandaag" active={dateFrom===ymd(today)&&dateTo===ymd(today)} onClick={()=>setRange(ymd(today),ymd(today))}/>
+                <Pill label="Gisteren" active={dateFrom===ymd(yesterday)&&dateTo===ymd(yesterday)} onClick={()=>setRange(ymd(yesterday),ymd(yesterday))}/>
+                <Pill label="Deze week" active={dateFrom===ymd(weekStart)&&dateTo===ymd(today)} onClick={()=>setRange(ymd(weekStart),ymd(today))}/>
+                <Pill label="Laatste 7d" active={dateFrom===ymd(last7)&&dateTo===ymd(today)} onClick={()=>setRange(ymd(last7),ymd(today))}/>
+                <span className="mx-2 text-[11px] text-[#a08a74]">of</span>
+                <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[12px] px-2 py-1 rounded"/>
+                <span className="text-[12px] text-[#6b5240]">t/m</span>
+                <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[12px] px-2 py-1 rounded"/>
+                {isRangeActive&&<button onClick={()=>{setDateFrom('');setDateTo('')}} className="ml-1 px-2 py-1 rounded text-[11px] bg-[#faf5f0] text-[#6b5240] hover:bg-[#f0e8de] border border-[#e5ddd4]">Wis periode</button>}
+                {rangeLoading&&<span className="text-[10px] text-[#a08a74] ml-2 italic">laden...</span>}
+                {isRangeActive&&!rangeLoading&&<span className="text-[10px] text-[#E84E1B] ml-2 font-semibold">Actief — vervangt Maand-filter</span>}
+              </div>
+            </div>
+          );
+        })()}
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Afdeling</span><div className="flex gap-1"><Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>{bums.map(b=><Pill key={b} label={bumLabel[b]||b} active={bum===b} onClick={()=>setBum(b)}/>)}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Budget</span><div className="flex gap-1"><Pill label={`Target (${fmtBudgetPill(conv(targetForSelection))})`} active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>{cgfUnlocked&&<Pill label={`CGF (${fmtBudgetPill(conv(cgfForSelection))})`} active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}</div></div>
         <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Departement</span><select value={dept} onChange={e=>setDept(e.target.value)} className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg"><option value="all">Alle Departementen</option>{depts.map(d=>{const[c2,n]=d.split('|');return<option key={c2} value={c2}>{n}</option>})}</select></div>
@@ -498,9 +586,9 @@ export default function SalesDashboard(){
           budgetLabel={budgetLabel}
           varBudget={pctChg(dailyPulse.tySales,dailyPulse.dayBudget)}
         />}
-        <KPI label="Netto Omzet" value={fmtMC(tS)} ly={fmtMC(lyS)} varLy={pctChg(tS,lyS)} budget={fmtMC(bS)} budgetLabel={budgetLabel} varBudget={pctChg(tS,bS)} budgetExtra={fmTarget?`FM: ${fmtMC(fmTarget)}`:null}/>
-        <KPI label="Bruto Marge" value={fmtMC(tG)} ly={fmtMC(lyG)} varLy={pctChg(tG,lyG)} budget={fmtMC(bG)} budgetLabel={budgetLabel} varBudget={pctChg(tG,bG)}/>
-        <KPI label="Bruto Marge %" value={fmtP(tGP)} ly={fmtP(lyGP)} varLy={tGP-lyGP} budget={fmtP(bGP)} budgetLabel={budgetLabel} varBudget={tGP-bGP}/>
+        <KPI label="Netto Omzet" value={fmtMC(tS)} ly={fmtMC(lyS)} varLy={pctChg(tS,lyS)} budget={isRangeActive?undefined:fmtMC(bS)} budgetLabel={isRangeActive?undefined:budgetLabel} varBudget={isRangeActive?undefined:pctChg(tS,bS)} budgetExtra={isRangeActive?null:(fmTarget?`FM: ${fmtMC(fmTarget)}`:null)}/>
+        <KPI label="Bruto Marge" value={fmtMC(tG)} ly={fmtMC(lyG)} varLy={pctChg(tG,lyG)} budget={isRangeActive?undefined:fmtMC(bG)} budgetLabel={isRangeActive?undefined:budgetLabel} varBudget={isRangeActive?undefined:pctChg(tG,bG)}/>
+        <KPI label="Bruto Marge %" value={fmtP(tGP)} ly={fmtP(lyGP)} varLy={tGP-lyGP} budget={isRangeActive?undefined:fmtP(bGP)} budgetLabel={isRangeActive?undefined:budgetLabel} varBudget={isRangeActive?undefined:tGP-bGP}/>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
