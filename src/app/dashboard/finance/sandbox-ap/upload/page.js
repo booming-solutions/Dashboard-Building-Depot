@@ -1,8 +1,8 @@
 /* ============================================================
-   BESTAND: sandbox_ap_upload_page_v7.js
+   BESTAND: sandbox_ap_upload_page_v8.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/upload/page.js
-   (nieuwe sandbox-file, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie v7 — regel-voor-regel identiek aan live,
+   (overschrijft sandbox v-upload, hernoemen naar page.js)
+   🧪 SANDBOX-MIRROR van productie v8 — regel-voor-regel identiek aan live,
    alleen aangepast:
    - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
    - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
@@ -246,7 +246,7 @@ function parseCompassCSV(text) {
 // =====================================================================
 // DIFF ENGINE
 // =====================================================================
-async function computeDiff(supabase, parsedInvoices) {
+async function computeDiff(supabase, parsedInvoices, entity) {
   // Voucher is Eagle's natuurlijke unieke key
   // Haal alle actieve én auto_matched rijen op (auto_matched moet ook gechecked
   // worden of Eagle ze inmiddels heeft afgewerkt)
@@ -258,6 +258,7 @@ async function computeDiff(supabase, parsedInvoices) {
       supabase
         .from('sandbox_ap_invoices')
         .select('id, vendor_id, invoice_number, voucher, balance, status, assigned_ap_clerk')
+        .eq('entity', entity)
         .not('status', 'in', '(paid,disappeared_from_export)')
     );
   } catch (e) {
@@ -343,6 +344,7 @@ async function computeDiff(supabase, parsedInvoices) {
     const invsForCandidates = await fetchAllPaginated(() =>
       supabase.from('sandbox_ap_invoices')
         .select('id, voucher')
+        .eq('entity', entity)
         .in('id', invIds.slice(0, 1000))  // safety limit
     );
     const voucherByInv = {};
@@ -361,7 +363,7 @@ async function computeDiff(supabase, parsedInvoices) {
 // =====================================================================
 // IMPORTER
 // =====================================================================
-async function executeImport(supabase, parsedInvoices, diff, currentUser, filename) {
+async function executeImport(supabase, parsedInvoices, diff, currentUser, filename, entity) {
   const errors = [];
 
   if (diff.newVendors.length > 0) {
@@ -432,6 +434,7 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
         ap_account: p.ap_account,
         bank_code: p.bank_code,
         status: 'open',
+        entity: entity,
         assigned_ap_clerk: clerkId || null,
         upload_id: uploadRow.id,
         last_status_change: new Date().toISOString(),
@@ -598,7 +601,7 @@ function fmtNumber(n) {
 // PAGE COMPONENT
 // =====================================================================
 export default function UploadPage() {
-  const { actualProfile, effectiveRole, isPlayingRole } = useApRole();
+  const { actualProfile, effectiveRole, isPlayingRole, entity, entityMeta } = useApRole();
   const supabase = createClient();
 
   const currentUser = actualProfile;
@@ -630,7 +633,7 @@ export default function UploadPage() {
       }
       setParsed(parsedResult);
 
-      const diffResult = await computeDiff(supabase, parsedResult.rows);
+      const diffResult = await computeDiff(supabase, parsedResult.rows, entity);
       setDiff(diffResult);
       setStage('review');
     } catch (e) {
@@ -643,7 +646,7 @@ export default function UploadPage() {
     setStage('importing');
     setError(null);
     try {
-      const result = await executeImport(supabase, parsed.rows, diff, currentUser, filename);
+      const result = await executeImport(supabase, parsed.rows, diff, currentUser, filename, entity);
       setImportResult(result);
       setStage('done');
     } catch (e) {
@@ -683,6 +686,20 @@ export default function UploadPage() {
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
           <p className="text-[13px] text-red-800"><strong>Fout:</strong> {error}</p>
+        </div>
+      )}
+
+      {stage === 'idle' && (
+        <div className="mb-3 flex items-center gap-2 rounded-xl px-4 py-2.5 border"
+          style={{ background: (entityMeta?.soft) || '#FDE7E1', borderColor: (entityMeta?.bar) || '#E1330B' }}>
+          <span className="text-[12px] font-bold px-2 py-0.5 rounded"
+            style={{ background: (entityMeta?.bar) || '#E1330B', color: (entityMeta?.barText) || '#fff' }}>
+            {entity}
+          </span>
+          <span className="text-[12px] text-[#1B3A5C]/80">
+            Deze upload wordt geboekt in <strong>{entityMeta?.name} {entityMeta?.sub}</strong>.
+            Klopt dit niet? Wissel bovenaan van administratie voordat je uploadt.
+          </span>
         </div>
       )}
 

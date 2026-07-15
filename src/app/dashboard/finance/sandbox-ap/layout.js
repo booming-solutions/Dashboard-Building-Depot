@@ -1,12 +1,20 @@
 /* ============================================================
-   BESTAND: sandbox_layout_v3.js
+   BESTAND: sandbox_layout_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/layout.js
-   (overschrijft sandbox v2, hernoemen naar layout.js)
-   🧪 SANDBOX-MIRROR van productie — regel-voor-regel identiek aan live,
+   (overschrijft sandbox v3, hernoemen naar layout.js)
+   🧪 SANDBOX-MIRROR van productie v4 — regel-voor-regel identiek aan live,
    alleen aangepast:
-   - tabel  ap_invoices            → sandbox_ap_invoices
-   - route  /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
+   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
 
+
+   v4 WIJZIGINGEN:
+   - Multi-entiteit: BrandBanner bovenaan elke AP-pagina met logo,
+     vlag en kleuren per administratie (BDT/BDB/MMC/RCC). Switcher
+     om van administratie te wisselen; default BDT (Curaçao Store 1).
+   - Context levert nu 'entity', 'entityMeta', 'setEntity' zodat
+     pagina's per entiteit kunnen filteren (volgende stap).
+   - Logo's verwacht in /public/logos/ (building-depot.png, multimart.png, rcc.png).
 
    v3 WIJZIGINGEN:
    - Nieuwe rol ap_bank toegevoegd (Tineke = Goedkeurder 2)
@@ -40,6 +48,68 @@ export function useApRole() {
 }
 
 const STORAGE_KEY = 'ap_effective_role';
+const ENTITY_STORAGE_KEY = 'ap_active_entity';
+
+// =====================================================================
+// Entiteiten — branding per administratie. Logo's staan in /public/logos.
+// Zet de aangeleverde bestanden neer als:
+//   /public/logos/building-depot.png   (BDT + BDB)
+//   /public/logos/multimart.png        (MMC)
+//   /public/logos/rcc.png              (RCC)
+// =====================================================================
+const ENTITY_META = {
+  BDT: {
+    code: 'BDT', name: 'Building Depot', sub: 'Curaçao · Store 1',
+    logo: '/logos/building-depot.png', flag: 'curacao',
+    bar: '#E1330B', barText: '#FFFFFF', accent: '#F5C518', soft: '#FDE7E1',
+  },
+  BDB: {
+    code: 'BDB', name: 'Building Depot', sub: 'Bonaire',
+    logo: '/logos/building-depot.png', flag: 'bonaire',
+    bar: '#0B5AA6', barText: '#FFFFFF', accent: '#F5C518', soft: '#E3EEF8',
+  },
+  MMC: {
+    code: 'MMC', name: 'Multimart', sub: 'Curaçao',
+    logo: '/logos/multimart.png', flag: null,
+    bar: '#2AA9E0', barText: '#FFFFFF', accent: '#7AB648', soft: '#E4F4FB',
+  },
+  RCC: {
+    code: 'RCC', name: 'Repair Centre', sub: 'Curaçao',
+    logo: '/logos/rcc.png', flag: null,
+    bar: '#2E3A45', barText: '#FFFFFF', accent: '#8895A3', soft: '#EAEDF0',
+  },
+};
+const ENTITY_ORDER = ['BDT', 'BDB', 'MMC', 'RCC'];
+
+// Vlaggen als SVG (stylized — vervang desgewenst door /public/flags/*.png).
+function FlagCuracao({ className = '' }) {
+  return (
+    <svg viewBox="0 0 60 40" className={className} aria-label="Curaçao">
+      <rect width="60" height="40" fill="#002B7F" />
+      <rect y="28" width="60" height="6" fill="#F9D90F" />
+      <path d="M12 8l1.6 3.4 3.7.4-2.8 2.5.8 3.6L12 15.9 8.7 17.9l.8-3.6L6.7 11.8l3.7-.4z" fill="#fff" />
+      <path d="M9 18l1.1 2.3 2.5.3-1.9 1.7.5 2.5L9 23.4 6.7 24.8l.5-2.5-1.9-1.7 2.5-.3z" fill="#fff" />
+    </svg>
+  );
+}
+function FlagBonaire({ className = '' }) {
+  return (
+    <svg viewBox="0 0 60 40" className={className} aria-label="Bonaire">
+      <rect width="60" height="40" fill="#fff" />
+      <path d="M0 40 L0 22 L26 40 Z" fill="#0B54A0" />
+      <path d="M0 20 L34 40 L40 40 L0 16 Z" fill="#F9D90F" />
+      <g transform="translate(13 12)">
+        <circle r="7" fill="none" stroke="#D21034" strokeWidth="2" />
+        <path d="M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z" fill="#000" />
+      </g>
+    </svg>
+  );
+}
+function EntityFlag({ flag, className }) {
+  if (flag === 'curacao') return <FlagCuracao className={className} />;
+  if (flag === 'bonaire') return <FlagBonaire className={className} />;
+  return null;
+}
 
 const ROLE_META = {
   admin:       { label: 'Admin',         icon: '👑', color: 'bg-purple-50 text-purple-700 border-purple-200' },
@@ -59,6 +129,20 @@ export default function APLayout({ children }) {
   const [allApUsers, setAllApUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [effectiveProfileId, setEffectiveProfileId] = useState(null);
+  const [entity, setEntityState] = useState('BDT');
+
+  // Actieve entiteit laden uit localStorage (default BDT = Curaçao Store 1)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = localStorage.getItem(ENTITY_STORAGE_KEY);
+    if (stored && ENTITY_META[stored]) setEntityState(stored);
+  }, []);
+
+  function setEntity(code) {
+    if (!ENTITY_META[code]) return;
+    setEntityState(code);
+    if (typeof window !== 'undefined') localStorage.setItem(ENTITY_STORAGE_KEY, code);
+  }
   
   const loadAll = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -192,13 +276,81 @@ export default function APLayout({ children }) {
     canSwitchRoles: isAdmin,
     availableProfiles: allApUsers,
     switchToProfile,
+
+    // Multi-entiteit
+    entity,
+    entityMeta: ENTITY_META[entity] || ENTITY_META.BDT,
+    setEntity,
+    availableEntities: ENTITY_ORDER,
   };
   
   return (
     <ApRoleContext.Provider value={contextValue}>
+      <BrandBanner ctx={contextValue} />
       {isAdmin && <RoleSwitcherBanner ctx={contextValue} />}
       {children}
     </ApRoleContext.Provider>
+  );
+}
+
+// =====================================================================
+// Branded header per entiteit — altijd zichtbaar bovenaan elke AP-pagina,
+// zodat niemand zich vergist in welke administratie hij boekt.
+// =====================================================================
+function BrandBanner({ ctx }) {
+  const { entity, setEntity, availableEntities } = ctx;
+  const m = ENTITY_META[entity] || ENTITY_META.BDT;
+  return (
+    <div
+      className="mb-5 rounded-2xl overflow-hidden shadow-sm border"
+      style={{ borderColor: m.bar }}>
+      <div className="flex items-center gap-4 px-5 py-3" style={{ background: m.bar, color: m.barText }}>
+        {/* Logo */}
+        <div className="flex-shrink-0 bg-white rounded-lg p-1.5 shadow-sm h-12 w-12 flex items-center justify-center overflow-hidden">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={m.logo} alt={m.name} className="max-h-full max-w-full object-contain"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        </div>
+        {/* Naam + sub */}
+        <div className="flex-1 min-w-0">
+          <div className="text-[18px] font-extrabold leading-tight truncate">{m.name}</div>
+          <div className="text-[12px] font-semibold opacity-90">{m.sub}</div>
+        </div>
+        {/* Grote vlag (indien BDT/BDB) */}
+        {m.flag && (
+          <div className="flex-shrink-0 rounded-md overflow-hidden shadow ring-1 ring-white/40">
+            <EntityFlag flag={m.flag} className="h-11 w-[66px] block" />
+          </div>
+        )}
+        {/* Entiteit-code groot */}
+        <div className="flex-shrink-0 text-[26px] font-black tracking-wider px-3 py-1 rounded-lg"
+          style={{ background: 'rgba(255,255,255,0.18)' }}>
+          {m.code}
+        </div>
+      </div>
+
+      {/* Switcher-balk */}
+      <div className="flex items-center gap-2 px-5 py-2 bg-white flex-wrap">
+        <span className="text-[11px] font-semibold text-[#1B3A5C]/50">Administratie:</span>
+        {availableEntities.map(code => {
+          const em = ENTITY_META[code];
+          const active = code === entity;
+          return (
+            <button key={code} onClick={() => setEntity(code)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-bold transition-all border"
+              style={active
+                ? { background: em.bar, color: em.barText, borderColor: em.bar }
+                : { background: em.soft, color: '#1B3A5C', borderColor: 'transparent' }}>
+              {em.flag && <EntityFlag flag={em.flag} className="h-3 w-[18px] rounded-sm" />}
+              {em.code}
+            </button>
+          );
+        })}
+        <span className="ml-auto text-[11px] text-[#1B3A5C]/40 italic">
+          Je boekt nu in {m.name} {m.sub}
+        </span>
+      </div>
+    </div>
   );
 }
 
