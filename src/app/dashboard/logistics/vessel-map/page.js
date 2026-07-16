@@ -1,14 +1,16 @@
 /* ============================================================
    BESTAND: page.js  (Wereldkaart schepen)
-   KOPIEER NAAR: src/app/dashboard/logistics/vessel-map/page.js   (NIEUW)
+   KOPIEER NAAR: src/app/dashboard/logistics/vessel-map/page.js   (overschrijft)
 
-   Toont alle PO's met een live scheepspositie (via VesselFinder).
-   Zoeken op SKU, PO, leverancier of containernummer.
-   Gebruikt src/components/VesselMap.jsx.
+   Toont alle containers met een positie (via VesselFinder).
+   - Ververst de data automatisch elke 60s (toont nieuwe posities zodra
+     die in de database staan).
+   - Knop "Ververs posities" haalt de varende containers meteen opnieuw
+     op bij VesselFinder.
    ============================================================ */
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import dynamic from 'next/dynamic';
 
@@ -32,18 +34,26 @@ export default function VesselMapPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
-  const [skuPOs, setSkuPOs] = useState(null); // Set van po_numbers die matchen op SKU
+  const [skuPOs, setSkuPOs] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [msg, setMsg] = useState(null);
 
+  const loadRows = useCallback(async () => {
+    const { data } = await supabase.from('order_flow_containers')
+      .select('id, container_no, eta, carrier, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, tracking_updated_at, order_flow ( po_number, vendor_name )')
+      .or('vessel_lat.not.is.null,pod_lat.not.is.null,pol_lat.not.is.null');
+    setRows(data || []);
+    setLoading(false);
+    setLastUpdate(new Date());
+  }, [supabase]);
+
+  // Eerste load + automatisch elke 60s verversen vanuit de database
   useEffect(() => {
-    (async () => {
-      const { data } = await supabase.from('order_flow_containers')
-        .select('id, container_no, eta, carrier, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, order_flow ( po_number, vendor_name )')
-        .or('vessel_lat.not.is.null,pod_lat.not.is.null,pol_lat.not.is.null');
-      setRows(data || []);
-      setLoading(false);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    loadRows();
+    const id = setInterval(loadRows, 60000);
+    return () => clearInterval(id);
+  }, [loadRows]);
 
   // SKU-zoeken: vind po_numbers met een matchend artikelnummer/omschrijving
   useEffect(() => {
@@ -59,6 +69,19 @@ export default function VesselMapPage() {
     }, 300);
     return () => { cancel = true; clearTimeout(t); };
   }, [q, supabase]);
+
+  async function refreshPositions() {
+    setRefreshing(true); setMsg(null);
+    try {
+      const res = await fetch('/api/order-flow/track-refresh', { method: 'POST' });
+      const j = await res.json();
+      if (!res.ok) { setMsg(j.error || 'Verversen mislukt'); }
+      else {
+        setMsg(`Bijgewerkt: ${j.updated} · nog bezig: ${j.processing} · fouten: ${j.errors}${j.containers_remaining != null ? ` · ${j.containers_remaining} containers over` : ''}`);
+        await loadRows();
+      }
+    } catch (e) { setMsg('Netwerkfout: ' + e.message); } finally { setRefreshing(false); }
+  }
 
   const vessels = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -84,20 +107,31 @@ export default function VesselMapPage() {
     <div style={{ padding: 24, maxWidth: 1360, margin: '0 auto', fontFamily: 'system-ui,Arial,sans-serif' }}>
       <h1 style={{ color: '#1B3A5C', margin: '0 0 4px', fontSize: 24 }}>Schepen wereldwijd</h1>
       <p style={{ color: '#6b7280', fontSize: 13, margin: '0 0 14px' }}>
-        Alle PO&apos;s met een live positie via VesselFinder. Zoek op SKU, PO, leverancier of containernummer.
+        Alle containers met een positie via VesselFinder. De kaart ververst automatisch elke minuut.
       </p>
-      <input
-        value={q} onChange={(e) => setQ(e.target.value)}
-        placeholder="Zoek op SKU, PO, leverancier of container…"
-        style={{ width: '100%', maxWidth: 560, padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14, marginBottom: 10 }}
-      />
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+        <input
+          value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder="Zoek op SKU, PO, leverancier of container…"
+          style={{ flex: '1 1 360px', minWidth: 240, padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14 }}
+        />
+        <button onClick={refreshPositions} disabled={refreshing}
+          style={{ padding: '10px 14px', border: '1px solid #1B3A5C', background: refreshing ? '#93a4b8' : '#1B3A5C', color: '#fff', borderRadius: 8, fontSize: 14, cursor: refreshing ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+          {refreshing ? 'Verversen…' : 'Ververs posities'}
+        </button>
+      </div>
+
       <div style={{ color: '#6b7280', fontSize: 12, marginBottom: 10 }}>
         {loading ? 'Laden…' : `${vessels.length} schip(en) getoond${q.trim() ? ' (gefilterd)' : ''}`}
+        {lastUpdate && !loading ? ` · laatst geladen ${lastUpdate.toLocaleTimeString('nl-NL')}` : ''}
+        {msg ? ` · ${msg}` : ''}
       </div>
+
       <VesselMap vessels={vessels} height={580} />
       {!loading && rows.length === 0 && (
         <div style={{ color: '#6b7280', fontSize: 13, marginTop: 12 }}>
-          Nog geen schepen met een live positie. Haal in Order Flow een ETA op via VesselFinder — zodra er posities binnenkomen, verschijnen de schepen hier.
+          Nog geen containers met een positie. Haal in Order Flow een ETA op via VesselFinder, of klik hierboven op &quot;Ververs posities&quot;.
         </div>
       )}
     </div>
