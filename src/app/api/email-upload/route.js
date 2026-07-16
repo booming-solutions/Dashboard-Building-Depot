@@ -1,9 +1,26 @@
 /* ============================================================
-   BESTAND: route_email_v24.js
+   BESTAND: route_email_v25.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
-   (vervangt de huidige route.js)
 
-   CRITICAL BUGFIX v24:
+   CRITICAL BUGFIX v25:
+   - Vercel Serverless Functions hebben 4.5MB body limit.
+     De Cloudflare Email Worker stuurde base64-encoded attachments
+     direct in JSON body. Voor grote emails (5MB+, na base64 +33%)
+     → HTTP 413 FUNCTION_PAYLOAD_TOO_LARGE, upload gefaald.
+     Gevolg: alle grote Compass exports (Daniel/Gijs/John CUR/BON)
+     kwamen sinds 8 juli niet meer binnen.
+   
+   - Fix: nieuwe Cloudflare Worker v2 uploadt attachments naar
+     Supabase Storage bucket 'email-attachments' en stuurt alleen
+     de storage_path naar deze endpoint (kleine JSON body).
+     Deze endpoint downloadt uit Storage en verwerkt normaal.
+   
+   - BACKWARD COMPATIBLE: als request body 'data' bevat (oude Worker
+     of directe forward), blijft de legacy inline base64 path werken.
+   
+   - Vereist bucket 'email-attachments' (private) in Supabase Storage.
+
+   WIJZIGING v24:
    - Compass exports voor Daniel, John, Gijs (nieuw naamgevingsformaat
      "AI Voorraden <Naam> <REGIO>") werden niet herkend als buying_data
      omdat ze geen "Department Group" kolom hebben.
@@ -1333,19 +1350,45 @@ export async function POST(request) {
     var body = await request.json();
     var filename = body.filename;
     var data = body.data;
+    var storagePath = body.storage_path;
     var sender = body.sender;
 
-    if (!data || !filename) {
-      return Response.json({ error: 'Missing data or filename' }, { status: 400 });
+    if ((!data && !storagePath) || !filename) {
+      return Response.json({ error: 'Missing data/storage_path or filename' }, { status: 400 });
     }
 
-    console.log('Processing email attachment: ' + filename + ' from ' + sender);
+    console.log('Processing email attachment: ' + filename + ' from ' + sender + (storagePath ? ' (via storage: ' + storagePath + ')' : ' (inline)'));
 
-    // Decode base64 to binary
-    var binaryString = atob(data);
-    var bytes = new Uint8Array(binaryString.length);
-    for (var i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    // Get bytes: either from inline base64 (small files, legacy path) OR
+    // from Supabase Storage (large files, new v2 Worker path).
+    var bytes;
+    if (storagePath) {
+      // NIEUW v25: haal file uit Supabase Storage
+      try {
+        var storageUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + '/storage/v1/object/email-attachments/' + encodeURIComponent(storagePath);
+        var storageRes = await fetch(storageUrl, {
+          headers: {
+            'Authorization': 'Bearer ' + process.env.SUPABASE_SERVICE_ROLE_KEY,
+          },
+        });
+        if (!storageRes.ok) {
+          var errText = await storageRes.text();
+          return Response.json({ error: 'Failed to fetch from Storage: ' + storageRes.status + ' ' + errText }, { status: 500 });
+        }
+        var buf = await storageRes.arrayBuffer();
+        bytes = new Uint8Array(buf);
+        console.log('Fetched ' + bytes.length + ' bytes from Storage');
+      } catch (storageErr) {
+        console.error('Storage fetch error:', storageErr);
+        return Response.json({ error: 'Storage fetch error: ' + storageErr.message }, { status: 500 });
+      }
+    } else {
+      // Legacy path: base64 in request body (voor kleine files < 4.5MB)
+      var binaryString = atob(data);
+      bytes = new Uint8Array(binaryString.length);
+      for (var i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
     }
 
     // Parse Excel
