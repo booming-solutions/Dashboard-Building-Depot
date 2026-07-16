@@ -1,12 +1,11 @@
 /* ============================================================
-   BESTAND: sandbox_ap_eagle_sync_page_v1.js
+   BESTAND: sandbox_ap_eagle_sync_page_v2.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/eagle-sync/page.js
-   (nieuwe sandbox-file, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie v1 — regel-voor-regel identiek aan live,
-   alleen aangepast:
-   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
-   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+   (overschrijft v1, hernoemen naar page.js)
 
+   v2 WIJZIGINGEN:
+   - Entiteit-filter op de ap_invoices-fetch (.eq('entity', entity));
+     werkt binnen de actieve entiteit.
 
    Folder "eagle-sync" wordt automatisch aangemaakt onder
    src/app/dashboard/finance/sandbox-ap/
@@ -79,7 +78,7 @@ function fmtDateTime(iso) {
 }
 
 export default function EagleSyncPage() {
-  const { effectiveProfileId, effectiveRole, effectiveName, actualProfile } = useApRole();
+  const { effectiveProfileId, effectiveRole, effectiveName, actualProfile, entity } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
 
@@ -98,6 +97,7 @@ export default function EagleSyncPage() {
         let q = supabase
           .from('sandbox_ap_invoices')
           .select('id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, last_status_change, last_status_change_by, assigned_ap_clerk')
+          .eq('entity', entity)
           .eq('status', 'auto_matched')
           .order('last_status_change', { ascending: true });
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
@@ -162,7 +162,7 @@ export default function EagleSyncPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, effectiveProfileId, isClerk]);
+  }, [supabase, effectiveProfileId, isClerk, entity]);
 
   useEffect(() => { loadPending(); }, [loadPending]);
 

@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: ap_dib_check_page_v2.js
+   BESTAND: ap_dib_check_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/dib-check/page.js
-   (overschrijft v1, hernoemen naar page.js)
+   (overschrijft v2, hernoemen naar page.js)
+
+   v3 WIJZIGINGEN:
+   - Vergelijking gescoped op de actieve entiteit (.eq('entity', entity)).
+     Voor de Curaçao DIB-controle staat de banner dus op BDT.
 
    DOEL: Do it Best (DIB) open-items controle.
    Stap 1 (handmatig): in de DIB-portal exporteer je de Invoice
@@ -69,7 +73,7 @@ function parseCsv(file) {
 }
 
 export default function DibCheckPage() {
-  const { effectiveRole } = useApRole();
+  const { effectiveRole, entity, entityMeta } = useApRole();
   const supabase = createClient();
   const canUse = ['admin', 'cfo', 'ap_clerk'].includes(effectiveRole);
 
@@ -123,6 +127,7 @@ export default function DibCheckPage() {
       const { data: ap, error: apErr } = await supabase
         .from('ap_invoices')
         .select('invoice_number, reference, po_number, vendor_name, status')
+        .eq('entity', entity)
         .ilike('vendor_name', '%DIB%')
         .not('status', 'in', '(paid,disappeared_from_export,reconciled,auto_matched)');
       if (apErr) throw apErr;

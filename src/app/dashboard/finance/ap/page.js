@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: ap_page_v10.js
+   BESTAND: ap_page_v11.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v9, hernoemen naar page.js)
+   (overschrijft v10, hernoemen naar page.js)
+
+   v11 WIJZIGINGEN:
+   - Entiteit-filter op alle ap_invoices-tellingen (.eq('entity', entity)).
+   - LET OP: ap_match_candidates zijn (nog) niet entiteit-getagd, dus die
+     tellingen tonen voorlopig alle entiteiten.
 
    v10 WIJZIGINGEN:
    - Nieuwe tegel 'DIB Controle' → /dashboard/finance/ap/dib-check
@@ -46,7 +51,7 @@ export default function APDashboard() {
   const {
     actualName, actualRole,
     effectiveName, effectiveRole, effectiveBums, effectiveProfileId,
-    isPlayingRole
+    isPlayingRole, entity
   } = useApRole();
 
   const [stats, setStats] = useState({
@@ -73,7 +78,7 @@ export default function APDashboard() {
         .select('*', { count: 'exact', head: true });
 
       // Totaal facturen — voor admin/cfo/approver: alles. Voor clerk: alleen toegewezen
-      let totalQuery = supabase.from('ap_invoices').select('*', { count: 'exact', head: true });
+      let totalQuery = supabase.from('ap_invoices').select('*', { count: 'exact', head: true }).eq('entity', entity);
       if (isClerk) totalQuery = totalQuery.eq('assigned_ap_clerk', effectiveProfileId);
       const { count: ic } = await totalQuery;
 
@@ -82,6 +87,7 @@ export default function APDashboard() {
         let q = supabase
           .from('ap_invoices')
           .select('vendor_id, balance, assigned_ap_clerk')
+          .eq('entity', entity)
           .not('status', 'in', '(paid,disappeared_from_export,reconciled,auto_matched)');
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
@@ -124,6 +130,7 @@ export default function APDashboard() {
       let eagleQuery = supabase
         .from('ap_invoices')
         .select('*', { count: 'exact', head: true })
+        .eq('entity', entity)
         .eq('status', 'auto_matched');
       if (isClerk) eagleQuery = eagleQuery.eq('assigned_ap_clerk', effectiveProfileId);
       const { count: ep } = await eagleQuery;
@@ -132,6 +139,7 @@ export default function APDashboard() {
       let selQuery = supabase
         .from('ap_invoices')
         .select('*', { count: 'exact', head: true })
+        .eq('entity', entity)
         .eq('status', 'selected');
       if (isClerk) selQuery = selQuery.eq('assigned_ap_clerk', effectiveProfileId);
       const { count: sp } = await selQuery;
@@ -179,7 +187,7 @@ export default function APDashboard() {
       });
     }
     loadStats();
-  }, [effectiveProfileId, effectiveRole]);
+  }, [effectiveProfileId, effectiveRole, entity]);
 
   const isClerk = effectiveRole === 'ap_clerk';
 

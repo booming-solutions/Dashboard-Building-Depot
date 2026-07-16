@@ -1,7 +1,13 @@
 /* ============================================================
-   BESTAND: ap_match_worklist_page_v5.js
+   BESTAND: ap_match_worklist_page_v6.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/worklist/page.js
-   (overschrijft v4, hernoemen naar page.js)
+   (overschrijft v5, hernoemen naar page.js)
+
+   v6 WIJZIGINGEN:
+   - Entiteit-filter: invoices gescoped op actieve entiteit; candidates
+     zonder factuur in die entiteit vallen weg. Herlaadt bij entiteit-wissel.
+   - LET OP: de tab-tellingen (badges) tellen candidates en zijn nog niet
+     entiteit-gescoped (candidates zijn niet entiteit-getagd).
 
    v5 WIJZIGINGEN:
    - Nieuwe sorteerbare kolom 'Bank' (toont invoice.paid_bank, de bank
@@ -93,7 +99,7 @@ function fmtNum(n) { return new Intl.NumberFormat('nl-NL').format(n); }
 // knop. CSV gaat als input naar eagle_aflet_agent_v3.py op de afdelingscomputer.
 
 export default function MatchWorklistPage() {
-  const { actualProfile, effectiveRole, isPlayingRole, effectiveName } = useApRole();
+  const { actualProfile, effectiveRole, isPlayingRole, effectiveName, entity } = useApRole();
   const supabase = createClient();
   const canConfirm = ['admin', 'cfo', 'ap_approver'].includes(effectiveRole);
 
@@ -169,6 +175,7 @@ export default function MatchWorklistPage() {
       const allInvoices = await fetchAllPaginated(() =>
         supabase.from('ap_invoices')
           .select('id, vendor_id, vendor_name, invoice_number, voucher, balance, original_amount, currency, status, invoice_date, due_date, paid_at, paid_bank, selected_amount, assigned_ap_clerk')
+          .eq('entity', entity)
       );
       const invSet = new Set(invoiceIds);
       const invMap = {};
@@ -208,19 +215,21 @@ export default function MatchWorklistPage() {
         };
       });
 
-      setRows(prev => ({ ...prev, [statusKey]: enriched }));
+      // entiteit-scoping: alleen candidates waarvan de factuur in deze entiteit zit
+      const scoped = enriched.filter(r => r.invoice);
+      setRows(prev => ({ ...prev, [statusKey]: scoped }));
     } catch (e) {
       setError(e.message);
     } finally {
       setLoadingRows(false);
     }
-  }, [supabase]);
+  }, [supabase, entity]);
 
   useEffect(() => {
     loadCounts();
     loadRows(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [entity]);
 
   useEffect(() => {
     setSelectedIds(new Set());

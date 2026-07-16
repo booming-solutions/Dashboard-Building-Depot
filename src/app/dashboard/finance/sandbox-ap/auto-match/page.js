@@ -1,12 +1,11 @@
 /* ============================================================
-   BESTAND: sandbox_ap_automatch_page_v2.js
+   BESTAND: sandbox_ap_automatch_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/auto-match/page.js
-   (nieuwe sandbox-file, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie v2 — regel-voor-regel identiek aan live,
-   alleen aangepast:
-   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
-   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+   (overschrijft v2, hernoemen naar page.js)
 
+   v3 WIJZIGINGEN:
+   - Entiteit-filter op de ap_invoices-fetch (.eq('entity', entity));
+     werkt binnen de actieve entiteit.
 
    WIJZIGINGEN T.O.V. v1:
    - Status update: 'paid' → 'auto_matched' (tussenstatus)
@@ -80,7 +79,7 @@ function fmtDate(iso) {
 }
 
 export default function AutoMatchPage() {
-  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
+  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole, entity } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
 
@@ -99,6 +98,7 @@ export default function AutoMatchPage() {
         let q = supabase
           .from('sandbox_ap_invoices')
           .select('id, vendor_id, vendor_name, invoice_number, voucher, type, balance, invoice_date, due_date, assigned_ap_clerk')
+          .eq('entity', entity)
           .eq('status', 'open');
         if (isClerk) q = q.eq('assigned_ap_clerk', effectiveProfileId);
         return q;
@@ -161,7 +161,7 @@ export default function AutoMatchPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, effectiveProfileId, isClerk]);
+  }, [supabase, effectiveProfileId, isClerk, entity]);
 
   useEffect(() => { loadPairs(); }, [loadPairs]);
 

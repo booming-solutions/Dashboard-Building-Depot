@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: ap_match_bank_page_v6.js
+   BESTAND: ap_match_bank_page_v7.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/bank/page.js
-   (nieuwe folder: match/bank/, hernoemen naar page.js)
+   (overschrijft v6, hernoemen naar page.js)
+
+   v7 WIJZIGINGEN:
+   - Entiteit-filter op de ap_invoices-fetch (.eq('entity', entity));
+     werkt binnen de actieve entiteit.
 
    VEREIST: package.json moet "pdfjs-dist": "^4.0.379" hebben.
    Zonder die regel werkt de upload niet.
@@ -493,7 +497,7 @@ function findNearestInvoice(tx, groupIds, invoicesByVendor) {
 
 // ====== HOOFD COMPONENT ======
 export default function BankMatchPage() {
-  const { actualProfile, effectiveRole } = useApRole();
+  const { actualProfile, effectiveRole, entity } = useApRole();
   const supabase = createClient();
   const canImport = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(effectiveRole);
 
@@ -598,6 +602,7 @@ export default function BankMatchPage() {
       const invoices = await fetchAllPaginated(() =>
         supabase.from('ap_invoices')
           .select('id, vendor_id, vendor_name, invoice_number, balance, original_amount, currency, status, invoice_date, due_date')
+          .eq('entity', entity)
       );
       const invByVendor = {};
       for (const inv of invoices) {

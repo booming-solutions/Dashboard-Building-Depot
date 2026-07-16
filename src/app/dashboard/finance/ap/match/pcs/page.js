@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: ap_match_pcs_page_v3.js
+   BESTAND: ap_match_pcs_page_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/pcs/page.js
-   (nieuwe folders aanmaken: match/pcs/, hernoemen naar page.js)
+   (overschrijft v3, hernoemen naar page.js)
+
+   v4 WIJZIGINGEN:
+   - Entiteit-filter op de ap_invoices-fetch (.eq('entity', entity));
+     werkt binnen de actieve entiteit.
 
    VEREIST: npm install xlsx (in project root, eenmalig)
 
@@ -186,7 +190,7 @@ function tryFuzzyMatch(pcsRow, vid, invoicesByVendor, claimedInvoiceIds) {
 
 
 export default function PcsMatchPage() {
-  const { actualProfile, effectiveRole } = useApRole();
+  const { actualProfile, effectiveRole, entity } = useApRole();
   const supabase = createClient();
   const canImport = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(effectiveRole);
 
@@ -248,6 +252,7 @@ export default function PcsMatchPage() {
       const invoices = await fetchAllPaginated(() =>
         supabase.from('ap_invoices')
           .select('id, vendor_id, vendor_name, invoice_number, balance, original_amount, currency, status, invoice_date, due_date')
+          .eq('entity', entity)
       );
 
       const invByVendInv = {};

@@ -1,12 +1,12 @@
 /* ============================================================
-   BESTAND: sandbox_ap_werkstroom_page_v23.js
+   BESTAND: sandbox_ap_werkstroom_page_v24.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/werkstroom/page.js
-   (overschrijft sandbox v22, hernoemen naar page.js)
-   🧪 SANDBOX-MIRROR van productie v23 — regel-voor-regel identiek aan live,
-   alleen aangepast:
-   - alle ap_*-tabellen           → sandbox_ap_*  (profiles blijft gedeeld)
-   - route /dashboard/finance/ap  → /dashboard/finance/sandbox-ap
+   (overschrijft v23, hernoemen naar page.js)
 
+   v24 WIJZIGINGEN:
+   - Entiteit-filter: werkstroom-tellingen en -lijst gescoped op de
+     actieve entiteit (.eq('entity', entity)). Update-acties werken op
+     reeds-geselecteerde id's en zijn dus al gescoped.
 
    v23 WIJZIGINGEN:
    - Tab-label 'Klaar voor betaling' → 'Verzenden naar bank'.
@@ -237,7 +237,7 @@ function daysUntilDue(dueDate) {
 const SELECT_COLS = 'id, vendor_id, vendor_name, invoice_number, voucher, type, balance, original_amount, currency, invoice_date, due_date, reference, po_number, status, assigned_ap_clerk, selected_by, submitted_by, approved_by, rejection_reason, rejected_at, rejected_by, paid_by, paid_at, selected_amount, paid_bank, batch_id, batch_bank, batch_created_at, batch_created_by, approver_1_at, approver_1_by, approver_2_at, approver_2_by, reconciled_by_clerk_at, reconciled_by_clerk_by';
 
 export default function WerkstroomPage() {
-  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole } = useApRole();
+  const { actualProfile, effectiveProfileId, effectiveRole, effectiveName, isPlayingRole, entity } = useApRole();
   const supabase = createClient();
   const isClerk = effectiveRole === 'ap_clerk';
   const isAdmin = effectiveRole === 'admin';
@@ -319,6 +319,7 @@ export default function WerkstroomPage() {
         let q = supabase
           .from('sandbox_ap_invoices')
           .select('*', { count: 'exact', head: true })
+          .eq('entity', entity)
           .eq('status', t.key);
         return q;
       });
@@ -333,7 +334,7 @@ export default function WerkstroomPage() {
     } finally {
       setLoadingCounts(false);
     }
-  }, [supabase, effectiveProfileId, isClerk]);
+  }, [supabase, effectiveProfileId, isClerk, entity]);
 
   // Rijen voor één status laden
   const loadTabRows = useCallback(async (statusKey) => {
@@ -343,6 +344,7 @@ export default function WerkstroomPage() {
         let q = supabase
           .from('sandbox_ap_invoices')
           .select(SELECT_COLS)
+          .eq('entity', entity)
           .eq('status', statusKey);
         return q;
       });
@@ -375,7 +377,7 @@ export default function WerkstroomPage() {
     } finally {
       setLoadingTab(false);
     }
-  }, [supabase, effectiveProfileId, isClerk]);
+  }, [supabase, effectiveProfileId, isClerk, entity]);
 
   // Initial + bij role-switch: counts + huidige tab
   useEffect(() => {
