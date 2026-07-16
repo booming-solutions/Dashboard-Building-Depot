@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v24.js
+   BESTAND: ap_werkstroom_page_v25.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
-   (overschrijft v23, hernoemen naar page.js)
+   (overschrijft v24, hernoemen naar page.js)
+
+   v25 WIJZIGINGEN:
+   - Fix: werkstroom herlaadt nu automatisch bij entiteit-wissel
+     (entity toegevoegd aan het laad-effect). Verversen niet meer nodig.
 
    v24 WIJZIGINGEN:
    - Entiteit-filter: werkstroom-tellingen en -lijst gescoped op de
@@ -384,7 +388,7 @@ export default function WerkstroomPage() {
     loadCounts();
     loadTabRows(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveProfileId, isClerk]);
+  }, [effectiveProfileId, isClerk, entity]);
 
   // Tab-switch: rijen laden als nog niet gecached
   useEffect(() => {
