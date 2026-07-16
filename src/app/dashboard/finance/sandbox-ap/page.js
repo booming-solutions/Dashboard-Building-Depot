@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: sandbox_ap_page_v12.js
+   BESTAND: sandbox_ap_page_v13.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/page.js
-   (overschrijft v11, hernoemen naar page.js)
+   (overschrijft v12, hernoemen naar page.js)
+
+   v13 WIJZIGINGEN:
+   - Wekelijkse ontwikkeling-grafiek per entiteit (dual-axis: aantal
+     openstaande facturen links, bedrag rechts). Leest ap_open_snapshots,
+     1 punt per week (eerste upload van de week). Chart.js.
 
    v12 WIJZIGINGEN:
    - ap_match_candidates-tellingen (pending/confirmed) nu ook gescoped op
@@ -31,8 +36,9 @@
 'use client';
 
 import { useApRole } from './layout';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
+import Chart from 'chart.js/auto';
 import Link from 'next/link';
 
 // Pagineer een Supabase query om de PostgREST 1000-rijen default te omzeilen.
@@ -71,6 +77,7 @@ export default function APDashboard() {
     pendingCandidates: null,
     confirmedCandidates: null,
   });
+  const [weekly, setWeekly] = useState(null);
 
   useEffect(() => {
     async function loadStats() {
@@ -193,6 +200,20 @@ export default function APDashboard() {
         pendingCandidates: pc || 0,
         confirmedCandidates,
       });
+
+      // Wekelijkse ontwikkeling: snapshots ophalen en per week bucketen
+      // (eerste upload van de week ≈ maandag, anders di/wo).
+      try {
+        const { data: snaps } = await supabase
+          .from('sandbox_ap_open_snapshots')
+          .select('snapshot_date, open_count, open_amount')
+          .eq('entity', entity)
+          .order('snapshot_date', { ascending: true });
+        setWeekly(bucketWeekly(snaps || []));
+      } catch (e) {
+        console.error('snapshots laden mislukt', e);
+        setWeekly([]);
+      }
     }
     loadStats();
   }, [effectiveProfileId, effectiveRole, entity]);
@@ -259,6 +280,15 @@ export default function APDashboard() {
           sublabel="te betalen"
           isText
         />
+      </div>
+
+      {/* Wekelijkse ontwikkeling: openstaande facturen (aantal) + bedrag */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm mb-4">
+        <h3 className="text-[14px] font-bold text-[#1B3A5C] mb-1">Ontwikkeling openstaand — per week</h3>
+        <p className="text-[11px] text-[#1B3A5C]/50 mb-3">
+          Eén punt per week (eerste upload van de week). Links het aantal facturen, rechts het bedrag.
+        </p>
+        <WeeklyChart data={weekly} />
       </div>
 
       {/* Indienen herinnering — alleen voor AP Clerks met klaargezette selectie */}
@@ -487,4 +517,117 @@ function ActionCard({ href, icon, label, desc, available, badge, cleanup }) {
 
 function fmtMoney(amount) {
   return new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+}
+// ---- Wekelijkse bucketing: 1 punt per week (eerste upload van de week) ----
+function bucketWeekly(snaps) {
+  // maandag van de week bepalen (ISO: ma=0)
+  const mondayKey = (dateStr) => {
+    const d = new Date(dateStr + 'T00:00:00');
+    const day = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - day);
+    return d.toISOString().slice(0, 10);
+  };
+  const byWeek = {};
+  for (const s of snaps) {
+    const wk = mondayKey(s.snapshot_date);
+    // eerste (vroegste) snapshot van de week houden; snaps zijn al asc gesorteerd
+    if (!byWeek[wk]) byWeek[wk] = s;
+  }
+  return Object.keys(byWeek).sort().map(wk => {
+    const s = byWeek[wk];
+    const [y, m, d] = wk.split('-');
+    return {
+      label: `${d}-${m}`,
+      count: Number(s.open_count) || 0,
+      amount: Number(s.open_amount) || 0,
+    };
+  });
+}
+
+// ---- Dual-axis grafiek: aantal (bars, links) + bedrag (lijn, rechts) ----
+function WeeklyChart({ data }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !data) return;
+    if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
+    if (data.length === 0) return;
+
+    chartRef.current = new Chart(canvasRef.current, {
+      data: {
+        labels: data.map(d => d.label),
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Aantal openstaand',
+            data: data.map(d => d.count),
+            yAxisID: 'yCount',
+            backgroundColor: 'rgba(27, 58, 92, 0.75)',
+            borderRadius: 4,
+            order: 2,
+          },
+          {
+            type: 'line',
+            label: 'Openstaand bedrag',
+            data: data.map(d => d.amount),
+            yAxisID: 'yAmount',
+            borderColor: '#E1330B',
+            backgroundColor: '#E1330B',
+            borderWidth: 2,
+            tension: 0.25,
+            pointRadius: 3,
+            order: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => ctx.dataset.yAxisID === 'yAmount'
+                ? `Bedrag: XCG ${new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 }).format(ctx.parsed.y)}`
+                : `Aantal: ${ctx.parsed.y}`,
+            },
+          },
+        },
+        scales: {
+          yCount: {
+            type: 'linear', position: 'left', beginAtZero: true,
+            title: { display: true, text: 'Aantal facturen', font: { size: 11 } },
+            ticks: { precision: 0, font: { size: 10 } },
+          },
+          yAmount: {
+            type: 'linear', position: 'right', beginAtZero: true,
+            title: { display: true, text: 'Bedrag (XCG)', font: { size: 11 } },
+            grid: { drawOnChartArea: false },
+            ticks: {
+              font: { size: 10 },
+              callback: (v) => new Intl.NumberFormat('nl-NL', { notation: 'compact', maximumFractionDigits: 1 }).format(v),
+            },
+          },
+          x: { ticks: { font: { size: 10 } } },
+        },
+      },
+    });
+
+    return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; } };
+  }, [data]);
+
+  if (data && data.length === 0) {
+    return (
+      <div className="h-[220px] flex items-center justify-center text-[12px] text-[#1B3A5C]/40 italic">
+        Nog geen weekpunten voor deze entiteit — verschijnt zodra er (per week) een upload is gedaan.
+      </div>
+    );
+  }
+  return (
+    <div className="h-[260px]">
+      <canvas ref={canvasRef} />
+    </div>
+  );
 }

@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: ap_upload_page_v8.js
+   BESTAND: ap_upload_page_v9.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/upload/page.js
    (overschrijft v2, hernoemen naar page.js bij upload)
 
@@ -574,6 +574,26 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
       eagle_synced: (diff.eagleSyncedInvoices || []).length,
     },
   });
+
+  // Snapshot van de open stand na import (voor de wekelijkse ontwikkeling-grafiek).
+  // Niet-blokkerend: een mislukte snapshot mag de import niet laten falen.
+  try {
+    const openRows = await fetchAllPaginated(() =>
+      supabase.from('ap_invoices')
+        .select('balance')
+        .eq('entity', entity)
+        .not('status', 'in', '(paid,disappeared_from_export,reconciled,auto_matched)')
+    );
+    const openCount = openRows.length;
+    const openAmount = openRows.reduce((s, r) => s + parseFloat(r.balance || 0), 0);
+    const today = new Date().toISOString().slice(0, 10);
+    await supabase.from('ap_open_snapshots').upsert(
+      { entity, snapshot_date: today, open_count: openCount, open_amount: openAmount },
+      { onConflict: 'entity,snapshot_date' }
+    );
+  } catch (snapErr) {
+    console.error('Open-snapshot wegschrijven mislukt:', snapErr);
+  }
 
   return { uploadRow, errors };
 }
