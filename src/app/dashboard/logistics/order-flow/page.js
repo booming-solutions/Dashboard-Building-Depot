@@ -24,6 +24,8 @@ import dynamic from 'next/dynamic';
 const VesselMap = dynamic(() => import('@/components/VesselMap'), { ssr: false, loading: () => <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>Kaart laden…</div> });
 
 const fmtUSD = (n) => (n == null ? '—' : new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n)));
+const fmtXCG = (n, dec = 0) => (n == null ? '—' : 'XCG ' + new Intl.NumberFormat('nl-NL', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(Number(n)));
+const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
 const fmtDate = (d) => {
   if (!d) return '—';
   const s = String(d).slice(0, 10);
@@ -88,7 +90,7 @@ export default function OrderFlowPage() {
   const [rem, setRem] = useState({ assignee_email: '', message: '', due_at: '' });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-  const [filter, setFilter] = useState({ q: '', store: '', etaFrom: '', etaTo: '' });
+  const [filter, setFilter] = useState({ q: '', store: '', etaFrom: daysAgoISO(30), etaTo: '' });
   const [sort, setSort] = useState({ key: 'eta', dir: 'asc' });
   const [showMap, setShowMap] = useState(false);
   const [mapFocus, setMapFocus] = useState(null);
@@ -96,6 +98,7 @@ export default function OrderFlowPage() {
   const [allContainers, setAllContainers] = useState([]);
   const [newCont, setNewCont] = useState('');
   const [trackingId, setTrackingId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
   const panelRef = useRef(null);
 
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 4000); };
@@ -118,6 +121,13 @@ export default function OrderFlowPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Automatisch de container-/scheepsposities elke 60s verversen uit de database
+  useEffect(() => {
+    const id = setInterval(() => { loadAllContainers(); if (sel) loadContainers(sel.id); }, 60000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel]);
 
   async function refreshRow(id) {
     const { data } = await supabase.from('order_flow_v').select('*').eq('id', id).single();
@@ -222,6 +232,17 @@ export default function OrderFlowPage() {
       else flash(`ETA ${fmtDate(j.eta)} · ${j.carrier || ''} · ${j.vessel || '—'} (nog ${j.containers_remaining} containers over)`);
       await loadContainers(sel.id); await loadAllContainers(); if (sel) await refreshRow(sel.id);
     } catch (e) { flash('Netwerkfout: ' + e.message); } finally { setTrackingId(null); }
+  }
+
+  async function refreshPositions() {
+    setRefreshing(true);
+    try {
+      const res = await fetch('/api/order-flow/track-refresh', { method: 'POST' });
+      const j = await res.json();
+      if (!res.ok) { flash(j.error || 'Verversen mislukt'); }
+      else { flash(`Posities bijgewerkt: ${j.updated} · nog bezig: ${j.processing}${j.containers_remaining != null ? ` · ${j.containers_remaining} containers over` : ''}`); }
+      await loadAllContainers(); if (sel) await loadContainers(sel.id); if (sel) await refreshRow(sel.id);
+    } catch (e) { flash('Netwerkfout: ' + e.message); } finally { setRefreshing(false); }
   }
 
   async function deletePo(id, po, e) {
@@ -360,9 +381,12 @@ export default function OrderFlowPage() {
     <div className="of-wrap">
       <style>{css}</style>
 
-      <div className="of-head">
-        <h1>Order Flow</h1>
-        <p className="of-sub">Van bestelling tot winkel · demurrage stap douane→chassis: 5 dagen vrij, daarna $100/container/dag</p>
+      <div className="of-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h1>Order Flow</h1>
+          <p className="of-sub">Van bestelling tot winkel · demurrage stap douane→chassis: 5 dagen vrij, daarna $100/container/dag</p>
+        </div>
+        <button className="btn primary" disabled={refreshing} onClick={refreshPositions}>{refreshing ? 'Verversen…' : 'Ververs posities'}</button>
       </div>
 
       <div className="kpis">
@@ -373,11 +397,28 @@ export default function OrderFlowPage() {
         <div className={`kpi ${kpi.inWindow ? 'warn' : ''}`}><span>{kpi.inWindow}</span>in demurrage-venster</div>
       </div>
 
+      <div className="of-card">
+        <div className="filterbar">
+          <input className="fsearch" placeholder="Zoek op PO, leverancier, afdeling of container…" value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} />
+          <select value={filter.store} onChange={(e) => setFilter({ ...filter, store: e.target.value })}>
+            <option value="">Alle stores</option>
+            {storeOpts.map((s) => <option key={s} value={s}>store {s}</option>)}
+          </select>
+          <label className="frange">ETA van<input type="date" value={filter.etaFrom} onChange={(e) => setFilter({ ...filter, etaFrom: e.target.value })} /></label>
+          <label className="frange">t/m<input type="date" value={filter.etaTo} onChange={(e) => setFilter({ ...filter, etaTo: e.target.value })} /></label>
+          {(filter.q || filter.store || filter.etaFrom || filter.etaTo) && <button className="link" onClick={() => setFilter({ q: '', store: '', etaFrom: '', etaTo: '' })}>wissen</button>}
+        </div>
+        <div className="of-sub" style={{ marginTop: 8 }}>{filtered.length} van {rows.length} PO&apos;s · standaard alleen ETA t/m 30 dagen oud (pas &quot;ETA van&quot; aan of klik wissen voor alles)</div>
+      </div>
+
       {showMap && (
         <div className="of-card">
           <div className="of-detail-head">
             <div className="of-card-title">Schepen op de kaart <span className="of-sub">{vessels.length} met een positie (🚢 live · 📍 laatst bekende haven)</span></div>
-            <button className="link" onClick={() => setShowMap(false)}>sluiten ✕</button>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <button className="btn" disabled={refreshing} onClick={refreshPositions}>{refreshing ? 'Verversen…' : 'Ververs posities'}</button>
+              <button className="link" onClick={() => setShowMap(false)}>sluiten ✕</button>
+            </div>
           </div>
           {vessels.length === 0 ? <div className="of-empty">Nog geen posities. Haal eerst een ETA op via VesselFinder.</div>
             : <VesselMap vessels={vessels} focusId={mapFocus} height={380} />}
@@ -447,14 +488,14 @@ export default function OrderFlowPage() {
             <div className="save-cell"><button className="btn primary" disabled={saving} onClick={saveEdits}>{saving ? 'Opslaan…' : 'Opslaan'}</button>{saved && <span className="saved">Opgeslagen ✓</span>}</div>
           </div>
 
-          <div className="of-block-title">Producten in deze PO <span className="of-sub">({items.length} SKU&apos;s · {fmtUSD(itemsTotal)})</span></div>
+          <div className="of-block-title">Producten in deze PO <span className="of-sub">({items.length} SKU&apos;s · {fmtXCG(itemsTotal)})</span></div>
           <div className="of-tablewrap">
             {items.length === 0 ? <div className="of-sub">Geen gekoppelde artikelen gevonden voor dit PO-nummer.</div> : (
               <table className="of-table sm">
                 <thead><tr><th>SKU</th><th>Omschrijving</th><th>Afdeling</th><th className="num">Aantal</th><th className="num">Kostprijs</th><th className="num">Waarde</th></tr></thead>
                 <tbody>
                   {items.slice(0, 200).map((i) => (
-                    <tr key={i.id}><td>{i.item_number}</td><td>{i.item_description}</td><td>{i.dept_name || i.dept_code || '—'}</td><td className="num">{i.qoo ?? '—'}</td><td className="num">{i.avg_cost != null ? fmtUSD(i.avg_cost) : '—'}</td><td className="num">{i.order_value != null ? fmtUSD(i.order_value) : '—'}</td></tr>
+                    <tr key={i.id}><td>{i.item_number}</td><td>{i.item_description}</td><td>{i.dept_name || i.dept_code || '—'}</td><td className="num">{i.qoo ?? '—'}</td><td className="num">{i.avg_cost != null ? fmtXCG(i.avg_cost, 2) : '—'}</td><td className="num">{i.order_value != null ? fmtXCG(i.order_value) : '—'}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -505,17 +546,7 @@ export default function OrderFlowPage() {
       {err && <div className="of-error">Fout: {err}</div>}
 
       <div className="of-card">
-        <div className="of-card-title">Alle PO&apos;s <span className="of-sub">— {filtered.length} van {rows.length} · klik een rij voor de reis</span></div>
-        <div className="filterbar">
-          <input className="fsearch" placeholder="Zoek op PO, leverancier, afdeling of container…" value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} />
-          <select value={filter.store} onChange={(e) => setFilter({ ...filter, store: e.target.value })}>
-            <option value="">Alle stores</option>
-            {storeOpts.map((s) => <option key={s} value={s}>store {s}</option>)}
-          </select>
-          <label className="frange">ETA van<input type="date" value={filter.etaFrom} onChange={(e) => setFilter({ ...filter, etaFrom: e.target.value })} /></label>
-          <label className="frange">t/m<input type="date" value={filter.etaTo} onChange={(e) => setFilter({ ...filter, etaTo: e.target.value })} /></label>
-          {(filter.q || filter.store || filter.etaFrom || filter.etaTo) && <button className="link" onClick={() => setFilter({ q: '', store: '', etaFrom: '', etaTo: '' })}>wissen</button>}
-        </div>
+        <div className="of-card-title">Alle PO&apos;s <span className="of-sub">— klik een rij voor de reis</span></div>
         {loading ? <div className="of-empty">Laden…</div> : rows.length === 0 ? <div className="of-empty">Nog geen PO&apos;s.</div> : filtered.length === 0 ? <div className="of-empty">Geen PO&apos;s voldoen aan de filter.</div> : (
           <div className="of-tablewrap">
             <table className="of-table">
@@ -538,7 +569,7 @@ export default function OrderFlowPage() {
                   <tr key={r.id} className={`${r.in_demurrage_window ? 'danger' : ''} ${sel?.id === r.id ? 'selected' : ''}`} onClick={() => selectRow(r)}>
                     <td className="po">{r.po_number}{isBonaireMultimart(r) && <span className="star"> *</span>}</td>
                     <td>{r.vendor_name || r.vendor_code || '—'}</td>
-                    <td>{r.dept_display || r.dept || '—'}</td>
+                    <td className="deptcell">{r.dept_display || r.dept || '—'}</td>
                     <td>{r.order_store || '—'}</td>
                     <td>{fmtDate(r.eta)}{r.eta_source === 'vesselfinder' && <span className="vf" title="ETA via VesselFinder"> ⚓</span>}</td>
                     <td className="mapcell">{(() => { const vs = containersByPo[r.id]; if (!vs || !vs.length) return ''; const live = vs.some((v) => v.live); return <button className="shipbtn" title="Toon containers op kaart" onClick={(e) => openShip(r, e)}>{live ? '🚢' : '📍'}</button>; })()}</td>
@@ -620,6 +651,7 @@ const css = `
 .of-table.sm{font-size:12px}
 .of-table th{text-align:left;color:#6b7280;font-weight:500;padding:8px;border-bottom:2px solid #e5e7eb;white-space:nowrap}
 .of-table td{padding:8px;border-bottom:1px solid #f1f3f5;white-space:nowrap}
+.of-table td.deptcell{white-space:normal;max-width:190px;word-break:break-word;line-height:1.25}
 .of-table tbody tr{cursor:pointer}
 .of-table tbody tr:hover{background:#f8fafc}
 .of-table tr.danger td{background:#fff5f5}
