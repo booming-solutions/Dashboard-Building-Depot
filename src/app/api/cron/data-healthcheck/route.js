@@ -1,18 +1,18 @@
 /* ============================================================
-   BESTAND: cron_data_healthcheck_v1.js
+   BESTAND: cron_data_healthcheck_v2.js
    KOPIEER NAAR: src/app/api/cron/data-healthcheck/route.js
-   (NIEUW: maak nieuwe map cron/data-healthcheck)
-   VERSIE: v1
+   VERSIE: v2
 
-   Dagelijkse healthcheck van alle Compass data-bronnen.
-   Draait via Vercel Cron (zie vercel.json config).
-   Verstuurt HTML email naar j.boom@building-depot.net via Resend.
-
-   Schedule: dagelijks 11:00 UTC = 07:00 Curaçao (na 03:05 pipeline)
-
-   Vereist env vars in Vercel:
-   - RESEND_API_KEY: API key van Resend account
-   - CRON_SECRET: (optioneel) om cron endpoint te beschermen
+   Wijzigingen t.o.v. v1:
+   - Correcte datum-kolommen voor sales_data (sale_date),
+     discount_data (sale_date), traffic_data (date). Voorheen
+     stond 'created_at' wat niet bestond → status 'unknown'.
+   - Nieuwe bron toegevoegd: visitor_data_weekly (Liselotte's
+     wekelijkse visitor-file). Threshold: OK < 8 dagen, warn < 14.
+   - weekendTolerance vlag: sales/discount/traffic mogen op
+     maandag 3 dagen oud zijn zonder alarm (weekend geen data).
+   - traffic_data label uitgebreid: bevat ook tickets, dus
+     één check dekt beide.
    ============================================================ */
 
 import { createClient } from '@supabase/supabase-js';
@@ -34,13 +34,14 @@ var SOURCES = [
   { key: 'buying_gijs_cur',   label: 'Buying — Gijs (Living) CUR',              table: 'buying_data', dateCol: 'upload_date', filter: { bum: 'GIJS', regio: 'CUR' } },
   { key: 'buying_gijs_bon',   label: 'Buying — Gijs (Living) BON',              table: 'buying_data', dateCol: 'upload_date', filter: { bum: 'GIJS', regio: 'BON' } },
   // Andere Compass exports
-  { key: 'negative',   label: 'Negatieve Voorraad Snapshots',   table: 'negative_inventory_snapshots', dateCol: 'snapshot_date' },
-  { key: 'po',         label: 'PO Deliveries (ETA data)',        table: 'po_deliveries',                dateCol: 'uploaded_at' },
-  { key: 'price',      label: 'Price Snapshots',                 table: 'price_snapshots',              dateCol: 'snapshot_date' },
-  { key: 'sales',      label: 'Sales Data',                      table: 'sales_data',                   dateCol: 'created_at' },
-  { key: 'inventory',  label: 'Inventory Data',                  table: 'inventory_data',               dateCol: 'inventory_date' },
-  { key: 'discount',   label: 'Kortingen (Discount Data)',       table: 'discount_data',                dateCol: 'created_at' },
-  { key: 'traffic',    label: 'Bezoekers Data',                  table: 'traffic_data',                 dateCol: 'created_at' },
+  { key: 'negative',       label: 'Negatieve Voorraad Snapshots', table: 'negative_inventory_snapshots', dateCol: 'snapshot_date' },
+  { key: 'po',             label: 'PO Deliveries (ETA data)',      table: 'po_deliveries',                dateCol: 'uploaded_at' },
+  { key: 'price',          label: 'Price Snapshots',               table: 'price_snapshots',              dateCol: 'snapshot_date' },
+  { key: 'sales',          label: 'Sales Data',                    table: 'sales_data',                   dateCol: 'sale_date', weekendTolerance: true },
+  { key: 'inventory',      label: 'Inventory Data',                table: 'inventory_data',               dateCol: 'inventory_date' },
+  { key: 'discount',       label: 'Kortingen (Discount Data)',     table: 'discount_data',                dateCol: 'sale_date', weekendTolerance: true },
+  { key: 'traffic',        label: 'Bezoekers + Tickets (Traffic)', table: 'traffic_data',                 dateCol: 'date',      weekendTolerance: true },
+  { key: 'visitor_weekly', label: 'Bezoekers Weekly (Liselotte)',  table: 'visitor_data_weekly',          dateCol: 'uploaded_at', maxAgeDaysOk: 8, maxAgeDaysWarn: 14 },
 ];
 
 var STATUS = {
@@ -65,8 +66,29 @@ function hoursSince(date) {
   return (now.getTime() - d.getTime()) / (1000 * 60 * 60);
 }
 
-function classifyStatus(hoursAgo) {
+function classifyStatus(hoursAgo, src) {
   if (hoursAgo === null || hoursAgo === undefined) return STATUS.UNKNOWN;
+  var okDays = src.maxAgeDaysOk;
+  var warnDays = src.maxAgeDaysWarn;
+  if (okDays && warnDays) {
+    // Custom thresholds per source
+    if (hoursAgo < okDays * 24) return STATUS.OK;
+    if (hoursAgo < warnDays * 24) return STATUS.WARN;
+    return STATUS.ERROR;
+  }
+  if (src.weekendTolerance) {
+    // Weekend tolerance: sales/discount/traffic hebben op maandag data van vrijdag
+    // (= tot 72u oud). Dus rekening houden met weekenden.
+    var now = new Date();
+    var day = now.getUTCDay(); // 0=zo, 1=ma, 2=di, ..., 6=za
+    var extraOk = 0, extraWarn = 0;
+    if (day === 1) { extraOk = 48; extraWarn = 72; } // maandag: sta 3 dagen toe
+    else if (day === 0) { extraOk = 24; extraWarn = 48; } // zondag: sta 2 dagen toe
+    if (hoursAgo < 24 + extraOk) return STATUS.OK;
+    if (hoursAgo < 48 + extraWarn) return STATUS.WARN;
+    return STATUS.ERROR;
+  }
+  // Default: dagelijkse data
   if (hoursAgo < 24) return STATUS.OK;
   if (hoursAgo < 48) return STATUS.WARN;
   return STATUS.ERROR;
@@ -102,7 +124,7 @@ async function checkSource(supabase, src) {
     }
     var lastDate = r.data[0][src.dateCol];
     var h = hoursSince(lastDate);
-    return { ...src, status: classifyStatus(h), last_date: lastDate, hours_ago: h };
+    return { ...src, status: classifyStatus(h, src), last_date: lastDate, hours_ago: h };
   } catch (e) {
     return { ...src, status: STATUS.UNKNOWN, error: e.message, last_date: null, hours_ago: null };
   }
