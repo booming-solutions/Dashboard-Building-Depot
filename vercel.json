@@ -8,6 +8,10 @@
     {
       "path": "/api/marketing/scan-website",
       "schedule": "0 7 * * 1"
+    },
+    {
+      "path": "/api/order-flow/track-refresh",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
