@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: ap_match_worklist_page_v6.js
+   BESTAND: ap_match_worklist_page_v7.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/match/worklist/page.js
-   (overschrijft v5, hernoemen naar page.js)
+   (overschrijft v6, hernoemen naar page.js)
+
+   v7 WIJZIGINGEN:
+   - ap_match_candidates is nu entiteit-getagd (DB-migratie + trigger),
+     dus de tab-tellingen EN de candidate-fetch zijn nu ook gescoped op
+     de actieve entiteit. Badges kloppen nu per administratie.
 
    v6 WIJZIGINGEN:
    - Entiteit-filter: invoices gescoped op actieve entiteit; candidates
@@ -142,7 +147,7 @@ export default function MatchWorklistPage() {
     setLoadingCounts(true);
     try {
       const queries = STATUS_TABS.map(t =>
-        supabase.from('ap_match_candidates').select('*', { count: 'exact', head: true }).eq('status', t.key)
+        supabase.from('ap_match_candidates').select('*', { count: 'exact', head: true }).eq('entity', entity).eq('status', t.key)
       );
       const results = await Promise.all(queries);
       const c = {};
@@ -153,7 +158,7 @@ export default function MatchWorklistPage() {
     } finally {
       setLoadingCounts(false);
     }
-  }, [supabase]);
+  }, [supabase, entity]);
 
   const loadRows = useCallback(async (statusKey) => {
     setLoadingRows(true);
@@ -161,6 +166,7 @@ export default function MatchWorklistPage() {
       const candidates = await fetchAllPaginated(() =>
         supabase.from('ap_match_candidates')
           .select('*')
+          .eq('entity', entity)
           .eq('status', statusKey)
           .order('created_at', { ascending: false })
       );

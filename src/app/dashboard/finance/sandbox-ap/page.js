@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: sandbox_ap_page_v11.js
+   BESTAND: sandbox_ap_page_v12.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/page.js
-   (overschrijft v10, hernoemen naar page.js)
+   (overschrijft v11, hernoemen naar page.js)
+
+   v12 WIJZIGINGEN:
+   - ap_match_candidates-tellingen (pending/confirmed) nu ook gescoped op
+     entiteit — de eerdere v11-beperking is hiermee opgelost.
 
    v11 WIJZIGINGEN:
    - Entiteit-filter op alle ap_invoices-tellingen (.eq('entity', entity)).
@@ -149,6 +153,7 @@ export default function APDashboard() {
       const { count: pc } = await supabase
         .from('sandbox_ap_match_candidates')
         .select('*', { count: 'exact', head: true })
+        .eq('entity', entity)
         .eq('status', 'pending');
 
       // Confirmed match candidates (te verwerken in Eagle)
@@ -157,6 +162,7 @@ export default function APDashboard() {
         const { data: cfList } = await supabase
           .from('sandbox_ap_match_candidates')
           .select('invoice_id')
+          .eq('entity', entity)
           .eq('status', 'confirmed');
         if (cfList && cfList.length > 0) {
           const invIds = cfList.map(r => r.invoice_id);
@@ -170,6 +176,7 @@ export default function APDashboard() {
         const { count: cf } = await supabase
           .from('sandbox_ap_match_candidates')
           .select('*', { count: 'exact', head: true })
+          .eq('entity', entity)
           .eq('status', 'confirmed');
         confirmedCandidates = cf || 0;
       }
