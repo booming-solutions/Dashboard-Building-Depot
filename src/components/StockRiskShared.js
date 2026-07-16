@@ -1,8 +1,23 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v11.js
+   BESTAND: StockRiskShared_v12.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.28
+   VERSIE: v3.28.29
+
+   Wijzigingen t.o.v. v11:
+   - NIEUW: Stock Predictor slider bovenaan de tabel
+     · Slider 0-13 weken (0 tot ~3 maanden), stap 1 week, default 12w
+     · Nieuwe kolom "Voorraad +Xw" in detail-tabel toont voorspelde
+       voorraad op geselecteerde horizon
+     · Formule: QOH nu − (avg_monthly × weken/4.33) + som(PO's met
+       ETA in de toekomst t/m horizon-datum)
+     · Kleurcodering achtergrond:
+       · Rood:   projected ≤ 0 (voorraad op)
+       · Oranje: projected > 0 en < 25% van huidige QOH
+       · Groen:  overig (voldoende voorraad)
+     · Sortable, tooltip toont breakdown
+     · Excel-export bevat de kolom "Voorraad +Xw"
+   - avg_monthly telt maanden zonder verkoop niet mee (was al zo)
 
    Wijzigingen t.o.v. v10:
    - Dept 12 wordt samengevoegd met 11 (bij omzet al gebeurd, nu ook
@@ -508,6 +523,8 @@ export default function StockRiskShared({ bumFilter }) {
 
   // PO deliveries: per item_number lijst van { po, date, qty }, gesorteerd op datum
   var _po = _s({}), poByItem = _po[0], setPoByItem = _po[1];
+  // NEW v12: stock predictor slider — horizon in weken (0-13, default 12 ≈ 3 maanden)
+  var _horizon = _s(12), projHorizonWeeks = _horizon[0], setProjHorizonWeeks = _horizon[1];
 
   var supabase = createClient();
   useEffect(function() { loadData(); loadNosSnapshots(); loadDeptSnapshots(); loadPoDeliveries(); }, [bumFilter]);
@@ -721,18 +738,61 @@ export default function StockRiskShared({ bumFilter }) {
     return list;
   }, [data, store, poByItem]);
 
+  // NEW v12: bereken voor elk item de voorspelde voorraad op X weken vooruit.
+  // Formule:
+  //   projected_qoh = qoh_nu − (avg_monthly × weken / 4.33) + som(PO's met ETA
+  //     tussen NU en horizon-datum)
+  // avg_monthly telt maanden zonder verkoop niet mee (al gedaan bij m.avg_monthly).
+  // Kleur:
+  //   rood:   projected <= 0
+  //   oranje: projected > 0 en < 25% van huidige QOH
+  //   groen:  overig
+  var itemsWithProjection = useMemo(function() {
+    var weeks = projHorizonWeeks;
+    var horizonMs = Date.now() + weeks * 7 * 86400000;
+    var nowMs = Date.now();
+    var monthsAhead = weeks / 4.33;
+
+    return items.map(function(m) {
+      // Sum PO's met ETA in de toekomst tot horizonMs
+      var inbound = 0;
+      (m.po_list || []).forEach(function(p) {
+        var etaMs = new Date(p.date).getTime();
+        if (isNaN(etaMs)) return;
+        if (etaMs >= nowMs && etaMs <= horizonMs) {
+          inbound += (parseFloat(p.qty) || 0);
+        }
+      });
+
+      var expected_sales = (m.avg_monthly || 0) * monthsAhead;
+      var projected = m.qoh - expected_sales + inbound;
+
+      // Kleur bepalen
+      var projColor;
+      if (projected <= 0) projColor = 'red';
+      else if (m.qoh > 0 && projected < m.qoh * 0.25) projColor = 'orange';
+      else projColor = 'green';
+
+      return Object.assign({}, m, {
+        projected_stock: Math.round(projected),
+        projected_inbound: Math.round(inbound),
+        projected_color: projColor,
+      });
+    });
+  }, [items, projHorizonWeeks]);
+
   var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
   var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
 
   var filteredBase = useMemo(function() {
-    var src = items;
+    var src = itemsWithProjection;
     if (nosFilter === 'yes') src = src.filter(function(m) { return m.nos; });
     else if (nosFilter === 'no') src = src.filter(function(m) { return !m.nos; });
     if (qohFilter === 'positive') src = src.filter(function(m) { return m.qoh > 0; });
     if (dept !== 'all') src = src.filter(function(m) { return m.dept_code === dept; });
     if (vendor !== 'all') src = src.filter(function(m) { return m.vendor === vendor; });
     return src;
-  }, [items, nosFilter, qohFilter, dept, vendor]);
+  }, [itemsWithProjection, nosFilter, qohFilter, dept, vendor]);
 
   var displayed = useMemo(function() {
     var list = filteredBase || [];
@@ -1185,6 +1245,7 @@ export default function StockRiskShared({ bumFilter }) {
                     'QOO BON': Math.round(m.qoo_bon),
                     'Volgende ETA': m.next_eta || '',
                     'Volgende aantal': m.next_qty || '',
+                    ['Voorraad +' + projHorizonWeeks + 'w']: Math.round(m.projected_stock),
                     'Aantal openstaande PO\'s': (m.po_list || []).length,
                     'Beschikbaar': Math.round(m.available),
                     'Voorraad in mnd': m.months_cover >= 99 ? 'oneindig' : Math.round(m.months_cover * 10) / 10,
@@ -1210,6 +1271,36 @@ export default function StockRiskShared({ bumFilter }) {
         </select>
       </div>
 
+      {/* NEW v12: Stock Predictor slider */}
+      <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm px-5 py-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h3 className="text-[13px] font-bold text-[#1a0a04] m-0">Voorraad-voorspeller</h3>
+            <p className="text-[11px] text-[#6b5240] m-0">Sleep om de tijdshorizon te kiezen — kolom "Voorraad +{projHorizonWeeks}w" in de tabel toont de voorspelde voorraad</p>
+          </div>
+          <div className="text-right">
+            <div className="text-[24px] font-bold" style={{ color: '#E84E1B' }}>+{projHorizonWeeks}w</div>
+            <div className="text-[10px] text-[#6b5240]">≈ {(projHorizonWeeks / 4.33).toFixed(1)} maanden</div>
+          </div>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max="13"
+          step="1"
+          value={projHorizonWeeks}
+          onChange={function(e) { setProjHorizonWeeks(parseInt(e.target.value)); }}
+          className="w-full accent-[#E84E1B]"
+          style={{ height: '6px' }}
+        />
+        <div className="flex justify-between text-[9px] text-[#a08a74] mt-1">
+          <span>Nu</span>
+          <span>1 mnd</span>
+          <span>2 mnd</span>
+          <span>3 mnd</span>
+        </div>
+      </div>
+
       {/* Main table */}
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
         <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
@@ -1217,7 +1308,7 @@ export default function StockRiskShared({ bumFilter }) {
             <thead className="sticky top-0 z-30">
               <tr className="bg-[#1B3A5C]">
                 <th colSpan={5} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
-                <th colSpan={store === 'all' ? 8 : 6} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
+                <th colSpan={store === 'all' ? 9 : 7} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Verkoop</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2">Actie</th>
               </tr>
@@ -1243,6 +1334,7 @@ export default function StockRiskShared({ bumFilter }) {
                   }
                   cols.push(['Volgende ETA', 'next_eta', 'text-right']);
                   cols.push(['Aantal', 'next_qty', 'text-right']);
+                  cols.push(['Voorraad +' + projHorizonWeeks + 'w', 'projected_stock', 'text-right']);
                   cols.push(['Dekking', 'months_cover', 'text-right']);
                   cols.push(['vs LT', '', 'text-center border-r border-[#e5ddd4]']);
                   cols.push(['Gem/mnd', 'avg_monthly', 'text-right']);
@@ -1286,6 +1378,7 @@ export default function StockRiskShared({ bumFilter }) {
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
+                    <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3] border-r border-[#e5ddd4]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
                     <td className="p-2 border-b-2 border-[#c5bfb3]"></td>
@@ -1297,7 +1390,7 @@ export default function StockRiskShared({ bumFilter }) {
                 );
               })()}
               {displayed.length === 0 && (
-                <tr><td colSpan={store === 'all' ? 19 : 17} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
+                <tr><td colSpan={store === 'all' ? 20 : 18} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
               )}
               {displayed.slice(0, tableRows).map(function(m, i) {
                 var bg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
@@ -1371,6 +1464,26 @@ export default function StockRiskShared({ bumFilter }) {
                           {fmt(Math.round(m.next_qty))}
                         </td>
                       ];
+                    })()}
+                    {(function() {
+                      var pColor = m.projected_color === 'red' ? '#dc2626'
+                        : m.projected_color === 'orange' ? '#d97706'
+                        : '#16a34a';
+                      var pBg = m.projected_color === 'red' ? '#fee2e2'
+                        : m.projected_color === 'orange' ? '#fef3c7'
+                        : '#dcfce7';
+                      var tooltip = 'Voorspelling over ' + projHorizonWeeks + ' weken:\n' +
+                        '  QOH nu: ' + fmt(Math.round(m.qoh)) + '\n' +
+                        '  − verkoop (' + (m.avg_monthly ? m.avg_monthly.toFixed(1) : '0') + '/mnd × ' + (projHorizonWeeks / 4.33).toFixed(1) + ' mnd): ' + fmt(Math.round((m.avg_monthly || 0) * projHorizonWeeks / 4.33)) + '\n' +
+                        '  + PO inbound (ETA in de toekomst): ' + fmt(m.projected_inbound || 0) + '\n' +
+                        '  = projected: ' + fmt(m.projected_stock);
+                      return (
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-bold"
+                            style={{ color: pColor, backgroundColor: pBg }}
+                            title={tooltip}>
+                          {fmt(m.projected_stock)}
+                        </td>
+                      );
                     })()}
                     <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5] font-semibold" style={{ color: coverColor }}>{m.months_cover >= 99 ? '∞' : m.months_cover.toFixed(1) + 'm'}</td>
                     <td className="p-1.5 border-b border-[#f0ebe5] border-r border-[#e5ddd4]"><CoverBar months={m.months_cover} maxLT={m.lead_time} /></td>
