@@ -1,7 +1,11 @@
 /* ============================================================
-   BESTAND: ap_audit_trail_page_v2.js
+   BESTAND: ap_audit_trail_page_v3.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/audit-trail/page.js
-   (overschrijft v1, hernoemen naar page.js)
+   (overschrijft v2, hernoemen naar page.js)
+
+   v3 WIJZIGINGEN:
+   - Factuurkop toont nu ook PO#, Invoice#, Reference en bedrag
+     (bedrag = balance, val terug op original_amount) per factuur.
 
    DOEL: inzicht in het actie-spoor van de AP-werkstroom.
    Per factuur de keten als tijdlijn-strip met per processtap wanneer
@@ -82,6 +86,12 @@ function fmtDateOnly(s) {
   if (!s) return '';
   return new Date(s).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
+function fmtMoney(v, cur) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return null;
+  const bedrag = new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  return `${cur || 'XCG'} ${bedrag}`;
+}
 
 function actionColor(action) {
   if (['direct_paid', 'marked_paid', 'marked_paid_in_bank'].includes(action)) return 'bg-emerald-100 text-emerald-800';
@@ -137,7 +147,7 @@ export default function AuditTrailPage() {
     try {
       const { data: invs, error: invErr } = await supabase
         .from('ap_invoices')
-        .select('id, invoice_number, vendor_name')
+        .select('id, invoice_number, vendor_name, po_number, reference, balance, original_amount, currency')
         .eq('entity', entity);
       if (invErr) throw invErr;
       const map = {};
@@ -202,7 +212,7 @@ export default function AuditTrailPage() {
   const exportCsv = useCallback(() => {
     // Per factuur één regel met stap-kolommen.
     const header = [
-      'Factuur', 'Vendor',
+      'Factuur', 'Vendor', 'PO#', 'Reference', 'Bedrag',
       'Geselecteerd_op', 'Geselecteerd_door',
       'NaarBank_op', 'NaarBank_door', 'NaarBank_bank',
       'Goedkeurder1_op', 'Goedkeurder1_naam',
@@ -218,6 +228,8 @@ export default function AuditTrailPage() {
       const by = (k) => s[k] ? (s[k].user_name || '') : '';
       rows.push([
         g.inv.invoice_number || '', g.inv.vendor_name || '',
+        g.inv.po_number || '', g.inv.reference || '',
+        (fmtMoney(g.inv.balance ?? g.inv.original_amount, g.inv.currency) || ''),
         at('selected'), by('selected'),
         at('sent_to_bank'), by('sent_to_bank'), s.sent_to_bank?.details?.bank || '',
         at('approver_1'), by('approver_1'),
@@ -291,9 +303,21 @@ export default function AuditTrailPage() {
           )}
           {byInvoice.slice(0, 100).map(g => (
             <div key={g.inv.id} className="rounded-xl border border-gray-200 p-4">
-              <div className="flex items-baseline gap-2 mb-3">
-                <span className="font-mono font-bold text-[#1B3A5C]">{g.inv.invoice_number}</span>
-                <span className="text-[12px] text-[#1B3A5C]/60">{g.inv.vendor_name}</span>
+              <div className="mb-3">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="font-mono font-bold text-[#1B3A5C]">{g.inv.invoice_number}</span>
+                  <span className="text-[12px] text-[#1B3A5C]/60">{g.inv.vendor_name}</span>
+                  {fmtMoney(g.inv.balance ?? g.inv.original_amount, g.inv.currency) && (
+                    <span className="ml-auto text-[13px] font-bold text-[#1B3A5C]">
+                      {fmtMoney(g.inv.balance ?? g.inv.original_amount, g.inv.currency)}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-x-4 gap-y-0.5 flex-wrap mt-1 text-[11px] text-[#1B3A5C]/50">
+                  <span>Invoice#: <span className="font-mono text-[#1B3A5C]/70">{g.inv.invoice_number || '—'}</span></span>
+                  <span>PO#: <span className="font-mono text-[#1B3A5C]/70">{g.inv.po_number || '—'}</span></span>
+                  <span>Reference: <span className="text-[#1B3A5C]/70">{g.inv.reference || '—'}</span></span>
+                </div>
               </div>
               <StepStrip steps={g.steps} />
               <details className="mt-3">
