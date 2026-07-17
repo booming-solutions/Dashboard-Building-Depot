@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: ap_audit_trail_page_v3.js
+   BESTAND: ap_audit_trail_page_v4.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/audit-trail/page.js
-   (overschrijft v2, hernoemen naar page.js)
+   (overschrijft v3, hernoemen naar page.js)
+
+   v4 WIJZIGINGEN:
+   - Goedkeuringsstappen herkennen nu zowel de historische acties
+     (submitted/approved) als de huidige (approved_1/approved_2), zodat
+     Goedkeurder 1 en 2 in de tijdlijn correct gevuld worden.
 
    v3 WIJZIGINGEN:
    - Factuurkop toont nu ook PO#, Invoice#, Reference en bedrag
@@ -37,7 +42,9 @@ const ACTION_LABELS = {
   unselected: 'Selectie teruggedraaid',
   sent_to_bank: 'Naar bank',
   submitted: 'Goedkeurder 1',
+  approved_1: 'Goedkeurder 1',
   approved: 'Goedkeurder 2',
+  approved_2: 'Goedkeurder 2',
   marked_paid: 'Betaald gemarkeerd',
   marked_paid_in_bank: 'In bank gezet',
   direct_paid: 'Direct betaald (op papier)',
@@ -58,7 +65,7 @@ const ACTION_LABELS = {
 };
 
 const CHAIN_ACTIONS = new Set([
-  'selected', 'unselected', 'sent_to_bank', 'submitted', 'approved',
+  'selected', 'unselected', 'sent_to_bank', 'submitted', 'approved_1', 'approved', 'approved_2',
   'marked_paid', 'marked_paid_in_bank', 'direct_paid', 'manual_writeoff',
   'rejected', 'match_auto_processed',
   'rolled_back_select', 'rolled_back_submit', 'rolled_back_approve', 'rolled_back_send_to_bank',
@@ -68,8 +75,8 @@ const CHAIN_ACTIONS = new Set([
 const STEPS = [
   { key: 'selected',    label: 'Geselecteerd',  actions: ['selected'] },
   { key: 'sent_to_bank', label: 'Naar bank',    actions: ['sent_to_bank'] },
-  { key: 'approver_1',  label: 'Goedkeurder 1', actions: ['submitted'] },
-  { key: 'approver_2',  label: 'Goedkeurder 2', actions: ['approved'] },
+  { key: 'approver_1',  label: 'Goedkeurder 1', actions: ['submitted', 'approved_1'] },
+  { key: 'approver_2',  label: 'Goedkeurder 2', actions: ['approved', 'approved_2'] },
   { key: 'in_bank',     label: 'In bank gezet', actions: ['marked_paid_in_bank'] },
   { key: 'direct',      label: 'Direct betaald / afgeboekt', actions: ['direct_paid', 'manual_writeoff', 'marked_paid'] },
   { key: 'out',         label: 'Uit Open Items', actions: ['match_auto_processed'] },
@@ -95,7 +102,7 @@ function fmtMoney(v, cur) {
 
 function actionColor(action) {
   if (['direct_paid', 'marked_paid', 'marked_paid_in_bank'].includes(action)) return 'bg-emerald-100 text-emerald-800';
-  if (['approved', 'submitted'].includes(action)) return 'bg-blue-100 text-blue-800';
+  if (['approved', 'approved_1', 'approved_2', 'submitted'].includes(action)) return 'bg-blue-100 text-blue-800';
   if (action === 'sent_to_bank') return 'bg-indigo-100 text-indigo-800';
   if (action === 'selected') return 'bg-slate-100 text-slate-700';
   if (action === 'match_auto_processed') return 'bg-teal-100 text-teal-800';

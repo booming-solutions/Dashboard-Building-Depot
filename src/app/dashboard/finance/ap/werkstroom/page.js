@@ -1,7 +1,19 @@
 /* ============================================================
-   BESTAND: ap_werkstroom_page_v25.js
+   BESTAND: ap_werkstroom_page_v27.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/werkstroom/page.js
-   (overschrijft v24, hernoemen naar page.js)
+   (overschrijft v26, hernoemen naar page.js)
+
+   v27 WIJZIGINGEN:
+   - Tab 'Betaald in bank' hernoemd naar 'Afgeschreven van rekening'
+     (label only) om verwarring met goedkeuring te voorkomen.
+
+   v26 WIJZIGINGEN:
+   - Tab 'Vrijgegeven' (approved_for_payment) VERWIJDERD. Goedkeurder 2
+     gaat nu direct van 'Bij goedkeurder 2' naar 'Afgeschreven van rekening'
+     (paid_in_bank), en zet daarbij paid_at/paid_by. De rollback op
+     Afgeschreven van rekening draait goedkeurder 2 terug naar 'Bij goedkeurder 2'.
+   - Nieuwe flow: Openstaand → Verzenden naar bank → Goedkeurder 1 →
+     Goedkeurder 2 → Afgeschreven van rekening → Afgeletterd.
 
    v25 WIJZIGINGEN:
    - Fix: werkstroom herlaadt nu automatisch bij entiteit-wissel
@@ -37,8 +49,7 @@
      2. Verzenden naar bank (clerk)
      3. Bij goedkeurder 1 (approver)
      4. Bij goedkeurder 2 (bank)
-     5. Vrijgegeven (clerk gaat naar bank)
-     6. Betaald in bank (clerk markeert na afschrift)
+     5. Afgeschreven van rekening (goedkeurder 2 landt hier; AP controleert afschrift)
      7. Afgeletterd (via Eagle agent)
    - Quick-Pay knoppen verschoven naar 'ap_bank' + 'admin'
    - assigned_ap_clerk filter VERWIJDERD — alle clerks zien alles
@@ -185,8 +196,7 @@ const STATUS_TABS = [
   { key: 'selected',             label: 'Verzenden naar bank',  color: 'blue' },
   { key: 'batch_pending_1',      label: 'Bij goedkeurder 1',    color: 'amber' },
   { key: 'batch_pending_2',      label: 'Bij goedkeurder 2',    color: 'orange' },
-  { key: 'approved_for_payment', label: 'Vrijgegeven',          color: 'emerald' },
-  { key: 'paid_in_bank',         label: 'Betaald in bank',      color: 'purple' },
+  { key: 'paid_in_bank',         label: 'Afgeschreven van rekening', color: 'purple' },
   { key: 'reconciled',           label: 'Afgeletterd',          color: 'slate' },
 ];
 
@@ -251,7 +261,7 @@ export default function WerkstroomPage() {
   const canSelectForPayment   = ['admin', 'ap_clerk'].includes(effectiveRole);  // open → selected
   const canSendToBank         = ['admin', 'ap_clerk'].includes(effectiveRole);  // selected → batch_pending_1 (was 'naar bank')
   const canApprove1           = ['admin', 'ap_approver'].includes(effectiveRole);  // batch_pending_1 → batch_pending_2 (goedkeuring 1)
-  const canApprove2           = ['admin', 'ap_bank'].includes(effectiveRole);   // batch_pending_2 → approved_for_payment (goedkeuring 2)
+  const canApprove2           = ['admin', 'ap_bank'].includes(effectiveRole);   // batch_pending_2 → paid_in_bank (goedkeuring 2, v26)
   const canMarkPaidInBank     = ['admin', 'ap_clerk'].includes(effectiveRole);  // approved_for_payment → paid_in_bank
   const canMarkReconciled     = ['admin', 'ap_clerk'].includes(effectiveRole);  // paid_in_bank → reconciled (via Eagle)
   const canReject             = ['admin', 'ap_approver', 'ap_bank'].includes(effectiveRole);
@@ -644,10 +654,13 @@ export default function WerkstroomPage() {
             throw new Error('4-ogen principe: u kunt geen batch goedkeuren waarvan u zelf de eerste goedkeuring of batch-creatie heeft gedaan.');
           }
         }
-        newStatus = 'approved_for_payment';
+        // v26: 'Vrijgegeven' vervalt — goedkeurder 2 gaat direct naar Afgeschreven van rekening
+        newStatus = 'paid_in_bank';
         auditAction = 'approved_2';
         extraFields.approver_2_at = now;
         extraFields.approver_2_by = actualProfile.id;
+        extraFields.paid_at = now;
+        extraFields.paid_by = actualProfile.id;
         // Behoud approved_at/approved_by voor backwards compat
         extraFields.approved_at = now;
         extraFields.approved_by = actualProfile.id;
@@ -737,10 +750,12 @@ export default function WerkstroomPage() {
         extraFields.approver_2_by = null;
         extraFields.approved_at = null;
         extraFields.approved_by = null;
+        extraFields.paid_at = null;
+        extraFields.paid_by = null;
       } else if (actionKey === 'unmark_paid_in_bank') {
-        // Rollback: paid_in_bank → approved_for_payment (clerk of admin)
-        newStatus = 'approved_for_payment';
-        auditAction = 'rolled_back_mark_paid_in_bank';
+        // v26: approved_for_payment vervalt — rollback gaat naar batch_pending_2
+        newStatus = 'batch_pending_2';
+        auditAction = 'rolled_back_approve_2';
         extraFields.paid_at = null;
         extraFields.paid_by = null;
       } else if (actionKey === 'unmark_reconciled') {
@@ -1280,31 +1295,16 @@ function BulkBar({ tab, isClerk, isAdmin, isApprover, isBank, canSelectForPaymen
             <button onClick={() => onAction('approve_2')} disabled={busy}
               className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[12px] font-semibold hover:bg-emerald-600 transition-all disabled:opacity-50"
               title="4-ogen: u mag geen batch goedkeuren die u zelf maakte of als #1 goedkeurde">
-              {busy ? 'Bezig...' : '✓ Goedkeuring 2 (finale vrijgave)'}
+              {busy ? 'Bezig...' : '✓ Goedkeuring 2 → Afgeschreven van rekening'}
             </button>
           </>
         )}
 
-        {/* ===== TAB: approved_for_payment (vrijgegeven, wacht op betaaluitvoering) ===== */}
-        {tab === 'approved_for_payment' && (canApprove2 || isAdmin) && (
+        {/* ===== TAB: paid_in_bank ===== */}
+        {tab === 'paid_in_bank' && (canApprove2 || isAdmin) && (
           <button onClick={() => onAction('unapprove_2')} disabled={busy}
             className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
             ↶ Trek goedkeuring 2 terug
-          </button>
-        )}
-        {tab === 'approved_for_payment' && canMarkPaidInBank && (
-          <button onClick={() => onAction('mark_paid_in_bank')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg bg-purple-500 text-white text-[12px] font-semibold hover:bg-purple-600 transition-all disabled:opacity-50"
-            title="Bevestig dat de betaling op het bankafschrift is gezien">
-            {busy ? 'Bezig...' : '✓ Bevestig betaling uitgevoerd'}
-          </button>
-        )}
-
-        {/* ===== TAB: paid_in_bank ===== */}
-        {tab === 'paid_in_bank' && (canMarkPaidInBank || isAdmin) && (
-          <button onClick={() => onAction('unmark_paid_in_bank')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/30 text-white text-[12px] font-semibold hover:bg-white/20 transition-all disabled:opacity-50">
-            ↶ Trek bevestiging terug
           </button>
         )}
         {tab === 'paid_in_bank' && canMarkReconciled && (
@@ -1330,9 +1330,6 @@ function BulkBar({ tab, isClerk, isAdmin, isApprover, isBank, canSelectForPaymen
         )}
         {tab === 'batch_pending_2' && !canApprove2 && (
           <span className="text-[11px] text-white/60 italic">Goedkeuring 2: alleen door AP Bank of admin</span>
-        )}
-        {tab === 'approved_for_payment' && !canMarkPaidInBank && (
-          <span className="text-[11px] text-white/60 italic">Betaling bevestigen: AP Clerk of admin</span>
         )}
       </div>
     </div>
