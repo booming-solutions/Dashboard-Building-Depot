@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: sandbox_ap_upload_page_v9.js
+   BESTAND: sandbox_ap_upload_page_v10.js
    KOPIEER NAAR: src/app/dashboard/finance/sandbox-ap/upload/page.js
    (overschrijft v2, hernoemen naar page.js bij upload)
 
@@ -115,11 +115,16 @@ function findTypeIndex(fields) {
 
 function parseDate(str) {
   if (!str) return null;
-  const m = String(str).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return null;
-  const month = m[1].padStart(2, '0');
-  const day = m[2].padStart(2, '0');
-  return `${m[3]}-${month}-${day}`;
+  let s = String(str).trim();
+  if (!s) return null;
+  s = s.split(' ')[0].split('T')[0];  // strip tijd-component
+  // ISO: YYYY-MM-DD
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  // Compass US: M/D/YYYY of M-D-YYYY
+  m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  return null;
 }
 
 function parseCompassCSV(text) {
@@ -469,9 +474,12 @@ async function executeImport(supabase, parsedInvoices, diff, currentUser, filena
   }
 
   for (const u of diff.updatedInvoices) {
+    const upd = { balance: u.balance, upload_id: uploadRow.id };
+    if (u.invoice_date) upd.invoice_date = u.invoice_date;  // datum verversen indien geparsed
+    if (u.due_date) upd.due_date = u.due_date;
     const { error } = await supabase
       .from('sandbox_ap_invoices')
-      .update({ balance: u.balance, upload_id: uploadRow.id })
+      .update(upd)
       .eq('id', u.existing_id);
     if (error) errors.push(`Update factuur ${u.invoice_number}: ${error.message}`);
   }
