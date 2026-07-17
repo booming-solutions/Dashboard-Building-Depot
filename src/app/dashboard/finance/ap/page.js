@@ -1,7 +1,10 @@
 /* ============================================================
-   BESTAND: ap_page_v13.js
+   BESTAND: ap_page_v14.js
    KOPIEER NAAR: src/app/dashboard/finance/ap/page.js
-   (overschrijft v12, hernoemen naar page.js)
+   (overschrijft v13, hernoemen naar page.js)
+
+   v14 WIJZIGINGEN:
+   - Tegel 'Audit Trail' geactiveerd → /dashboard/finance/ap/audit-trail
 
    v13 WIJZIGINGEN:
    - Wekelijkse ontwikkeling-grafiek per entiteit (dual-axis: aantal
@@ -386,7 +389,13 @@ export default function APDashboard() {
             badge={stats.eaglePending > 0 ? `${stats.eaglePending}` : null}
             available
           />
-          <ActionCard icon="📋" label="Audit log" desc="Volledig actie-spoor" />
+          <ActionCard
+            href="/dashboard/finance/ap/audit-trail"
+            icon="📋"
+            label="Audit Trail"
+            desc="Volledig actie-spoor: wie keurde wanneer goed, naar bank, direct betaald"
+            available
+          />
         </div>
       </div>
 
