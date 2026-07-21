@@ -1,18 +1,24 @@
 /* ============================================================
-   BESTAND: factuurstatus_page.js  (v2)
+   BESTAND: factuurstatus_page.js  (v3)
    KOPIEER NAAR: src/app/dashboard/finance/factuurstatus/page.js
 
    DOEL: intern zoekbaar rapport "is mijn factuur geboekt/betaald?".
-   Voor elke ingelogde medewerker. Leest public.invoice_ledger.
+   Leest public.invoice_ledger (read-only).
 
+   v3:
+   - Leveranciers-dropdown: filtert de huidige resultaten op één vendor
+     (client-side, gevuld uit de geladen rijen; respecteert entiteit/datum).
+   - Alle kolomkoppen klikbaar => sorteren (asc/desc, 3e klik = reset).
+     Lege waarden altijd onderaan. Datum/bedrag starten aflopend,
+     tekstkolommen oplopend met natuurlijke nummer-sortering.
    v2:
    - Zoekt ook op vendornummer (vendor_code) en toont het.
-   - Entiteit-knoppen bovenaan (ALL/BDT/BDB/MMC/RCC/BDMS), default ALL.
+   - Entiteit-knoppen (ALL/BDT/BDB/MMC/RCC/BDMS), default ALL.
    - Filter op factuurdatum (range) en betaaldatum (range).
    ============================================================ */
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase';
 
 const ENTITIES = [
@@ -35,6 +41,58 @@ function fmtDate(s) {
   return new Date(s).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+// Kolomdefinitie voor de sorteerbare tabel
+const COLS = [
+  { key: 'vendor_name',    label: 'Leverancier', type: 'text',   align: 'left'  },
+  { key: 'vendor_code',    label: 'Vendor#',     type: 'text',   align: 'left'  },
+  { key: 'invoice_number', label: 'Factuur',     type: 'text',   align: 'left'  },
+  { key: 'po_number',      label: 'PO',          type: 'text',   align: 'left'  },
+  { key: 'voucher_number', label: 'Voucher',     type: 'text',   align: 'left'  },
+  { key: 'entity',         label: 'Entiteit',    type: 'text',   align: 'left'  },
+  { key: 'invoice_date',   label: 'Datum',       type: 'date',   align: 'left'  },
+  { key: 'amount',         label: 'Bedrag',      type: 'num',    align: 'right' },
+  { key: 'status',         label: 'Status',      type: 'status', align: 'left'  },
+];
+
+const defaultDir = (type) => (type === 'num' || type === 'date') ? 'desc' : 'asc';
+
+// Sorteerwaarde per kolom: { empty, val }
+function sortValue(row, col) {
+  switch (col.type) {
+    case 'num': {
+      const n = parseFloat(row.amount);
+      return { empty: isNaN(n), val: n };
+    }
+    case 'date': {
+      const t = row.invoice_date ? Date.parse(row.invoice_date) : NaN;
+      return { empty: isNaN(t), val: t };
+    }
+    case 'status': {
+      const open = parseFloat(row.balance) > 0 && !row.fully_paid;
+      return { empty: false, val: open ? 0 : 1 }; // open eerst bij oplopend
+    }
+    default: {
+      const s = (row[col.key] ?? '').toString().trim();
+      return { empty: s === '', val: s };
+    }
+  }
+}
+
+function compareRows(a, b, col, dir) {
+  const av = sortValue(a, col);
+  const bv = sortValue(b, col);
+  if (av.empty && bv.empty) return 0;
+  if (av.empty) return 1;   // lege waarden altijd onderaan, ongeacht richting
+  if (bv.empty) return -1;
+  let base;
+  if (col.type === 'text') {
+    base = av.val.localeCompare(bv.val, 'nl', { numeric: true, sensitivity: 'base' });
+  } else {
+    base = av.val - bv.val;
+  }
+  return dir === 'asc' ? base : -base;
+}
+
 const EMPTY = { term: '', entity: 'all', status: 'all', dateFrom: '', dateTo: '', paidFrom: '', paidTo: '' };
 
 export default function FactuurStatusPage() {
@@ -44,6 +102,8 @@ export default function FactuurStatusPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState(null);
+  const [vendorFilter, setVendorFilter] = useState('');
+  const [sort, setSort] = useState({ key: null, dir: 'asc' });
   const debounce = useRef(null);
 
   const runSearch = useCallback(async (flt) => {
@@ -92,6 +152,51 @@ export default function FactuurStatusPage() {
   }, [f, runSearch]);
 
   const set = (patch) => setF(prev => ({ ...prev, ...patch }));
+  const resetAll = () => { setF(EMPTY); setVendorFilter(''); setSort({ key: null, dir: 'asc' }); };
+
+  const toggleSort = (col) => {
+    setSort(prev => {
+      if (prev.key !== col.key) return { key: col.key, dir: defaultDir(col.type) };
+      const def = defaultDir(col.type);
+      if (prev.dir === def) return { key: col.key, dir: def === 'asc' ? 'desc' : 'asc' };
+      return { key: null, dir: 'asc' }; // 3e klik: terug naar serverdefault (datum aflopend)
+    });
+  };
+
+  // Leveranciers voor de dropdown, afgeleid uit de geladen rijen
+  const vendorOptions = useMemo(() => {
+    const map = new Map();
+    for (const r of rows) {
+      const code = (r.vendor_code || '').toString();
+      const name = (r.vendor_name || '').toString();
+      if (!code && !name) continue;
+      const k = code + '||' + name;
+      if (!map.has(k)) map.set(k, { k, code, name });
+    }
+    return [...map.values()].sort((a, b) =>
+      (a.name || a.code).localeCompare(b.name || b.code, 'nl', { numeric: true, sensitivity: 'base' }));
+  }, [rows]);
+
+  // Reset vendorfilter als de gekozen vendor niet meer in de resultaten zit
+  useEffect(() => {
+    if (vendorFilter && !vendorOptions.some(v => v.k === vendorFilter)) setVendorFilter('');
+  }, [vendorOptions, vendorFilter]);
+
+  // Zichtbare rijen: eerst vendorfilter, dan sortering (beide client-side)
+  const displayRows = useMemo(() => {
+    let out = rows;
+    if (vendorFilter) {
+      out = out.filter(r => ((r.vendor_code || '') + '||' + (r.vendor_name || '')) === vendorFilter);
+    }
+    if (sort.key) {
+      const col = COLS.find(c => c.key === sort.key);
+      if (col) out = [...out].sort((a, b) => compareRows(a, b, col, sort.dir));
+    }
+    return out;
+  }, [rows, vendorFilter, sort]);
+
+  const hasAnyFilter = f.dateFrom || f.dateTo || f.paidFrom || f.paidTo
+    || f.status !== 'all' || f.entity !== 'all' || f.term || vendorFilter || sort.key;
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -111,7 +216,7 @@ export default function FactuurStatusPage() {
         ))}
       </div>
 
-      {/* Zoekbalk + statusfilter */}
+      {/* Zoekbalk + status- en leveranciersfilter */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <input
           type="text" value={f.term} onChange={e => set({ term: e.target.value })} autoFocus
@@ -123,6 +228,15 @@ export default function FactuurStatusPage() {
           <option value="all">Alle statussen</option>
           <option value="open">Alleen open</option>
           <option value="betaald">Alleen betaald</option>
+        </select>
+        <select value={vendorFilter} onChange={e => setVendorFilter(e.target.value)}
+          disabled={vendorOptions.length === 0}
+          title={vendorOptions.length === 0 ? 'Zoek eerst; de dropdown vult zich met de gevonden leveranciers' : 'Filter op leverancier'}
+          className="px-3 py-2.5 rounded-xl border border-gray-200 text-[13px] bg-white max-w-[240px] disabled:opacity-50">
+          <option value="">Alle leveranciers</option>
+          {vendorOptions.map(v => (
+            <option key={v.k} value={v.k}>{(v.name || '—')}{v.code ? ` (${v.code})` : ''}</option>
+          ))}
         </select>
       </div>
 
@@ -144,8 +258,8 @@ export default function FactuurStatusPage() {
           <input type="date" value={f.paidTo} onChange={e => set({ paidTo: e.target.value })}
             className="px-2 py-1 rounded-lg border border-gray-200 text-[12px] bg-white" />
         </div>
-        {(f.dateFrom || f.dateTo || f.paidFrom || f.paidTo || f.status !== 'all' || f.entity !== 'all' || f.term) && (
-          <button onClick={() => setF(EMPTY)} className="ml-auto text-[11px] text-[#1B3A5C]/50 hover:text-[#1B3A5C] underline">
+        {hasAnyFilter && (
+          <button onClick={resetAll} className="ml-auto text-[11px] text-[#1B3A5C]/50 hover:text-[#1B3A5C] underline">
             Wis filters
           </button>
         )}
@@ -163,24 +277,38 @@ export default function FactuurStatusPage() {
         </div>
       ) : (
         <>
-          <div className="text-[11px] text-[#1B3A5C]/50 mb-2">{rows.length} resultaten{rows.length === 200 ? ' (max — verfijn je zoekterm/filters)' : ''}</div>
+          <div className="text-[11px] text-[#1B3A5C]/50 mb-2">
+            {vendorFilter
+              ? `${displayRows.length} van ${rows.length} resultaten (gefilterd op leverancier)`
+              : `${rows.length} resultaten`}
+            {rows.length === 200 ? ' · max 200 — verfijn je zoekterm/filters' : ''}
+          </div>
           <div className="overflow-x-auto rounded-lg border border-gray-200">
             <table className="w-full text-[12px]">
               <thead className="bg-gray-50 text-[#1B3A5C]/70">
                 <tr>
-                  <th className="p-2 text-left font-semibold">Leverancier</th>
-                  <th className="p-2 text-left font-semibold">Vendor#</th>
-                  <th className="p-2 text-left font-semibold">Factuur</th>
-                  <th className="p-2 text-left font-semibold">PO</th>
-                  <th className="p-2 text-left font-semibold">Voucher</th>
-                  <th className="p-2 text-left font-semibold">Entiteit</th>
-                  <th className="p-2 text-left font-semibold">Datum</th>
-                  <th className="p-2 text-right font-semibold">Bedrag</th>
-                  <th className="p-2 text-left font-semibold">Status</th>
+                  {COLS.map(col => (
+                    <th key={col.key} onClick={() => toggleSort(col)}
+                      className={`p-2 font-semibold cursor-pointer select-none hover:text-[#1B3A5C] transition-colors ${
+                        col.align === 'right' ? 'text-right' : 'text-left'}`}>
+                      <span className={`inline-flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : ''}`}>
+                        {col.label}
+                        <span className="text-[8px] leading-none text-[#1B3A5C]/40">
+                          {sort.key === col.key ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
+                        </span>
+                      </span>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => {
+                {displayRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={COLS.length} className="p-6 text-center text-[12px] text-[#1B3A5C]/40 italic">
+                      Geen facturen voor deze leverancier binnen de huidige resultaten.
+                    </td>
+                  </tr>
+                ) : displayRows.map((r, i) => {
                   const open = parseFloat(r.balance) > 0 && !r.fully_paid;
                   return (
                     <tr key={i} className="border-t border-gray-100">
