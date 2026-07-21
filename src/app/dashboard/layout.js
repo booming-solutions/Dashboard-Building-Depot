@@ -337,6 +337,11 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/finance/ar', label: 'AR-ontwikkeling' },
   ];
 
+  // Facturen menu — zoekbaar factuurstatus-rapport, zichtbaar voor ELKE ingelogde medewerker
+  const factuurItems = [
+    { href: '/dashboard/finance/factuurstatus', label: 'Factuurstatus' },
+  ];
+
   // Logistiek menu — Order Flow portal
   const isLogistics = ['admin', 'cfo', 'manager', 'ap_approver', 'ap_clerk'].includes(profile?.role);
   const logisticsItems = [
@@ -363,6 +368,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/admin/dyflexis-import', label: 'Dyflexis Planning', icon: '📅' },
     { href: '/dashboard/admin/dyflexis-actuals', label: 'Dyflexis Actuals', icon: '📊' },
     { href: '/dashboard/admin/salary-import', label: 'Salaris Import', icon: '💰' },
+    { href: '/dashboard/finance/ledger-upload', label: 'Ledger laden', icon: '📒' },
     { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
 
@@ -385,6 +391,7 @@ export default function DashboardLayout({ children }) {
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isFinance && <NavDropdown icon="💼" label="Finance" items={financeItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {user && <NavDropdown icon="🧾" label="Facturen" items={factuurItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isLogistics && <NavDropdown icon="🚢" label="Logistiek" items={logisticsItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isMarketing && <NavDropdown icon="📣" label="Marketing" items={marketingItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>

@@ -10,7 +10,9 @@
          000=BDT, 400=RCC, 600=MMC, 700=BDB, 888=BDMS. Andere → overslaan.
      - alleen regels met invoice-datum >= 2025-01-01.
      - bedragen in XCG (geen omrekening).
-     - dagelijkse volledige snapshot → eerst legen, dan herladen.
+     - dagelijkse levering (laatste 365 dagen) → UPSERT op
+         (entity, voucher_number, invoice_number). Geen delete: regels
+         die uit het venster vallen blijven in de database staan.
 
    Later vervangt een mailscheduler deze handmatige stap; dezelfde
    parselogica verhuist dan server-side.
@@ -84,8 +86,8 @@ export default function LedgerUploadPage() {
         entity,
         vendor_code: vcode,
         vendor_name: String(r[ix.vname] ?? '').trim() || null,
-        invoice_number: String(r[ix.inv] ?? '').trim() || null,
-        voucher_number: voucherStr(r[ix.voucher]),
+        invoice_number: String(r[ix.inv] ?? '').trim(),
+        voucher_number: voucherStr(r[ix.voucher]) ?? '',
         invoice_date: invDate,
         amount: num(r[ix.value]),
         balance: num(r[ix.bal]),
@@ -112,20 +114,19 @@ export default function LedgerUploadPage() {
       addLog(`Per entiteit: ${Object.entries(byEntity).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
       if (!rows.length) { addLog('Geen bruikbare regels — gestopt.'); setBusy(false); return; }
 
-      // volledige snapshot → eerst legen
-      addLog('Ledger legen...');
-      const { error: delErr } = await supabase.from('invoice_ledger').delete().gte('id', 0);
-      if (delErr) throw new Error('Legen faalt: ' + delErr.message);
-
-      // in batches laden
+      // UPSERT: bestaande bijwerken (open→betaald), nieuwe toevoegen,
+      // verdwenen regels blijven staan (geen delete).
+      addLog('Bijwerken (upsert)...');
       const stamp = new Date().toISOString();
       let done = 0;
       for (let i = 0; i < rows.length; i += BATCH) {
         const chunk = rows.slice(i, i + BATCH).map(x => ({ ...x, source_file: file.name, loaded_at: stamp }));
-        const { error } = await supabase.from('invoice_ledger').insert(chunk);
+        const { error } = await supabase
+          .from('invoice_ledger')
+          .upsert(chunk, { onConflict: 'entity,voucher_number,invoice_number' });
         if (error) throw new Error(`Batch ${i / BATCH + 1} faalt: ${error.message}`);
         done += chunk.length;
-        if (done % 2500 === 0 || done === rows.length) addLog(`Geladen: ${done}/${rows.length}`);
+        if (done % 2500 === 0 || done === rows.length) addLog(`Verwerkt: ${done}/${rows.length}`);
       }
       const openCount = rows.filter(r => r.balance > 0 && !r.fully_paid).length;
       setStats({ total: rows.length, open: openCount, betaald: rows.length - openCount, byEntity, skipped });
@@ -153,8 +154,8 @@ export default function LedgerUploadPage() {
     <div className="max-w-3xl mx-auto">
       <h1 className="text-[26px] font-bold text-[#1B3A5C] mb-1">Ledger laden</h1>
       <p className="text-[13px] text-[#1B3A5C]/60 mb-5">
-        Upload de volledige Compass-export (.xlsx). De tabel wordt vervangen door een verse snapshot,
-        gefilterd op herkende entiteiten en facturen vanaf {MIN_DATE}.
+        Upload de volledige Compass-export (.xlsx). De ledger wordt bijgewerkt (upsert): bestaande facturen updaten,
+        nieuwe toevoegen, verdwenen regels blijven behouden. Gefilterd op herkende entiteiten en facturen vanaf {MIN_DATE}.
       </p>
 
       <label className={`block rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer transition-all
