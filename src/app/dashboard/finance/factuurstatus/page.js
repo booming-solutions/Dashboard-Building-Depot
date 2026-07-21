@@ -1,16 +1,18 @@
 /* ============================================================
-   BESTAND: factuurstatus_page.js  (v3)
+   BESTAND: factuurstatus_page.js  (v4)
    KOPIEER NAAR: src/app/dashboard/finance/factuurstatus/page.js
 
    DOEL: intern zoekbaar rapport "is mijn factuur geboekt/betaald?".
    Leest public.invoice_ledger (read-only).
 
+   v4:
+   - Status-kolom toont alleen Open/Betaald (badge).
+   - Nieuwe sorteerbare kolom "Betaald op" met de betaaldatum.
+   - Excel-export (ExcelJS, client-side): exporteert de zichtbare rijen
+     inclusief actieve filters + sortering. Voor delen met leverancier.
    v3:
-   - Leveranciers-dropdown: filtert de huidige resultaten op één vendor
-     (client-side, gevuld uit de geladen rijen; respecteert entiteit/datum).
+   - Leveranciers-dropdown (client-side filter op geladen rijen).
    - Alle kolomkoppen klikbaar => sorteren (asc/desc, 3e klik = reset).
-     Lege waarden altijd onderaan. Datum/bedrag starten aflopend,
-     tekstkolommen oplopend met natuurlijke nummer-sortering.
    v2:
    - Zoekt ook op vendornummer (vendor_code) en toont het.
    - Entiteit-knoppen (ALL/BDT/BDB/MMC/RCC/BDMS), default ALL.
@@ -40,21 +42,25 @@ function fmtDate(s) {
   if (!s) return '—';
   return new Date(s).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
+function isOpen(r) {
+  return parseFloat(r.balance) > 0 && !r.fully_paid;
+}
 
 // Kolomdefinitie voor de sorteerbare tabel
 const COLS = [
-  { key: 'vendor_name',    label: 'Leverancier', type: 'text',   align: 'left'  },
-  { key: 'vendor_code',    label: 'Vendor#',     type: 'text',   align: 'left'  },
-  { key: 'invoice_number', label: 'Factuur',     type: 'text',   align: 'left'  },
-  { key: 'po_number',      label: 'PO',          type: 'text',   align: 'left'  },
-  { key: 'voucher_number', label: 'Voucher',     type: 'text',   align: 'left'  },
-  { key: 'entity',         label: 'Entiteit',    type: 'text',   align: 'left'  },
-  { key: 'invoice_date',   label: 'Datum',       type: 'date',   align: 'left'  },
-  { key: 'amount',         label: 'Bedrag',      type: 'num',    align: 'right' },
-  { key: 'status',         label: 'Status',      type: 'status', align: 'left'  },
+  { key: 'vendor_name',    label: 'Leverancier', type: 'text',     align: 'left'  },
+  { key: 'vendor_code',    label: 'Vendor#',     type: 'text',     align: 'left'  },
+  { key: 'invoice_number', label: 'Factuur',     type: 'text',     align: 'left'  },
+  { key: 'po_number',      label: 'PO',          type: 'text',     align: 'left'  },
+  { key: 'voucher_number', label: 'Voucher',     type: 'text',     align: 'left'  },
+  { key: 'entity',         label: 'Entiteit',    type: 'text',     align: 'left'  },
+  { key: 'invoice_date',   label: 'Datum',       type: 'date',     align: 'left'  },
+  { key: 'amount',         label: 'Bedrag',      type: 'num',      align: 'right' },
+  { key: 'status',         label: 'Status',      type: 'status',   align: 'left'  },
+  { key: 'paid_date',      label: 'Betaald op',  type: 'paiddate', align: 'left'  },
 ];
 
-const defaultDir = (type) => (type === 'num' || type === 'date') ? 'desc' : 'asc';
+const defaultDir = (type) => (type === 'num' || type === 'date' || type === 'paiddate') ? 'desc' : 'asc';
 
 // Sorteerwaarde per kolom: { empty, val }
 function sortValue(row, col) {
@@ -67,9 +73,12 @@ function sortValue(row, col) {
       const t = row.invoice_date ? Date.parse(row.invoice_date) : NaN;
       return { empty: isNaN(t), val: t };
     }
+    case 'paiddate': {
+      const t = row.paid_date ? Date.parse(row.paid_date) : NaN;
+      return { empty: isNaN(t), val: t };
+    }
     case 'status': {
-      const open = parseFloat(row.balance) > 0 && !row.fully_paid;
-      return { empty: false, val: open ? 0 : 1 }; // open eerst bij oplopend
+      return { empty: false, val: isOpen(row) ? 0 : 1 }; // open eerst bij oplopend
     }
     default: {
       const s = (row[col.key] ?? '').toString().trim();
@@ -104,6 +113,7 @@ export default function FactuurStatusPage() {
   const [error, setError] = useState(null);
   const [vendorFilter, setVendorFilter] = useState('');
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
+  const [exporting, setExporting] = useState(false);
   const debounce = useRef(null);
 
   const runSearch = useCallback(async (flt) => {
@@ -198,6 +208,77 @@ export default function FactuurStatusPage() {
   const hasAnyFilter = f.dateFrom || f.dateTo || f.paidFrom || f.paidTo
     || f.status !== 'all' || f.entity !== 'all' || f.term || vendorFilter || sort.key;
 
+  // Excel-export van de zichtbare rijen (incl. filters + sortering)
+  const exportExcel = async () => {
+    if (!displayRows.length || exporting) return;
+    setExporting(true);
+    try {
+      const ExcelJS = (await import('exceljs')).default;
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'Building Depot BI';
+      wb.created = new Date();
+      const ws = wb.addWorksheet('Factuurstatus');
+
+      ws.columns = [
+        { header: 'Leverancier',  key: 'vendor_name',    width: 34 },
+        { header: 'Vendor#',      key: 'vendor_code',    width: 12 },
+        { header: 'Factuur',      key: 'invoice_number', width: 18 },
+        { header: 'PO',           key: 'po_number',      width: 10 },
+        { header: 'Voucher',      key: 'voucher_number', width: 14 },
+        { header: 'Entiteit',     key: 'entity',         width: 14 },
+        { header: 'Factuurdatum', key: 'invoice_date',   width: 14 },
+        { header: 'Bedrag (XCG)', key: 'amount',         width: 16 },
+        { header: 'Status',       key: 'status',         width: 10 },
+        { header: 'Betaald op',   key: 'paid_date',      width: 14 },
+      ];
+
+      for (const r of displayRows) {
+        const row = ws.addRow({
+          vendor_name:    r.vendor_name || '',
+          vendor_code:    r.vendor_code || '',
+          invoice_number: r.invoice_number || '',
+          po_number:      r.po_number || '',
+          voucher_number: r.voucher_number || '',
+          entity:         ENTITY_LABEL[r.entity] || r.entity || '',
+          invoice_date:   r.invoice_date ? new Date(r.invoice_date) : null,
+          amount:         (r.amount === null || r.amount === undefined || isNaN(parseFloat(r.amount))) ? null : parseFloat(r.amount),
+          status:         isOpen(r) ? 'Open' : 'Betaald',
+          paid_date:      r.paid_date ? new Date(r.paid_date) : null,
+        });
+        row.getCell('invoice_date').numFmt = 'dd-mm-yyyy';
+        row.getCell('paid_date').numFmt = 'dd-mm-yyyy';
+        row.getCell('amount').numFmt = '#,##0.00';
+      }
+
+      // Kopregel opmaken + autofilter + bevriezen
+      const header = ws.getRow(1);
+      header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3A5C' } };
+      header.alignment = { vertical: 'middle' };
+      ws.autoFilter = { from: 'A1', to: 'J1' };
+      ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 10);
+      const vendorTag = vendorFilter
+        ? '_' + (vendorOptions.find(v => v.k === vendorFilter)?.name || 'leverancier').replace(/[^\w]+/g, '-').slice(0, 30)
+        : '';
+      a.href = url;
+      a.download = `factuurstatus${vendorTag}_${stamp}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError('Export mislukt: ' + (e.message || String(e)));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto">
       <h1 className="text-[26px] font-bold text-[#1B3A5C] mb-1">Factuurstatus</h1>
@@ -277,11 +358,17 @@ export default function FactuurStatusPage() {
         </div>
       ) : (
         <>
-          <div className="text-[11px] text-[#1B3A5C]/50 mb-2">
-            {vendorFilter
-              ? `${displayRows.length} van ${rows.length} resultaten (gefilterd op leverancier)`
-              : `${rows.length} resultaten`}
-            {rows.length === 200 ? ' · max 200 — verfijn je zoekterm/filters' : ''}
+          <div className="flex items-center gap-3 mb-2">
+            <div className="text-[11px] text-[#1B3A5C]/50">
+              {vendorFilter
+                ? `${displayRows.length} van ${rows.length} resultaten (gefilterd op leverancier)`
+                : `${rows.length} resultaten`}
+              {rows.length === 200 ? ' · max 200 — verfijn je zoekterm/filters' : ''}
+            </div>
+            <button onClick={exportExcel} disabled={exporting || displayRows.length === 0}
+              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              {exporting ? 'Exporteren...' : `Exporteer naar Excel (${displayRows.length})`}
+            </button>
           </div>
           <div className="overflow-x-auto rounded-lg border border-gray-200">
             <table className="w-full text-[12px]">
@@ -309,7 +396,7 @@ export default function FactuurStatusPage() {
                     </td>
                   </tr>
                 ) : displayRows.map((r, i) => {
-                  const open = parseFloat(r.balance) > 0 && !r.fully_paid;
+                  const open = isOpen(r);
                   return (
                     <tr key={i} className="border-t border-gray-100">
                       <td className="p-2">{r.vendor_name || '—'}</td>
@@ -324,11 +411,10 @@ export default function FactuurStatusPage() {
                         {open ? (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800">Open</span>
                         ) : (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">
-                            Betaald{r.paid_date ? ` · ${fmtDate(r.paid_date)}` : ''}
-                          </span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">Betaald</span>
                         )}
                       </td>
+                      <td className="p-2 whitespace-nowrap text-[#1B3A5C]/70">{r.paid_date ? fmtDate(r.paid_date) : '—'}</td>
                     </tr>
                   );
                 })}
@@ -337,6 +423,7 @@ export default function FactuurStatusPage() {
           </div>
           <p className="mt-3 text-[11px] text-[#1B3A5C]/40">
             Bron: dagelijkse Compass-export. "Betaald" betekent volledig afgeletterd; "Open" staat nog uit.
+            De Excel-export bevat de zichtbare rijen met de actieve filters en sortering.
           </p>
         </>
       )}
