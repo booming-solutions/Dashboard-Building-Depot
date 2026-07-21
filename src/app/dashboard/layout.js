@@ -335,12 +335,10 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)' },
     { href: '/dashboard/finance/reports', label: 'Rapportages' },
     { href: '/dashboard/finance/ar', label: 'AR-ontwikkeling' },
+    { href: '/dashboard/finance/factuurstatus', label: 'Factuur status', everyone: true },
   ];
-
-  // Facturen menu — zoekbaar factuurstatus-rapport, zichtbaar voor ELKE ingelogde medewerker
-  const factuurItems = [
-    { href: '/dashboard/finance/factuurstatus', label: 'Factuurstatus' },
-  ];
+  // Finance-menu tonen aan finance-rollen (volledig) of aan iedereen (alleen de 'everyone'-items)
+  const visibleFinanceItems = isFinance ? financeItems : financeItems.filter(i => i.everyone);
 
   // Logistiek menu — Order Flow portal
   const isLogistics = ['admin', 'cfo', 'manager', 'ap_approver', 'ap_clerk'].includes(profile?.role);
@@ -390,8 +388,7 @@ export default function DashboardLayout({ children }) {
             {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {isFinance && <NavDropdown icon="💼" label="Finance" items={financeItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {user && <NavDropdown icon="🧾" label="Facturen" items={factuurItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {user && visibleFinanceItems.length > 0 && <NavDropdown icon="💼" label="Finance" items={visibleFinanceItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isLogistics && <NavDropdown icon="🚢" label="Logistiek" items={logisticsItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isMarketing && <NavDropdown icon="📣" label="Marketing" items={marketingItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>
