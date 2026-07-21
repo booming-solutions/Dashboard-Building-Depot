@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: factuurstatus_page.js  (v4)
+   BESTAND: factuurstatus_page.js  (v4)  
    KOPIEER NAAR: src/app/dashboard/finance/factuurstatus/page.js
 
    DOEL: intern zoekbaar rapport "is mijn factuur geboekt/betaald?".
