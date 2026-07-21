@@ -47,6 +47,7 @@ async function handler(req) {
     .from('order_flow_containers')
     .select('id, po_id, container_no, sealine, tracking_progress')
     .not('container_no', 'is', null)
+    .not('shared', 'is', true)
     .or('tracking_progress.is.null,tracking_progress.lt.100')
     .limit(80);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -90,6 +91,16 @@ async function handler(req) {
       tracking_progress: (g.progress ?? null), tracking_status: 'success',
       tracking_message: g.carrier ? ('Carrier: ' + g.carrier) : null, tracking_updated_at: now,
     }).eq('id', c.id);
+
+    // Zelfde-boot (shared) containers van deze PO mee bijwerken — geen extra API-call
+    await supabase.from('order_flow_containers').update({
+      eta: etaDate, carrier: g.carrier || null,
+      pol_name: pol.name || null, pol_lat: (pol.lat ?? null), pol_lng: (pol.lng ?? null),
+      pod_name: dest.name || null, pod_lat: (dest.lat ?? null), pod_lng: (dest.lng ?? null),
+      vessel_name: vessel.name || null, vessel_imo: vessel.imo || null, vessel_mmsi: vessel.mmsi || null,
+      vessel_lat: (vessel.latitude ?? null), vessel_lng: (vessel.longitude ?? null), vessel_ais_at: dISO(vessel.aisTimestamp),
+      tracking_progress: (g.progress ?? null), tracking_status: 'success', tracking_updated_at: now,
+    }).eq('po_id', c.po_id).eq('shared', true);
 
     if (etaDate) {
       const { data: e } = await supabase.from('order_flow_containers').select('eta').eq('po_id', c.po_id).not('eta', 'is', null).order('eta', { ascending: true }).limit(1);

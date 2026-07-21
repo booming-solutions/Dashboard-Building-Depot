@@ -103,6 +103,16 @@ export async function POST(req) {
   if (sealine !== 'AUTO') patch.sealine = sealine;
   await supabase.from('order_flow_containers').update(patch).eq('id', container_id);
 
+  // Zelfde-boot (shared) containers van deze PO mee bijwerken — geen extra API-call
+  await supabase.from('order_flow_containers').update({
+    eta: etaDate, carrier: g.carrier || null,
+    pol_name: pol.name || null, pol_lat: (pol.lat ?? null), pol_lng: (pol.lng ?? null),
+    pod_name: dest.name || null, pod_lat: (dest.lat ?? null), pod_lng: (dest.lng ?? null),
+    vessel_name: vessel.name || null, vessel_imo: vessel.imo || null, vessel_mmsi: vessel.mmsi || null,
+    vessel_lat: (vessel.latitude ?? null), vessel_lng: (vessel.longitude ?? null), vessel_ais_at: toISO(vessel.aisTimestamp),
+    tracking_progress: (g.progress ?? null), tracking_status: 'success', tracking_updated_at: now,
+  }).eq('po_id', c.po_id).eq('shared', true);
+
   // Vroegste container-ETA oprollen naar de PO
   const { data: etas } = await supabase
     .from('order_flow_containers')

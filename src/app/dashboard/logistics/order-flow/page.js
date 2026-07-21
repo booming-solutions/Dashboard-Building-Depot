@@ -245,6 +245,27 @@ export default function OrderFlowPage() {
     } catch (e) { flash('Netwerkfout: ' + e.message); } finally { setRefreshing(false); }
   }
 
+  async function copyToOthers(c) {
+    if (!sel) return;
+    const targets = containers.filter((x) => x.id !== c.id && (x.tracking_status !== 'success' || x.shared));
+    if (!targets.length) { flash('Geen containers om aan te koppelen (de andere zijn al apart getrackt).'); return; }
+    if (!confirm(`Positie van ${c.container_no} kopiëren naar de overige ${targets.length} container(s) van deze PO? Zelfde boot, géén VesselFinder-kosten.`)) return;
+    const patch = {
+      eta: c.eta, carrier: c.carrier,
+      pol_name: c.pol_name, pol_lat: c.pol_lat, pol_lng: c.pol_lng,
+      pod_name: c.pod_name, pod_lat: c.pod_lat, pod_lng: c.pod_lng,
+      vessel_name: c.vessel_name, vessel_imo: c.vessel_imo, vessel_mmsi: c.vessel_mmsi,
+      vessel_lat: c.vessel_lat, vessel_lng: c.vessel_lng, vessel_ais_at: c.vessel_ais_at,
+      tracking_progress: c.tracking_progress, tracking_status: 'success',
+      tracking_message: 'Zelfde boot als ' + c.container_no, tracking_updated_at: new Date().toISOString(),
+      shared: true,
+    };
+    const { error } = await supabase.from('order_flow_containers').update(patch).in('id', targets.map((t) => t.id));
+    if (error) { flash('Kopiëren mislukt: ' + error.message); return; }
+    flash(`Positie gekopieerd naar ${targets.length} container(s) — geen VesselFinder-kosten`);
+    await loadContainers(sel.id); await loadAllContainers();
+  }
+
   async function deletePo(id, po, e) {
     e?.stopPropagation();
     if (!confirm(`PO ${po} verwijderen?`)) return;
@@ -452,12 +473,16 @@ export default function OrderFlowPage() {
             {containers.map((c) => (
               <div key={c.id} className="cont-row">
                 <input className="cno" defaultValue={c.container_no} placeholder="ABCD1234567" onBlur={(e) => updateContainer(c.id, 'container_no', e.target.value)} />
-                <select value={c.sealine || 'AUTO'} onChange={(e) => updateContainer(c.id, 'sealine', e.target.value)}>{SEALINES.map(([code, n]) => <option key={code} value={code}>{n}</option>)}</select>
-                <button className="btn" disabled={trackingId === c.id} onClick={() => trackContainer(c.id)}>{trackingId === c.id ? 'Ophalen…' : 'ETA ophalen'}</button>
+                <select value={c.sealine || 'AUTO'} disabled={c.shared} onChange={(e) => updateContainer(c.id, 'sealine', e.target.value)}>{SEALINES.map(([code, n]) => <option key={code} value={code}>{n}</option>)}</select>
+                {c.shared
+                  ? <span className="shared-tag" title="Volgt dezelfde boot als een andere container — geen VesselFinder-kosten">🔗 zelfde boot</span>
+                  : <button className="btn" disabled={trackingId === c.id} onClick={() => trackContainer(c.id)}>{trackingId === c.id ? 'Ophalen…' : 'ETA ophalen'}</button>}
                 <button className="link del" title="Verwijderen" onClick={() => removeContainer(c.id)}>✕</button>
                 <div className="cont-info">
                   {c.tracking_status === 'success'
-                    ? <>{c.vessel_lat != null ? '🚢' : '📍'} {c.vessel_name || c.pod_name || '—'}{c.carrier ? ` · ${c.carrier}` : ''} · ETA {c.eta ? fmtDate(c.eta) : '—'} · {c.tracking_progress ?? '—'}%{mapPos(c) && <> · <button className="link" onClick={() => { setMapFocus(c.id); setShowMap(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>kaart</button></>}</>
+                    ? <>{c.shared ? '🔗' : (c.vessel_lat != null ? '🚢' : '📍')} {c.vessel_name || c.pod_name || '—'}{c.carrier ? ` · ${c.carrier}` : ''} · ETA {c.eta ? fmtDate(c.eta) : '—'} · {c.tracking_progress ?? '—'}%
+                        {mapPos(c) && <> · <button className="link" onClick={() => { setMapFocus(c.id); setShowMap(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>kaart</button></>}
+                        {!c.shared && containers.length > 1 && <> · <button className="link" onClick={() => copyToOthers(c)}>kopieer naar overige (zelfde boot)</button></>}</>
                     : c.tracking_status ? <span className="of-sub">VesselFinder: {c.tracking_message || c.tracking_status}</span>
                       : <span className="of-sub">Nog niet opgehaald</span>}
                 </div>
@@ -627,6 +652,7 @@ const css = `
 .cont-row .cno{padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;text-transform:uppercase}
 .cont-row select{padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
 .cont-info{grid-column:1 / -1;font-size:12px;color:#374151}
+.shared-tag{font-size:12px;color:#0369a1;background:#e0f2fe;border-radius:6px;padding:6px 8px;text-align:center;white-space:nowrap}
 @media(max-width:1000px){.cont-row{grid-template-columns:1fr 1fr}}
 .of-block-title{font-weight:600;font-size:13px;margin:14px 0 8px;color:#374151}
 .edit-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:end}
