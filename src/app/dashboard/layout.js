@@ -1,7 +1,7 @@
 /* ============================================================
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (overschrijft de bestaande layout.js)
+   (overschrijft de bestaande layout.js)    
 
    WIJZIGINGEN V27.19:
    - Finance: 'AR-ontwikkeling' link toegevoegd
