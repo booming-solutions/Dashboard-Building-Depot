@@ -1,15 +1,20 @@
 /* ============================================================
-   BESTAND: factuurstatus_page.js  (v4)  
+   BESTAND: factuurstatus_page.js  (v5)
    KOPIEER NAAR: src/app/dashboard/finance/factuurstatus/page.js
 
    DOEL: intern zoekbaar rapport "is mijn factuur geboekt/betaald?".
    Leest public.invoice_ledger (read-only).
 
+   v5:
+   - Automatische totalen: totaalbalk + totaalregel onder de tabel
+     (aantal, totaalbedrag, splitsing open/betaald).
+   - Selecteerbare rijen (checkbox + select-all) met live selectietotaal.
+     Excel-export pakt de selectie als er iets geselecteerd is.
+   - Valutabewaking: BDB (USD) wordt niet opgeteld bij XCG-entiteiten;
+     bij gemengde resultaten worden totalen per valuta getoond.
    v4:
-   - Status-kolom toont alleen Open/Betaald (badge).
-   - Nieuwe sorteerbare kolom "Betaald op" met de betaaldatum.
-   - Excel-export (ExcelJS, client-side): exporteert de zichtbare rijen
-     inclusief actieve filters + sortering. Voor delen met leverancier.
+   - Status-kolom toont alleen Open/Betaald; aparte kolom "Betaald op".
+   - Excel-export (ExcelJS, client-side).
    v3:
    - Leveranciers-dropdown (client-side filter op geladen rijen).
    - Alle kolomkoppen klikbaar => sorteren (asc/desc, 3e klik = reset).
@@ -33,10 +38,14 @@ const ENTITIES = [
 ];
 const ENTITY_LABEL = { BDT: 'Curaçao', BDB: 'Bonaire', MMC: 'Multimart', RCC: 'Repair Centre', BDMS: 'BDMS' };
 
-function fmtMoney(v) {
+// Bonaire wordt in USD geadministreerd, de overige entiteiten in XCG.
+const USD_ENTITIES = new Set(['BDB']);
+const currencyOf = (r) => (USD_ENTITIES.has(r.entity) ? 'USD' : 'XCG');
+
+function fmtMoney(v, cur = 'XCG') {
   const n = parseFloat(v);
   if (isNaN(n)) return '—';
-  return 'XCG ' + new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  return cur + ' ' + new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 function fmtDate(s) {
   if (!s) return '—';
@@ -44,6 +53,10 @@ function fmtDate(s) {
 }
 function isOpen(r) {
   return parseFloat(r.balance) > 0 && !r.fully_paid;
+}
+function num(v) {
+  const n = parseFloat(v);
+  return isNaN(n) ? 0 : n;
 }
 
 // Kolomdefinitie voor de sorteerbare tabel
@@ -62,7 +75,6 @@ const COLS = [
 
 const defaultDir = (type) => (type === 'num' || type === 'date' || type === 'paiddate') ? 'desc' : 'asc';
 
-// Sorteerwaarde per kolom: { empty, val }
 function sortValue(row, col) {
   switch (col.type) {
     case 'num': {
@@ -78,7 +90,7 @@ function sortValue(row, col) {
       return { empty: isNaN(t), val: t };
     }
     case 'status': {
-      return { empty: false, val: isOpen(row) ? 0 : 1 }; // open eerst bij oplopend
+      return { empty: false, val: isOpen(row) ? 0 : 1 };
     }
     default: {
       const s = (row[col.key] ?? '').toString().trim();
@@ -91,7 +103,7 @@ function compareRows(a, b, col, dir) {
   const av = sortValue(a, col);
   const bv = sortValue(b, col);
   if (av.empty && bv.empty) return 0;
-  if (av.empty) return 1;   // lege waarden altijd onderaan, ongeacht richting
+  if (av.empty) return 1;
   if (bv.empty) return -1;
   let base;
   if (col.type === 'text') {
@@ -100,6 +112,23 @@ function compareRows(a, b, col, dir) {
     base = av.val - bv.val;
   }
   return dir === 'asc' ? base : -base;
+}
+
+// Totalen berekenen, gegroepeerd per valuta
+function computeTotals(list) {
+  const per = new Map(); // cur -> { count, total, openCount, openTotal, paidCount, paidTotal }
+  for (const r of list) {
+    const cur = currencyOf(r);
+    if (!per.has(cur)) per.set(cur, { cur, count: 0, total: 0, openCount: 0, openTotal: 0, paidCount: 0, paidTotal: 0 });
+    const t = per.get(cur);
+    const a = num(r.amount);
+    t.count += 1;
+    t.total += a;
+    if (isOpen(r)) { t.openCount += 1; t.openTotal += a; }
+    else { t.paidCount += 1; t.paidTotal += a; }
+  }
+  const groups = [...per.values()].sort((a, b) => a.cur.localeCompare(b.cur));
+  return { groups, mixed: groups.length > 1, count: list.length };
 }
 
 const EMPTY = { term: '', entity: 'all', status: 'all', dateFrom: '', dateTo: '', paidFrom: '', paidTo: '' };
@@ -113,14 +142,16 @@ export default function FactuurStatusPage() {
   const [error, setError] = useState(null);
   const [vendorFilter, setVendorFilter] = useState('');
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
+  const [selected, setSelected] = useState(() => new Set());
   const [exporting, setExporting] = useState(false);
   const debounce = useRef(null);
+  const selectAllRef = useRef(null);
 
   const runSearch = useCallback(async (flt) => {
     const query = (flt.term || '').trim();
     const hasFilter = query.length >= 2 || flt.entity !== 'all' || flt.status !== 'all'
       || flt.dateFrom || flt.dateTo || flt.paidFrom || flt.paidTo;
-    if (!hasFilter) { setRows([]); setSearched(false); return; }
+    if (!hasFilter) { setRows([]); setSearched(false); setSelected(new Set()); return; }
     setLoading(true); setError(null);
     try {
       let sb = supabase
@@ -145,7 +176,9 @@ export default function FactuurStatusPage() {
 
       const { data, error } = await sb;
       if (error) throw error;
-      setRows(data || []);
+      // stabiele sleutel per rij voor selectie (ledger heeft geen unieke id in de select)
+      setRows((data || []).map((r, i) => ({ ...r, _k: 'r' + i })));
+      setSelected(new Set());
       setSearched(true);
     } catch (e) {
       setError(e.message || String(e));
@@ -154,7 +187,6 @@ export default function FactuurStatusPage() {
     }
   }, [supabase]);
 
-  // debounce op tekst, direct op de overige filters
   useEffect(() => {
     clearTimeout(debounce.current);
     debounce.current = setTimeout(() => runSearch(f), 300);
@@ -162,18 +194,19 @@ export default function FactuurStatusPage() {
   }, [f, runSearch]);
 
   const set = (patch) => setF(prev => ({ ...prev, ...patch }));
-  const resetAll = () => { setF(EMPTY); setVendorFilter(''); setSort({ key: null, dir: 'asc' }); };
+  const resetAll = () => {
+    setF(EMPTY); setVendorFilter(''); setSort({ key: null, dir: 'asc' }); setSelected(new Set());
+  };
 
   const toggleSort = (col) => {
     setSort(prev => {
       if (prev.key !== col.key) return { key: col.key, dir: defaultDir(col.type) };
       const def = defaultDir(col.type);
       if (prev.dir === def) return { key: col.key, dir: def === 'asc' ? 'desc' : 'asc' };
-      return { key: null, dir: 'asc' }; // 3e klik: terug naar serverdefault (datum aflopend)
+      return { key: null, dir: 'asc' };
     });
   };
 
-  // Leveranciers voor de dropdown, afgeleid uit de geladen rijen
   const vendorOptions = useMemo(() => {
     const map = new Map();
     for (const r of rows) {
@@ -187,12 +220,10 @@ export default function FactuurStatusPage() {
       (a.name || a.code).localeCompare(b.name || b.code, 'nl', { numeric: true, sensitivity: 'base' }));
   }, [rows]);
 
-  // Reset vendorfilter als de gekozen vendor niet meer in de resultaten zit
   useEffect(() => {
     if (vendorFilter && !vendorOptions.some(v => v.k === vendorFilter)) setVendorFilter('');
   }, [vendorOptions, vendorFilter]);
 
-  // Zichtbare rijen: eerst vendorfilter, dan sortering (beide client-side)
   const displayRows = useMemo(() => {
     let out = rows;
     if (vendorFilter) {
@@ -205,12 +236,49 @@ export default function FactuurStatusPage() {
     return out;
   }, [rows, vendorFilter, sort]);
 
-  const hasAnyFilter = f.dateFrom || f.dateTo || f.paidFrom || f.paidTo
-    || f.status !== 'all' || f.entity !== 'all' || f.term || vendorFilter || sort.key;
+  // Selectie beperken tot wat zichtbaar is (bv. na wisselen van vendorfilter)
+  useEffect(() => {
+    setSelected(prev => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(displayRows.map(r => r._k));
+      const next = new Set([...prev].filter(k => visible.has(k)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [displayRows]);
 
-  // Excel-export van de zichtbare rijen (incl. filters + sortering)
+  const selectedRows = useMemo(
+    () => displayRows.filter(r => selected.has(r._k)),
+    [displayRows, selected]
+  );
+
+  const totals = useMemo(() => computeTotals(displayRows), [displayRows]);
+  const selTotals = useMemo(() => computeTotals(selectedRows), [selectedRows]);
+
+  const allSelected = displayRows.length > 0 && selected.size === displayRows.length;
+  const someSelected = selected.size > 0 && !allSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
+  }, [someSelected]);
+
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(displayRows.map(r => r._k)));
+  };
+  const toggleOne = (k) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  };
+
+  const hasAnyFilter = f.dateFrom || f.dateTo || f.paidFrom || f.paidTo
+    || f.status !== 'all' || f.entity !== 'all' || f.term || vendorFilter || sort.key || selected.size > 0;
+
+  // Excel-export: selectie als die er is, anders alle zichtbare rijen
   const exportExcel = async () => {
-    if (!displayRows.length || exporting) return;
+    const src = selectedRows.length > 0 ? selectedRows : displayRows;
+    if (!src.length || exporting) return;
     setExporting(true);
     try {
       const ExcelJS = (await import('exceljs')).default;
@@ -227,12 +295,13 @@ export default function FactuurStatusPage() {
         { header: 'Voucher',      key: 'voucher_number', width: 14 },
         { header: 'Entiteit',     key: 'entity',         width: 14 },
         { header: 'Factuurdatum', key: 'invoice_date',   width: 14 },
-        { header: 'Bedrag (XCG)', key: 'amount',         width: 16 },
+        { header: 'Valuta',       key: 'currency',       width: 9  },
+        { header: 'Bedrag',       key: 'amount',         width: 16 },
         { header: 'Status',       key: 'status',         width: 10 },
         { header: 'Betaald op',   key: 'paid_date',      width: 14 },
       ];
 
-      for (const r of displayRows) {
+      for (const r of src) {
         const row = ws.addRow({
           vendor_name:    r.vendor_name || '',
           vendor_code:    r.vendor_code || '',
@@ -241,6 +310,7 @@ export default function FactuurStatusPage() {
           voucher_number: r.voucher_number || '',
           entity:         ENTITY_LABEL[r.entity] || r.entity || '',
           invoice_date:   r.invoice_date ? new Date(r.invoice_date) : null,
+          currency:       currencyOf(r),
           amount:         (r.amount === null || r.amount === undefined || isNaN(parseFloat(r.amount))) ? null : parseFloat(r.amount),
           status:         isOpen(r) ? 'Open' : 'Betaald',
           paid_date:      r.paid_date ? new Date(r.paid_date) : null,
@@ -250,12 +320,37 @@ export default function FactuurStatusPage() {
         row.getCell('amount').numFmt = '#,##0.00';
       }
 
-      // Kopregel opmaken + autofilter + bevriezen
+      // Totaalregels per valuta onderaan
+      const t = computeTotals(src);
+      ws.addRow({});
+      for (const g of t.groups) {
+        const tr = ws.addRow({
+          vendor_name: `Totaal ${g.cur} (${g.count} facturen)`,
+          currency: g.cur,
+          amount: g.total,
+          status: '',
+        });
+        tr.font = { bold: true };
+        tr.getCell('amount').numFmt = '#,##0.00';
+        const o = ws.addRow({
+          vendor_name: `  waarvan open (${g.openCount})`,
+          currency: g.cur,
+          amount: g.openTotal,
+        });
+        o.getCell('amount').numFmt = '#,##0.00';
+        const p = ws.addRow({
+          vendor_name: `  waarvan betaald (${g.paidCount})`,
+          currency: g.cur,
+          amount: g.paidTotal,
+        });
+        p.getCell('amount').numFmt = '#,##0.00';
+      }
+
       const header = ws.getRow(1);
       header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3A5C' } };
       header.alignment = { vertical: 'middle' };
-      ws.autoFilter = { from: 'A1', to: 'J1' };
+      ws.autoFilter = { from: 'A1', to: 'K1' };
       ws.views = [{ state: 'frozen', ySplit: 1 }];
 
       const buf = await wb.xlsx.writeBuffer();
@@ -266,8 +361,9 @@ export default function FactuurStatusPage() {
       const vendorTag = vendorFilter
         ? '_' + (vendorOptions.find(v => v.k === vendorFilter)?.name || 'leverancier').replace(/[^\w]+/g, '-').slice(0, 30)
         : '';
+      const selTag = selectedRows.length > 0 ? '_selectie' : '';
       a.href = url;
-      a.download = `factuurstatus${vendorTag}_${stamp}.xlsx`;
+      a.download = `factuurstatus${vendorTag}${selTag}_${stamp}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -358,22 +454,82 @@ export default function FactuurStatusPage() {
         </div>
       ) : (
         <>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="text-[11px] text-[#1B3A5C]/50">
-              {vendorFilter
-                ? `${displayRows.length} van ${rows.length} resultaten (gefilterd op leverancier)`
-                : `${rows.length} resultaten`}
-              {rows.length === 200 ? ' · max 200 — verfijn je zoekterm/filters' : ''}
+          {/* Totalenbalk */}
+          <div className="mb-3 rounded-xl border border-gray-200 bg-[#f8fafc] px-4 py-3">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-[#1B3A5C]/45 font-semibold">Facturen</div>
+                <div className="text-[15px] font-bold text-[#1B3A5C]">{totals.count}</div>
+              </div>
+              {totals.groups.map(g => (
+                <div key={g.cur} className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-[#1B3A5C]/45 font-semibold">
+                      Totaal{totals.mixed ? ` ${g.cur}` : ''}
+                    </div>
+                    <div className="text-[15px] font-bold text-[#1B3A5C]">{fmtMoney(g.total, g.cur)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-amber-700/70 font-semibold">Open ({g.openCount})</div>
+                    <div className="text-[14px] font-semibold text-amber-700">{fmtMoney(g.openTotal, g.cur)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-emerald-700/70 font-semibold">Betaald ({g.paidCount})</div>
+                    <div className="text-[14px] font-semibold text-emerald-700">{fmtMoney(g.paidTotal, g.cur)}</div>
+                  </div>
+                </div>
+              ))}
+              <button onClick={exportExcel} disabled={exporting || displayRows.length === 0}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                {exporting
+                  ? 'Exporteren...'
+                  : `Exporteer naar Excel (${selectedRows.length > 0 ? selectedRows.length : displayRows.length})`}
+              </button>
             </div>
-            <button onClick={exportExcel} disabled={exporting || displayRows.length === 0}
-              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              {exporting ? 'Exporteren...' : `Exporteer naar Excel (${displayRows.length})`}
-            </button>
+
+            {totals.mixed && (
+              <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                Let op: je resultaten bevatten zowel USD (Bonaire) als XCG. Bedragen zijn daarom per valuta getotaliseerd, niet opgeteld.
+                Kies een entiteit hierboven voor één totaal.
+              </div>
+            )}
+
+            {selectedRows.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-gray-200 pt-2">
+                <span className="text-[11px] font-semibold text-[#1B3A5C]">
+                  Selectie: {selectedRows.length} {selectedRows.length === 1 ? 'factuur' : 'facturen'}
+                </span>
+                {selTotals.groups.map(g => (
+                  <span key={g.cur} className="text-[12px] text-[#1B3A5C]">
+                    <span className="font-bold">{fmtMoney(g.total, g.cur)}</span>
+                    <span className="text-[#1B3A5C]/50">
+                      {' '}(open {fmtMoney(g.openTotal, g.cur)} · betaald {fmtMoney(g.paidTotal, g.cur)})
+                    </span>
+                  </span>
+                ))}
+                <button onClick={() => setSelected(new Set())}
+                  className="ml-auto text-[11px] text-[#1B3A5C]/50 hover:text-[#1B3A5C] underline">
+                  Selectie wissen
+                </button>
+              </div>
+            )}
           </div>
+
+          <div className="text-[11px] text-[#1B3A5C]/50 mb-2">
+            {vendorFilter
+              ? `${displayRows.length} van ${rows.length} resultaten (gefilterd op leverancier)`
+              : `${rows.length} resultaten`}
+            {rows.length === 200 ? ' · max 200 — verfijn je zoekterm/filters' : ''}
+          </div>
+
           <div className="overflow-x-auto rounded-lg border border-gray-200">
             <table className="w-full text-[12px]">
               <thead className="bg-gray-50 text-[#1B3A5C]/70">
                 <tr>
+                  <th className="p-2 w-8 text-center">
+                    <input ref={selectAllRef} type="checkbox" checked={allSelected} onChange={toggleAll}
+                      title="Alles selecteren" className="cursor-pointer accent-[#1B3A5C]" />
+                  </th>
                   {COLS.map(col => (
                     <th key={col.key} onClick={() => toggleSort(col)}
                       className={`p-2 font-semibold cursor-pointer select-none hover:text-[#1B3A5C] transition-colors ${
@@ -391,14 +547,20 @@ export default function FactuurStatusPage() {
               <tbody>
                 {displayRows.length === 0 ? (
                   <tr>
-                    <td colSpan={COLS.length} className="p-6 text-center text-[12px] text-[#1B3A5C]/40 italic">
+                    <td colSpan={COLS.length + 1} className="p-6 text-center text-[12px] text-[#1B3A5C]/40 italic">
                       Geen facturen voor deze leverancier binnen de huidige resultaten.
                     </td>
                   </tr>
-                ) : displayRows.map((r, i) => {
+                ) : displayRows.map((r) => {
                   const open = isOpen(r);
+                  const sel = selected.has(r._k);
                   return (
-                    <tr key={i} className="border-t border-gray-100">
+                    <tr key={r._k}
+                      className={`border-t border-gray-100 ${sel ? 'bg-[#1B3A5C]/[0.04]' : 'hover:bg-gray-50/60'}`}>
+                      <td className="p-2 text-center">
+                        <input type="checkbox" checked={sel} onChange={() => toggleOne(r._k)}
+                          className="cursor-pointer accent-[#1B3A5C]" />
+                      </td>
                       <td className="p-2">{r.vendor_name || '—'}</td>
                       <td className="p-2 font-mono text-[#1B3A5C]/60">{r.vendor_code || '—'}</td>
                       <td className="p-2 font-mono">{r.invoice_number || '—'}</td>
@@ -406,7 +568,7 @@ export default function FactuurStatusPage() {
                       <td className="p-2 font-mono text-[#1B3A5C]/60">{r.voucher_number || '—'}</td>
                       <td className="p-2">{ENTITY_LABEL[r.entity] || r.entity}</td>
                       <td className="p-2 whitespace-nowrap text-[#1B3A5C]/70">{fmtDate(r.invoice_date)}</td>
-                      <td className="p-2 text-right whitespace-nowrap">{fmtMoney(r.amount)}</td>
+                      <td className="p-2 text-right whitespace-nowrap">{fmtMoney(r.amount, currencyOf(r))}</td>
                       <td className="p-2 whitespace-nowrap">
                         {open ? (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800">Open</span>
@@ -419,11 +581,38 @@ export default function FactuurStatusPage() {
                   );
                 })}
               </tbody>
+              {displayRows.length > 0 && (
+                <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+                  {totals.groups.map(g => (
+                    <tr key={g.cur}>
+                      <td colSpan={8} className="p-2 text-right font-semibold text-[#1B3A5C]/70">
+                        Totaal{totals.mixed ? ` ${g.cur}` : ''} ({g.count})
+                      </td>
+                      <td className="p-2 text-right font-bold text-[#1B3A5C] whitespace-nowrap">{fmtMoney(g.total, g.cur)}</td>
+                      <td colSpan={2} className="p-2 text-[11px] text-[#1B3A5C]/55 whitespace-nowrap">
+                        open {fmtMoney(g.openTotal, g.cur)} · betaald {fmtMoney(g.paidTotal, g.cur)}
+                      </td>
+                    </tr>
+                  ))}
+                  {selectedRows.length > 0 && selTotals.groups.map(g => (
+                    <tr key={'sel-' + g.cur} className="bg-[#1B3A5C]/[0.05]">
+                      <td colSpan={8} className="p-2 text-right font-semibold text-[#1B3A5C]/70">
+                        Selectie{selTotals.mixed ? ` ${g.cur}` : ''} ({g.count})
+                      </td>
+                      <td className="p-2 text-right font-bold text-[#1B3A5C] whitespace-nowrap">{fmtMoney(g.total, g.cur)}</td>
+                      <td colSpan={2} className="p-2 text-[11px] text-[#1B3A5C]/55 whitespace-nowrap">
+                        open {fmtMoney(g.openTotal, g.cur)} · betaald {fmtMoney(g.paidTotal, g.cur)}
+                      </td>
+                    </tr>
+                  ))}
+                </tfoot>
+              )}
             </table>
           </div>
+
           <p className="mt-3 text-[11px] text-[#1B3A5C]/40">
             Bron: dagelijkse Compass-export. "Betaald" betekent volledig afgeletterd; "Open" staat nog uit.
-            De Excel-export bevat de zichtbare rijen met de actieve filters en sortering.
+            Totalen gelden over de zichtbare rijen (max 200 per zoekopdracht). De Excel-export bevat je selectie, of anders alle zichtbare rijen.
           </p>
         </>
       )}
