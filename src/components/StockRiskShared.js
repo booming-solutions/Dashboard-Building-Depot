@@ -2,7 +2,16 @@
    BESTAND: StockRiskShared_v12.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.29
+   VERSIE: v3.28.30
+
+   Wijzigingen t.o.v. v12 (v3.28.29):
+   - BUGFIX: dropdown "Alle Afdelingen" toonde alleen dept-codes,
+     geen namen (bv. "52 —" ipv "52 — TUINGEREEDSCHAP").
+     Oorzaak: bij aggregatie werd dept_name overgenomen van de EERSTE
+     rij per item. Nieuwe AI Voorraden exports vullen dept_name niet
+     consistent per rij, dus soms had de eerste rij een lege naam.
+     Fix: bij aggregatie én in depts-dropdown pakken we nu de eerste
+     niet-lege dept_name in plaats van de eerste die we tegenkomen.
 
    Wijzigingen t.o.v. v11:
    - NIEUW: Stock Predictor slider bovenaan de tabel
@@ -660,6 +669,9 @@ export default function StockRiskShared({ bumFilter }) {
       var m = map[key];
       // mfg_part_number: pak eerste niet-lege waarde (kan per store verschillen, meestal niet)
       if (!m.mfg && r.mfg_part_number) m.mfg = r.mfg_part_number;
+      // v12.1 fix: dept_name kan leeg zijn in sommige rijen (nieuwe AI Voorraden
+      // exports vullen dept_name niet consistent per rij). Pak eerste niet-lege waarde.
+      if (!m.dept_name && r.dept_name) m.dept_name = r.dept_name;
       // Lead time: nemen we het maximum (worst case) over stores binnen regio
       var rlt = parseFloat(r.min_lead_time) || 0;
       if (rlt > m.min_lt) m.min_lt = rlt;
@@ -781,7 +793,16 @@ export default function StockRiskShared({ bumFilter }) {
     });
   }, [items, projHorizonWeeks]);
 
-  var depts = useMemo(function() { var s = {}; items.forEach(function(m) { s[m.dept_code] = m.dept_name; }); return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); }); }, [items]);
+  var depts = useMemo(function() {
+    var s = {};
+    items.forEach(function(m) {
+      // Alleen overschrijven als we nog geen naam hebben; voorkomt dat een leeg
+      // dept_name een goede overschrijft.
+      if (!s[m.dept_code] && m.dept_name) s[m.dept_code] = m.dept_name;
+      else if (!(m.dept_code in s)) s[m.dept_code] = m.dept_name || '';
+    });
+    return Object.entries(s).sort(function(a, b) { return (parseInt(a[0]) || 0) - (parseInt(b[0]) || 0); });
+  }, [items]);
   var vendors = useMemo(function() { var s = {}; items.forEach(function(m) { if (m.vendor) s[m.vendor] = true; }); return Object.keys(s).sort(); }, [items]);
 
   var filteredBase = useMemo(function() {
