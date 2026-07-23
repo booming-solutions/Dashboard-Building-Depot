@@ -1,19 +1,31 @@
 /* ============================================================
-   BESTAND: ledgerImport.js
-   KOPIEER NAAR: src/lib/ledgerImport.js   (NIEUW)
+   BESTAND: ledgerImport_v2.js
+   KOPIEER NAAR: src/lib/ledgerImport.js   (overschrijft v1)
 
    DOEL: het Compass-rapport "AI Open and Paid Items last 12M"
    dat per mail binnenkomt verwerken naar public.invoice_ledger.
-   Zelfde parselogica als de handmatige uploadpagina
-   (src/app/dashboard/finance/ledger-upload/page.js), maar
-   server-side en met wegschrijven naar ledger_load_log.
+
+   WIJZIGING v2:
+   - rows_stale telde alle regels met een ouder stempel. Dat is bij een
+     12-maands export per definitie een groot en groeiend getal (regels
+     die simpelweg uit het venster lopen) en dus geen signaal.
+     Nu wordt vergeleken met ALLEEN de vorige levering, en gesplitst in:
+       * afgevoerd   -> zat in vorige levering, valt binnen het venster,
+                        staat nu niet meer in het bestand (= signaal)
+       * buiten venster -> te oud geworden (= ruis, gaat naar message)
+     Het venster wordt afgeleid uit de oudste factuurdatum in het bestand,
+     dus een wijziging van 12M naar 6M of 24M vangt zichzelf op.
+
+   v1:
+   - Zelfde parselogica als de handmatige uploadpagina, server-side,
+     met wegschrijven naar ledger_load_log.
 
    Regels:
    - entiteit uit laatste 3 cijfers van Account Number:
        000=BDT, 400=RCC, 600=MMC, 700=BDB, 888=BDMS. Anders overslaan.
    - alleen regels met factuurdatum >= MIN_DATE.
    - UPSERT op (entity, voucher_number, invoice_number). Geen delete:
-     regels die buiten het 12-maands venster vallen blijven staan.
+     regels buiten het venster blijven behouden.
    - first_seen_at wordt NIET meegestuurd, zodat de database-default
      alleen bij een echte insert vult en bij updates blijft staan.
    ============================================================ */
@@ -162,8 +174,16 @@ export async function processInvoiceLedger(supabase, json, filename) {
   const rows = [...dedup.values()];
   const dupes = parsed.length - rows.length;
 
+  // Venster van dit bestand: oudste factuurdatum die erin voorkomt.
+  // Zelfcalibrerend, dus een wissel van 12M naar 6M/24M vangt zichzelf op.
+  let windowStart = null;
+  for (const r of rows) {
+    if (!windowStart || r.invoice_date < windowStart) windowStart = r.invoice_date;
+  }
+
   console.log('invoice_ledger: ' + rows.length + ' regels na filter (overgeslagen: '
     + skipped + ', duplicaten samengevoegd: ' + dupes + ')');
+  console.log('invoice_ledger: venster vanaf ' + windowStart);
   console.log('invoice_ledger: per entiteit — '
     + Object.entries(byEntity).map(([k, v]) => k + ' ' + v).join(' · '));
   const measureList = Object.keys(measures);
@@ -181,10 +201,17 @@ export async function processInvoiceLedger(supabase, json, filename) {
     return { table: 'invoice_ledger', rows_imported: 0 };
   }
 
-  // Stand vooraf
+  // Stand vooraf + stempel van de vorige levering
   const beforeRes = await supabase
     .from('invoice_ledger').select('id', { count: 'exact', head: true });
   const rowsBefore = beforeRes.count ?? null;
+
+  const prevRes = await supabase
+    .from('invoice_ledger')
+    .select('loaded_at')
+    .order('loaded_at', { ascending: false })
+    .limit(1);
+  const prevStamp = prevRes.data?.[0]?.loaded_at || null;
 
   // Upsert in batches
   const stamp = new Date().toISOString();
@@ -204,17 +231,30 @@ export async function processInvoiceLedger(supabase, json, filename) {
     upserted += chunk.length;
   }
 
-  // Stand achteraf + hoeveel regels niet meer in de export zaten
+  // Stand achteraf
   const afterRes = await supabase
     .from('invoice_ledger').select('id', { count: 'exact', head: true });
   const rowsAfter = afterRes.count ?? null;
-
-  const staleRes = await supabase
-    .from('invoice_ledger').select('id', { count: 'exact', head: true })
-    .lt('loaded_at', stamp);
-  const rowsStale = staleRes.count ?? null;
-
   const rowsNew = (rowsBefore !== null && rowsAfter !== null) ? rowsAfter - rowsBefore : null;
+
+  // Verdwenen t.o.v. de VORIGE levering, gesplitst:
+  //  - afgevoerd     = binnen het venster, maar niet meer in het bestand (signaal)
+  //  - buiten venster = te oud geworden (ruis)
+  let disappeared = null;
+  let agedOut = null;
+  if (prevStamp && prevStamp !== stamp) {
+    const dRes = await supabase
+      .from('invoice_ledger').select('id', { count: 'exact', head: true })
+      .eq('loaded_at', prevStamp)
+      .gte('invoice_date', windowStart);
+    disappeared = dRes.count ?? null;
+
+    const aRes = await supabase
+      .from('invoice_ledger').select('id', { count: 'exact', head: true })
+      .eq('loaded_at', prevStamp)
+      .lt('invoice_date', windowStart);
+    agedOut = aRes.count ?? null;
+  }
 
   await logRun(supabase, {
     source_file: filename,
@@ -222,11 +262,13 @@ export async function processInvoiceLedger(supabase, json, filename) {
     rows_before: rowsBefore,
     rows_after: rowsAfter,
     rows_new: rowsNew,
-    rows_stale: rowsStale,
+    rows_stale: disappeared,          // alleen de echt afgevoerde regels
     status: errors.length ? 'deels mislukt' : 'ok',
     message: [
+      'venster vanaf ' + windowStart,
       'entiteiten: ' + Object.entries(byEntity).map(([k, v]) => k + ' ' + v).join(' · '),
       'overgeslagen: ' + skipped,
+      agedOut !== null ? 'buiten venster: ' + agedOut : null,
       dupes ? 'duplicaten: ' + dupes : null,
       measureList.length > 1 ? 'measures: ' + measureList.join(', ') : null,
       errors.length ? 'fouten: ' + errors.join(' | ') : null,
@@ -234,7 +276,7 @@ export async function processInvoiceLedger(supabase, json, filename) {
   });
 
   console.log('invoice_ledger: ' + upserted + ' verwerkt · nieuw ' + rowsNew
-    + ' · niet meer in export ' + rowsStale);
+    + ' · afgevoerd ' + disappeared + ' · buiten venster ' + agedOut);
 
   return { table: 'invoice_ledger', rows_imported: upserted };
 }
