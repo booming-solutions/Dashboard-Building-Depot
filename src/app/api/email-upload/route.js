@@ -1,22 +1,31 @@
 /* ============================================================
-   BESTAND: route_email_v27.js
+   BESTAND: route_email_v28.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
 
+   WIJZIGING v28:
+   - Nieuw file type 'discounts' voor het dagelijkse Compass-rapport
+     "Discounts_<datum>.csv" -> tabel discount_data (Kortingen-rapport).
+     Kwam binnen als 'unknown' -> HTTP 400 -> niet verwerkt; de tabel
+     stond sinds 15 juni stil.
+     Kolommen: Customer Number, Customer Name, Invoice Number,
+     Journal Number, Date, Sales less discount, Trade discount in ANG,
+     Discount in %, Clerk, Salesperson Number, Salesperson Name, Store
+   - Detectie + parselogica in src/lib/discountImport.js
+   - Strategie DELETE-THEN-INSERT per sale_date (dagbestand, geen
+     momentopname) — historie en trendgrafieken blijven intact.
+
    WIJZIGING v27:
-   - Twee nieuwe file types voor de openstaande PO-rapporten die per
-     mail binnenkomen:
+   - Twee nieuwe file types voor de openstaande PO-rapporten:
        * 'po_open_headers' — "AI Open PO Order details" (per PO)
          -> tabel po_open_headers (NIEUW)
        * 'po_sku'          — "AI Open PO SKU detail" (per artikel)
          -> tabel po_deliveries (neemt het oude rapport over)
-     Beide kwamen binnen als 'unknown' -> HTTP 400 -> niet verwerkt.
-   - Detectie + parselogica staan in src/lib/poImport.js
+   - Detectie + parselogica in src/lib/poImport.js
    - LET OP: het oude PO-rapport had kolommen "PO Detail" en
      "QOO Rounded Quantity"; het nieuwe heeft "PO Header" en
      "Purchase Quantity On Order". De oude processPoDeliveries blijft
      staan voor het geval dat rapport terugkeert; de nieuwe detectie
      staat ervoor in de keten.
-   - Vereist SQL: extra kolommen op po_deliveries + tabel po_open_headers.
 
    WIJZIGING v26:
    - Nieuw file type 'invoice_ledger' voor het Compass-rapport
@@ -139,6 +148,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
 import { isInvoiceLedgerFile, processInvoiceLedger } from '@/lib/ledgerImport';
 import { isPoHeaderFile, isPoSkuFile, processPoHeaders, processPoSkus } from '@/lib/poImport';
+import { isDiscountFile, processDiscounts } from '@/lib/discountImport';
 
 // Service role for deletes (RLS bypass)
 // Lazy initialization: create client only when needed (not at module load)
@@ -174,6 +184,12 @@ function detectFileType(columns, filename) {
   // Net Sales, dus er is geen overlap met de types hieronder.
   if (isInvoiceLedgerFile(columns, filename)) {
     return 'invoice_ledger';
+  }
+
+  // v28: dagelijkse kortingen ("Discounts_<datum>.csv").
+  // Voor de sales-detectie, want dit bestand heeft ook een Date-kolom.
+  if (isDiscountFile(columns, filename)) {
+    return 'discounts';
   }
 
   // v27: openstaande PO's — kop-niveau ("AI Open PO Order details").
@@ -1489,6 +1505,8 @@ export async function POST(request) {
       result = await processPoHeaders(getSupabase(), json, filename);
     } else if (fileType === 'po_sku') {
       result = await processPoSkus(getSupabase(), json, filename);
+    } else if (fileType === 'discounts') {
+      result = await processDiscounts(getSupabase(), json, filename);
     } else {
       console.error('Unknown file type. Columns: ' + columns.join(', '));
       return Response.json({ 
