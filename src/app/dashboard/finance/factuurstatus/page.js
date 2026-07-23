@@ -1,27 +1,27 @@
 /* ============================================================
-   BESTAND: factuurstatus_page.js  (v5)
+   BESTAND: factuurstatus_page.js  (v7)
    KOPIEER NAAR: src/app/dashboard/finance/factuurstatus/page.js
 
    DOEL: intern zoekbaar rapport "is mijn factuur geboekt/betaald?".
    Leest public.invoice_ledger (read-only).
 
+   v7:
+   - BDMS verwijderd uit de entiteit-knoppen (hier worden geen
+     facturen geboekt).
+   - Waarschuwing over toekomstige factuurdatums verwijderd:
+     een factuurdatum in de toekomst is legitiem.
+   v6:
+   - Databanner bovenaan: laatste update (max loaded_at) met stoplicht,
+     aantal regels, laatste bronbestand.
    v5:
-   - Automatische totalen: totaalbalk + totaalregel onder de tabel
-     (aantal, totaalbedrag, splitsing open/betaald).
-   - Selecteerbare rijen (checkbox + select-all) met live selectietotaal.
-     Excel-export pakt de selectie als er iets geselecteerd is.
-   - Valutabewaking: BDB (USD) wordt niet opgeteld bij XCG-entiteiten;
-     bij gemengde resultaten worden totalen per valuta getoond.
+   - Automatische totalen (balk + tfoot), selecteerbare rijen met
+     selectietotaal, valutabewaking USD (BDB) vs XCG.
    v4:
-   - Status-kolom toont alleen Open/Betaald; aparte kolom "Betaald op".
-   - Excel-export (ExcelJS, client-side).
+   - Status-kolom Open/Betaald; aparte kolom "Betaald op"; Excel-export.
    v3:
-   - Leveranciers-dropdown (client-side filter op geladen rijen).
-   - Alle kolomkoppen klikbaar => sorteren (asc/desc, 3e klik = reset).
+   - Leveranciers-dropdown; klikbare sorteerbare kolomkoppen.
    v2:
-   - Zoekt ook op vendornummer (vendor_code) en toont het.
-   - Entiteit-knoppen (ALL/BDT/BDB/MMC/RCC/BDMS), default ALL.
-   - Filter op factuurdatum (range) en betaaldatum (range).
+   - Zoekt op vendornummer; entiteit-knoppen; datum-ranges.
    ============================================================ */
 'use client';
 
@@ -34,7 +34,6 @@ const ENTITIES = [
   { key: 'BDB', label: 'Bonaire (BDB)' },
   { key: 'MMC', label: 'Multimart (MMC)' },
   { key: 'RCC', label: 'Repair Centre (RCC)' },
-  { key: 'BDMS', label: 'BDMS' },
 ];
 const ENTITY_LABEL = { BDT: 'Curaçao', BDB: 'Bonaire', MMC: 'Multimart', RCC: 'Repair Centre', BDMS: 'BDMS' };
 
@@ -51,6 +50,12 @@ function fmtDate(s) {
   if (!s) return '—';
   return new Date(s).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
+function fmtDateTime(s) {
+  if (!s) return '—';
+  return new Date(s).toLocaleString('nl-NL', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
 function isOpen(r) {
   return parseFloat(r.balance) > 0 && !r.fully_paid;
 }
@@ -59,7 +64,15 @@ function num(v) {
   return isNaN(n) ? 0 : n;
 }
 
-// Kolomdefinitie voor de sorteerbare tabel
+// Versheid van de laatste dataload
+function freshness(iso) {
+  if (!iso) return { tone: 'gray', label: 'onbekend', dot: 'bg-gray-400' };
+  const hours = (Date.now() - new Date(iso).getTime()) / 36e5;
+  if (hours < 30)  return { tone: 'green', label: 'actueel',         dot: 'bg-emerald-500' };
+  if (hours < 78)  return { tone: 'amber', label: 'iets verouderd',  dot: 'bg-amber-500'   };
+  return { tone: 'red', label: 'verouderd — controleer de pipeline', dot: 'bg-red-500'     };
+}
+
 const COLS = [
   { key: 'vendor_name',    label: 'Leverancier', type: 'text',     align: 'left'  },
   { key: 'vendor_code',    label: 'Vendor#',     type: 'text',     align: 'left'  },
@@ -114,9 +127,8 @@ function compareRows(a, b, col, dir) {
   return dir === 'asc' ? base : -base;
 }
 
-// Totalen berekenen, gegroepeerd per valuta
 function computeTotals(list) {
-  const per = new Map(); // cur -> { count, total, openCount, openTotal, paidCount, paidTotal }
+  const per = new Map();
   for (const r of list) {
     const cur = currencyOf(r);
     if (!per.has(cur)) per.set(cur, { cur, count: 0, total: 0, openCount: 0, openTotal: 0, paidCount: 0, paidTotal: 0 });
@@ -144,8 +156,39 @@ export default function FactuurStatusPage() {
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
   const [selected, setSelected] = useState(() => new Set());
   const [exporting, setExporting] = useState(false);
+  const [meta, setMeta] = useState(null);
+  const [metaLoading, setMetaLoading] = useState(true);
   const debounce = useRef(null);
   const selectAllRef = useRef(null);
+
+  // Databanner: laatste load + totaal aantal regels
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setMetaLoading(true);
+      try {
+        const [lastRes, countRes] = await Promise.all([
+          supabase.from('invoice_ledger')
+            .select('loaded_at, source_file')
+            .order('loaded_at', { ascending: false })
+            .limit(1),
+          supabase.from('invoice_ledger')
+            .select('id', { count: 'exact', head: true }),
+        ]);
+        if (cancelled) return;
+        setMeta({
+          loadedAt:   lastRes.data?.[0]?.loaded_at || null,
+          sourceFile: lastRes.data?.[0]?.source_file || null,
+          totalRows:  countRes.count ?? null,
+        });
+      } catch {
+        if (!cancelled) setMeta(null);
+      } finally {
+        if (!cancelled) setMetaLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [supabase]);
 
   const runSearch = useCallback(async (flt) => {
     const query = (flt.term || '').trim();
@@ -176,7 +219,6 @@ export default function FactuurStatusPage() {
 
       const { data, error } = await sb;
       if (error) throw error;
-      // stabiele sleutel per rij voor selectie (ledger heeft geen unieke id in de select)
       setRows((data || []).map((r, i) => ({ ...r, _k: 'r' + i })));
       setSelected(new Set());
       setSearched(true);
@@ -236,7 +278,6 @@ export default function FactuurStatusPage() {
     return out;
   }, [rows, vendorFilter, sort]);
 
-  // Selectie beperken tot wat zichtbaar is (bv. na wisselen van vendorfilter)
   useEffect(() => {
     setSelected(prev => {
       if (prev.size === 0) return prev;
@@ -275,7 +316,8 @@ export default function FactuurStatusPage() {
   const hasAnyFilter = f.dateFrom || f.dateTo || f.paidFrom || f.paidTo
     || f.status !== 'all' || f.entity !== 'all' || f.term || vendorFilter || sort.key || selected.size > 0;
 
-  // Excel-export: selectie als die er is, anders alle zichtbare rijen
+  const fresh = freshness(meta?.loadedAt);
+
   const exportExcel = async () => {
     const src = selectedRows.length > 0 ? selectedRows : displayRows;
     if (!src.length || exporting) return;
@@ -320,7 +362,6 @@ export default function FactuurStatusPage() {
         row.getCell('amount').numFmt = '#,##0.00';
       }
 
-      // Totaalregels per valuta onderaan
       const t = computeTotals(src);
       ws.addRow({});
       for (const g of t.groups) {
@@ -328,23 +369,19 @@ export default function FactuurStatusPage() {
           vendor_name: `Totaal ${g.cur} (${g.count} facturen)`,
           currency: g.cur,
           amount: g.total,
-          status: '',
         });
         tr.font = { bold: true };
         tr.getCell('amount').numFmt = '#,##0.00';
-        const o = ws.addRow({
-          vendor_name: `  waarvan open (${g.openCount})`,
-          currency: g.cur,
-          amount: g.openTotal,
-        });
+        const o = ws.addRow({ vendor_name: `  waarvan open (${g.openCount})`, currency: g.cur, amount: g.openTotal });
         o.getCell('amount').numFmt = '#,##0.00';
-        const p = ws.addRow({
-          vendor_name: `  waarvan betaald (${g.paidCount})`,
-          currency: g.cur,
-          amount: g.paidTotal,
-        });
+        const p = ws.addRow({ vendor_name: `  waarvan betaald (${g.paidCount})`, currency: g.cur, amount: g.paidTotal });
         p.getCell('amount').numFmt = '#,##0.00';
       }
+
+      // Herkomstregel: welke dataload zit hierachter
+      ws.addRow({});
+      const srcRow = ws.addRow({ vendor_name: `Databron laatst bijgewerkt: ${fmtDateTime(meta?.loadedAt)}` });
+      srcRow.font = { italic: true, size: 9 };
 
       const header = ws.getRow(1);
       header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -378,9 +415,45 @@ export default function FactuurStatusPage() {
   return (
     <div className="max-w-6xl mx-auto">
       <h1 className="text-[26px] font-bold text-[#1B3A5C] mb-1">Factuurstatus</h1>
-      <p className="text-[13px] text-[#1B3A5C]/60 mb-4">
+      <p className="text-[13px] text-[#1B3A5C]/60 mb-3">
         Zoek op leverancier, vendornummer, PO, factuurnummer of voucher om te zien of een factuur geboekt is en of die al betaald is.
       </p>
+
+      {/* Databanner: wanneer is de data voor het laatst bijgewerkt */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-gray-200 bg-white px-4 py-2.5">
+        {metaLoading ? (
+          <span className="text-[12px] text-[#1B3A5C]/40">Databron controleren...</span>
+        ) : !meta?.loadedAt ? (
+          <span className="text-[12px] text-red-700">
+            Kon de laatste dataload niet bepalen — controleer of de pipeline draait.
+          </span>
+        ) : (
+          <>
+            <span className="flex items-center gap-2">
+              <span className={`inline-block w-2 h-2 rounded-full ${fresh.dot}`} />
+              <span className="text-[12px] text-[#1B3A5C]">
+                <span className="font-semibold">Laatst bijgewerkt:</span> {fmtDateTime(meta.loadedAt)}
+              </span>
+            </span>
+            <span className={`text-[11px] font-semibold ${
+              fresh.tone === 'green' ? 'text-emerald-700'
+              : fresh.tone === 'amber' ? 'text-amber-700'
+              : fresh.tone === 'red' ? 'text-red-700' : 'text-[#1B3A5C]/50'}`}>
+              {fresh.label}
+            </span>
+            {meta.totalRows !== null && (
+              <span className="text-[11px] text-[#1B3A5C]/50">
+                {new Intl.NumberFormat('nl-NL').format(meta.totalRows)} regels in de ledger
+              </span>
+            )}
+            {meta.sourceFile && (
+              <span className="text-[11px] text-[#1B3A5C]/40 font-mono truncate max-w-[280px]" title={meta.sourceFile}>
+                {meta.sourceFile}
+              </span>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Entiteit-knoppen */}
       <div className="flex flex-wrap gap-1.5 mb-3">
