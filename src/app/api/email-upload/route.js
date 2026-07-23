@@ -1,19 +1,32 @@
 /* ============================================================
-   BESTAND: route_email_v26.js
+   BESTAND: route_email_v27.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
 
+   WIJZIGING v27:
+   - Twee nieuwe file types voor de openstaande PO-rapporten die per
+     mail binnenkomen:
+       * 'po_open_headers' — "AI Open PO Order details" (per PO)
+         -> tabel po_open_headers (NIEUW)
+       * 'po_sku'          — "AI Open PO SKU detail" (per artikel)
+         -> tabel po_deliveries (neemt het oude rapport over)
+     Beide kwamen binnen als 'unknown' -> HTTP 400 -> niet verwerkt.
+   - Detectie + parselogica staan in src/lib/poImport.js
+   - LET OP: het oude PO-rapport had kolommen "PO Detail" en
+     "QOO Rounded Quantity"; het nieuwe heeft "PO Header" en
+     "Purchase Quantity On Order". De oude processPoDeliveries blijft
+     staan voor het geval dat rapport terugkeert; de nieuwe detectie
+     staat ervoor in de keten.
+   - Vereist SQL: extra kolommen op po_deliveries + tabel po_open_headers.
+
    WIJZIGING v26:
-   - Nieuw file type 'invoice_ledger' toegevoegd voor het Compass-rapport
+   - Nieuw file type 'invoice_ledger' voor het Compass-rapport
      "AI Open and Paid Items last 12M" dat per mail binnenkomt.
-     Kwam eerder binnen als 'unknown' → HTTP 400 → niet verwerkt.
      Kolommen: Vendor Code, Vendor Name, Date, Measure, Value,
      Invoice Number Header, Fully Paid, Balance, Fully Paid Date,
      PO Header, PO Create Date, PO Number, Account Number, Voucher Number
-   - Detectie + parselogica staan in src/lib/ledgerImport.js
-     (vervangt de handmatige uploadpagina finance/ledger-upload).
+   - Detectie + parselogica in src/lib/ledgerImport.js
    - detectFileType() accepteert nu ook filename, zodat naam-detectie
-     ("open and paid") vóór kolom-detectie kan gaan.
-   - Vereist SQL: kolom invoice_ledger.first_seen_at + tabel ledger_load_log.
+     vóór kolom-detectie kan gaan.
 
    CRITICAL BUGFIX v25:
    - Vercel Serverless Functions hebben 4.5MB body limit.
@@ -22,15 +35,15 @@
      → HTTP 413 FUNCTION_PAYLOAD_TOO_LARGE, upload gefaald.
      Gevolg: alle grote Compass exports (Daniel/Gijs/John CUR/BON)
      kwamen sinds 8 juli niet meer binnen.
-   
+
    - Fix: nieuwe Cloudflare Worker v2 uploadt attachments naar
      Supabase Storage bucket 'email-attachments' en stuurt alleen
      de storage_path naar deze endpoint (kleine JSON body).
      Deze endpoint downloadt uit Storage en verwerkt normaal.
-   
+
    - BACKWARD COMPATIBLE: als request body 'data' bevat (oude Worker
      of directe forward), blijft de legacy inline base64 path werken.
-   
+
    - Vereist bucket 'email-attachments' (private) in Supabase Storage.
 
    WIJZIGING v24:
@@ -125,6 +138,7 @@
 import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
 import { isInvoiceLedgerFile, processInvoiceLedger } from '@/lib/ledgerImport';
+import { isPoHeaderFile, isPoSkuFile, processPoHeaders, processPoSkus } from '@/lib/poImport';
 
 // Service role for deletes (RLS bypass)
 // Lazy initialization: create client only when needed (not at module load)
@@ -162,6 +176,17 @@ function detectFileType(columns, filename) {
     return 'invoice_ledger';
   }
 
+  // v27: openstaande PO's — kop-niveau ("AI Open PO Order details").
+  // Voor de oude po_deliveries-detectie, om early match te voorkomen.
+  if (isPoHeaderFile(columns, filename)) {
+    return 'po_open_headers';
+  }
+
+  // v27: openstaande PO's — artikel-niveau ("AI Open PO SKU detail").
+  if (isPoSkuFile(columns, filename)) {
+    return 'po_sku';
+  }
+
   // Inventory file: has "Store Group" + "Department Code" + "Budget" + "NOW"
   if (cols.some(function(c) { return c.includes('store group'); }) &&
       cols.some(function(c) { return c.includes('department code'); }) &&
@@ -189,7 +214,7 @@ function detectFileType(columns, filename) {
     return 'buying';
   }
 
-  // PO Deliveries: has "PO Detail" + "Item Number" + "Date Expected" + "QOO Rounded Quantity"
+  // PO Deliveries (OUD rapport): has "PO Detail" + "Item Number" + "Date Expected" + "QOO Rounded Quantity"
   // Moet voor negative_inventory en price_changes worden geprobeerd om early match te voorkomen
   if (cols.some(function(c) { return c.includes('po detail') || c.includes('po number'); }) &&
       cols.some(function(c) { return c.includes('item number'); }) &&
@@ -1248,11 +1273,14 @@ async function processPriceChanges(json) {
 }
 
 /* ══════════════════════════════════════════════
-   PROCESS PO DELIVERIES
+   PROCESS PO DELIVERIES (OUD RAPPORT)
    - Snapshot van alle openstaande PO's (Purchase Orders)
    - Strategy: TRUNCATE + INSERT (PO's verschuiven dagelijks van datum, sommige
      komen vroeger/later aan, nieuwe PO's worden aangemaakt, oude verdwijnen)
    - Verwachte kolommen: PO Detail, Item Number, Item Description, Date Expected, QOO Rounded Quantity
+   - v27: dit rapport komt niet meer binnen; het nieuwe "AI Open PO SKU detail"
+     wordt afgehandeld door processPoSkus in src/lib/poImport.js.
+     Deze functie blijft staan voor het geval het oude rapport terugkeert.
    ══════════════════════════════════════════════ */
 async function processPoDeliveries(json) {
   // Verzamel alle keys uit alle rijen
@@ -1457,6 +1485,10 @@ export async function POST(request) {
       result = await processPoDeliveries(json);
     } else if (fileType === 'invoice_ledger') {
       result = await processInvoiceLedger(getSupabase(), json, filename);
+    } else if (fileType === 'po_open_headers') {
+      result = await processPoHeaders(getSupabase(), json, filename);
+    } else if (fileType === 'po_sku') {
+      result = await processPoSkus(getSupabase(), json, filename);
     } else {
       console.error('Unknown file type. Columns: ' + columns.join(', '));
       return Response.json({ 
