@@ -1,118 +1,85 @@
 /* ============================================================
-   BESTAND: layout.js
+   BESTAND: layout.js (v2)
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (overschrijft de bestaande layout.js)    
-
-   WIJZIGINGEN V27.19:
-   - Finance: 'AR-ontwikkeling' link toegevoegd
-     (/dashboard/finance/ar).
-   - Versie naar V27.19
-
-   WIJZIGINGEN V27.18:
-   - Logistiek menu: 'Schepen (wereldkaart)' toegevoegd
-     (/dashboard/logistics/vessel-map).
-   - Versie naar V27.18
-
-   WIJZIGINGEN V27.17:
-   - Marketing menu toegevoegd (Website foto-status →
-     /dashboard/marketing/website). Zichtbaar voor
-     admin/cfo/manager (pas de rollenlijst aan op de regel
-     'const isMarketing = ...').
-   - Versie naar V27.17
-
-   WIJZIGINGEN V27.16:
-   - Logistiek menu toegevoegd met Order Flow portal
-     (/dashboard/logistics/order-flow). Zichtbaar voor
-     admin/cfo/manager/ap_approver/ap_clerk (pas de rollenlijst
-     aan op de regel 'const isLogistics = ...').
-   - Versie naar V27.16
-
-   WIJZIGINGEN V27.15:
-   - Finance menu vereenvoudigd tot 3 hoofdlinks:
-     · AP Dashboard  (van hieruit verder navigeren)
-     · AP Sandbox    (van hieruit verder navigeren)
-     · Rapportages
-     Alle sub-pagina's (Werkstroom, Upload, Auto-match, Eagle Sync,
-     Worklist, PCS Import, Bank Import) zijn nu alleen bereikbaar
-     via de tegels op de dashboards zelf.
-   - Versie naar V27.15
-
-   WIJZIGINGEN V27.14:
-   - Omzet/Index: badge (concept) toegevoegd.
-   - Voorraad/Price Changes: tijdelijk verwijderd uit menu
-     (fout zit erin, Jeroen lost eerst op voor terugplaatsing).
-   - Finance: 'Rapportages' link toegevoegd.
-   - Finance: 'AP Sandbox' toegevoegd als uitvouwbaar submenu.
-   - Versie naar V27.14
-
-   WIJZIGINGEN V27.13:
-   - Finance menu toegevoegd (Accounts Payable suite). Zichtbaar
-     voor admin/cfo/ap_approver/ap_clerk. Submenu's:
-     · Accounts Payable (dashboard)
-     · Werkstroom
-     · Data Upload
-     · Auto-match
-     · Eagle Sync
-     · Project Clean Up (PCS / Bank / Werklijst)
-   - Versie naar V27.13
-
-   WIJZIGINGEN V27.12:
-   - Admin menu: Salaris Import (Celery C4 + C16) toegevoegd
-   - Versie naar V27.12
-
-   WIJZIGINGEN V27.11:
-   - Urenplanning menu-item verwijderd (pagina was overbodig)
-   - Admin menu: Dyflexis Planning + Dyflexis Actuals toegevoegd
-
-   WIJZIGINGEN V27.07 (oud):
-   - BUM-rol opgeheven, BUMs zijn nu 'manager'
-   - isBum check vervangen door isManager
-   - Urenplanning zichtbaar voor admin + manager
+   (vervang het bestaande layout.js bestand)
+   
+   WIJZIGINGEN t.o.v. huidige versie:
+   - Order Flow toegevoegd aan REPORT_MAP (was ontbreken)
+   - Logistiek-menu verschijnt nu op basis van rapporttoegang
+     ipv rolcheck (uniform met Omzet/Voorraad/HR)
+   - isLogistics variabele verwijderd (niet meer nodig)
    ============================================================ */
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@/lib/supabase';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import PageTracker from '@/components/PageTracker';
-import DataStatusPopup from '@/components/DataStatusPopup';
+import { createClient } from '@/lib/supabase';
 
-const APP_VERSION = 'V27.19';
+// Menu → rapport-id mapping voor toegangscontrole
+const REPORT_MAP = {
+  '/dashboard/sales': 'sales',
+  '/dashboard/sales/forecast': 'sales',
+  '/dashboard/sales/index': 'sales_index',
+  '/dashboard/sales/traffic': 'sales_traffic',
+  '/dashboard/sales/discounts': 'sales_discounts',
+  '/dashboard/inventory/budget': 'inventory_budget',
+  '/dashboard/inventory/buying': 'inventory_buying',
+  '/dashboard/inventory/negative': 'inventory_negative',
+  '/dashboard/inventory/health': 'inventory_health',
+  '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
+  '/dashboard/inventory/price-changes': 'inventory_price_changes',
+  '/dashboard/logistics/order-flow': 'logistics_order_flow',
+  '/dashboard/hr/salary': 'hr_payroll',
+  '/dashboard/hr/urentarget': 'hr_urentarget',
+  '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
+};
 
-function NavSubItem({ item, pathname, sidebarOpen }) {
-  const hasChildren = item.children && item.children.length > 0;
-  const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
-  const isSelfActive = pathname === item.href && !isChildActive;
-  const isActive = isSelfActive || isChildActive;
-  const [subOpen, setSubOpen] = useState(isChildActive);
-  useEffect(() => { if (isChildActive) setSubOpen(true); }, [isChildActive]);
+function hasAccess(pathname, allowedReports, role) {
+  if (role === 'admin') return true;
+  const reportId = REPORT_MAP[pathname];
+  if (!reportId) return true; // pagina's zonder mapping (bv. /admin) geen check
+  return (allowedReports || []).includes(reportId);
+}
 
-  if (!hasChildren) {
+function NavDropdown({ icon, label, items, pathname, isCollapsed, isMobile, onNavigate }) {
+  const isActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
+  const [isOpen, setIsOpen] = useState(isActive);
+  useEffect(() => { if (isActive) setIsOpen(true); }, [isActive]);
+
+  if (isCollapsed && !isMobile) {
     return (
-      <Link href={item.href}
-        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: pathname === item.href ? '#1B3A5C' : 'transparent', border: pathname === item.href ? 'none' : '1px solid rgba(27,58,92,0.25)' }} />
-        <span className="flex-1">{item.label}</span>
-        {item.badge && <span className="text-[9px] italic text-[#1B3A5C]/40 font-normal">{item.badge}</span>}
-      </Link>
+      <div className="relative group">
+        <button className={`w-full flex items-center justify-center h-10 rounded-lg transition-colors ${isActive ? 'bg-[#1B3A5C] text-white' : 'text-[#6b5240] hover:bg-[#f5ede3]'}`} title={label}>
+          <span className="text-lg">{icon}</span>
+        </button>
+        <div className="absolute left-full top-0 ml-2 hidden group-hover:block z-50">
+          <div className="bg-white rounded-lg shadow-lg border border-[#e5ddd4] py-1 min-w-[200px]">
+            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#a08a74] border-b border-[#e5ddd4]">{label}</div>
+            {items.map(item => (
+              <Link key={item.href} href={item.href} onClick={onNavigate} className={`block px-3 py-2 text-[12px] hover:bg-[#faf5f0] ${pathname === item.href ? 'text-[#E84E1B] font-semibold' : 'text-[#3d2f1e]'}`}>
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      </div>
     );
   }
 
   return (
     <div>
-      <button onClick={() => setSubOpen(!subOpen)}
-        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all w-full ${isActive ? 'text-[#1B3A5C] font-semibold' : 'text-[#1B3A5C]/50 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isActive ? '#1B3A5C' : 'transparent', border: isActive ? 'none' : '1px solid rgba(27,58,92,0.25)' }} />
-        <span className="flex-1 text-left">{item.label}</span>
-        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className={`transition-transform duration-200 ${subOpen ? 'rotate-180' : ''}`}><path d="M3 4.5L6 7.5L9 4.5" /></svg>
+      <button onClick={() => setIsOpen(!isOpen)} className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors text-[13px] ${isActive ? 'bg-[#f5ede3] text-[#1B3A5C] font-semibold' : 'text-[#3d2f1e] hover:bg-[#faf5f0]'}`}>
+          <span className="flex items-center gap-2.5"><span>{icon}</span><span>{label}</span></span>
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.15s' }}>
+            <path d="M2 4L6 8L10 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
       </button>
-      {subOpen && (
-        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-[#1B3A5C]/10 pl-2">
-          {item.children.map(child => (
-            <Link key={child.href} href={child.href}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded text-[12px] transition-all ${pathname === child.href ? 'text-[#1B3A5C] font-semibold bg-[#1B3A5C]/5' : 'text-[#1B3A5C]/40 hover:text-[#1B3A5C] hover:bg-white/30'}`}>
-              {child.label}
+      {isOpen && (
+        <div className="mt-0.5 ml-6 space-y-0.5">
+          {items.map(item => (
+            <Link key={item.href} href={item.href} onClick={onNavigate} className={`block px-3 py-1.5 rounded-lg text-[12px] transition-colors ${pathname === item.href ? 'bg-[#E84E1B] text-white' : 'text-[#6b5240] hover:bg-[#faf5f0]'}`}>
+              {item.label}
             </Link>
           ))}
         </div>
@@ -121,346 +88,269 @@ function NavSubItem({ item, pathname, sidebarOpen }) {
   );
 }
 
-function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
-  const isAnyActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
-  const [open, setOpen] = useState(isAnyActive);
-  useEffect(() => { if (isAnyActive) setOpen(true); }, [isAnyActive]);
+function NavItem({ href, icon, label, pathname, isCollapsed, isMobile, onNavigate }) {
+  const isActive = pathname === href;
 
-  if (!sidebarOpen) {
+  if (isCollapsed && !isMobile) {
     return (
-      <div className="relative group">
-        <div className={`flex items-center justify-center px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${isAnyActive ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-          <span className="text-base flex-shrink-0">{icon}</span>
-        </div>
-        <div className="absolute left-full top-0 ml-2 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[220px] hidden group-hover:block z-50">
-          <p className="px-3 py-1.5 text-[10px] font-bold text-[#1B3A5C]/40 uppercase tracking-wider">{label}</p>
-          {items.map(item => {
-            if (item.children) {
-              return (
-                <div key={item.href}>
-                  <p className="px-3 pt-2 pb-1 text-[9px] font-bold text-[#1B3A5C]/30 uppercase">{item.label}</p>
-                  {item.children.map(child => (
-                    <Link key={child.href} href={child.href} className={`block px-4 py-1.5 text-[13px] transition-all ${pathname === child.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-500 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{child.label}</Link>
-                  ))}
-                </div>
-              );
-            }
-            return <Link key={item.href} href={item.href} className={`block px-3 py-2 text-sm transition-all ${pathname === item.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{item.label}{item.badge ? <span className="text-[9px] italic text-gray-400 ml-2">{item.badge}</span> : ''}</Link>;
-          })}
-        </div>
-      </div>
+      <Link href={href} onClick={onNavigate} title={label} className={`w-full flex items-center justify-center h-10 rounded-lg transition-colors ${isActive ? 'bg-[#E84E1B] text-white' : 'text-[#6b5240] hover:bg-[#f5ede3]'}`}>
+        <span className="text-lg">{icon}</span>
+      </Link>
     );
   }
 
   return (
-    <div>
-      <button onClick={() => setOpen(!open)}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all w-full ${isAnyActive ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-        <span className="text-base flex-shrink-0">{icon}</span>
-        <span className="flex-1 text-left">{label}</span>
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`}><path d="M3 4.5L6 7.5L9 4.5" /></svg>
-      </button>
-      {open && (
-        <div className="ml-5 mt-0.5 space-y-0.5 border-l-2 border-[#1B3A5C]/10 pl-3">
-          {items.map(item => (
-            <NavSubItem key={item.href} item={item} pathname={pathname} sidebarOpen={sidebarOpen} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LoginModal({ show, onClose, supabase, onSuccess }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  if (!show) return null;
-
-  async function handleLogin() {
-    setLoading(true); setError('');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) { setError(error.message); setLoading(false); }
-    else { onSuccess(); onClose(); setEmail(''); setPassword(''); setLoading(false); }
-  }
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
-      <div className="bg-white rounded-2xl p-7 w-[360px] shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-[#1B3A5C] flex items-center justify-center"><span className="text-white text-lg">🔑</span></div>
-          <div><h3 className="text-[16px] font-bold text-[#1a0a04]">Inloggen</h3><p className="text-[12px] text-[#6b5240]">Administrator toegang</p></div>
-        </div>
-        <input type="email" value={email} onChange={e => { setEmail(e.target.value); setError(''); }}
-          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-3 focus:outline-none focus:border-[#1B3A5C]" placeholder="E-mailadres" autoFocus />
-        <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          className="w-full px-4 py-2.5 rounded-lg border border-[#e5ddd4] text-[14px] mb-2 focus:outline-none focus:border-[#1B3A5C]" placeholder="Wachtwoord" />
-        {error && <p className="text-[12px] text-red-500 mb-2">{error}</p>}
-        <div className="flex gap-2 mt-4">
-          <button onClick={() => { onClose(); setEmail(''); setPassword(''); setError(''); }} className="flex-1 py-2.5 rounded-lg bg-[#faf7f4] text-[#6b5240] text-[13px] font-semibold border border-[#e5ddd4]">Annuleren</button>
-          <button onClick={handleLogin} disabled={loading} className="flex-1 py-2.5 rounded-lg bg-[#1B3A5C] text-white text-[13px] font-semibold disabled:opacity-50">{loading ? 'Laden...' : 'Inloggen'}</button>
-        </div>
-      </div>
-    </div>
+    <Link href={href} onClick={onNavigate} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors text-[13px] ${isActive ? 'bg-[#E84E1B] text-white' : 'text-[#3d2f1e] hover:bg-[#faf5f0]'}`}>
+      <span>{icon}</span>
+      <span>{label}</span>
+    </Link>
   );
 }
 
 export default function DashboardLayout({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [showLogin, setShowLogin] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
 
-  const loadProfile = useCallback(async (userId) => {
-    try {
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-      if (error) {
-        console.warn('Profile load failed, retrying in 1s...', error.message);
-        setTimeout(async () => {
-          const { data: retryData } = await supabase.from('profiles').select('*').eq('id', userId).single();
-          if (retryData) {
-            console.log('Profile loaded on retry:', retryData.role);
-            setProfile(retryData);
-          }
-        }, 1000);
-      } else {
-        console.log('Profile loaded:', data.role);
-        setProfile(data);
-      }
-    } catch (e) {
-      console.error('Profile load error:', e);
-    }
-  }, [supabase]);
-
   useEffect(() => {
-    async function init() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        setUser(session.user);
-        await loadProfile(session.user.id);
-      }
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-        if (session?.user) {
-          setUser(session.user);
-          setTimeout(() => loadProfile(session.user.id), 500);
-        } else {
-          setUser(null);
-          setProfile(null);
-        }
-      });
-      return () => subscription?.unsubscribe();
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('sidebar-collapsed');
+      if (saved === 'true') setIsCollapsed(true);
     }
-    init();
   }, []);
 
-  async function getUser() {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user) {
-      setUser(session.user);
-      await loadProfile(session.user.id);
-    } else {
-      setUser(null);
-      setProfile(null);
+  useEffect(() => {
+    checkUser();
+    const { data: authListener } = supabase.auth.onAuthStateChange(() => {
+      checkUser();
+    });
+    return () => { authListener?.subscription?.unsubscribe(); };
+  }, [pathname]);
+
+  useEffect(() => {
+    // Access control op basis van rapporttoegang
+    if (!loading && profile && pathname !== '/dashboard' && pathname !== '/dashboard/settings') {
+      if (!hasAccess(pathname, profile.allowed_reports, profile.role)) {
+        router.push('/dashboard');
+      }
     }
+  }, [pathname, profile, loading]);
+
+  async function checkUser() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+    setUser(user);
+    const { data: profileData } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+    if (!profileData || !profileData.is_active) { await supabase.auth.signOut(); router.push('/login'); return; }
+    setProfile(profileData);
+    setLoading(false);
   }
 
-  async function handleLogout() { await supabase.auth.signOut(); setUser(null); setProfile(null); router.push('/'); router.refresh(); }
-  function handleRefresh() { setRefreshing(true); window.location.reload(); }
+  async function handleSignOut() { await supabase.auth.signOut(); router.push('/login'); }
 
-  const isAdmin = profile?.role === 'admin';
-  const isManager = profile?.role === 'manager';
-  const allowedReports = profile?.allowed_reports || [];
-  const hasReport = (id) => isAdmin || allowedReports.includes(id);
+  function toggleCollapse() {
+    const newState = !isCollapsed;
+    setIsCollapsed(newState);
+    if (typeof window !== 'undefined') localStorage.setItem('sidebar-collapsed', newState);
+  }
 
-  const REPORT_MAP = {
-    '/dashboard/sales': 'sales',
-    '/dashboard/sales/forecast': 'sales',
-    '/dashboard/sales/index': 'sales_index',
-    '/dashboard/sales/discounts': 'sales_discounts',
-    '/dashboard/sales/traffic': 'sales_traffic',
-    '/dashboard/inventory/budget': 'inventory_budget',
-    '/dashboard/inventory/buying': 'inventory_buying',
-    '/dashboard/inventory/negative': 'inventory_negative',
-    '/dashboard/inventory/health': 'inventory_health',
-    '/dashboard/inventory/stockrisk': 'inventory_stockrisk',
-    '/dashboard/inventory/price-changes': 'inventory_price_changes',
-    '/dashboard/hr/salary': 'hr_payroll',
-    '/dashboard/hr/urentarget': 'hr_urentarget',
-    '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
-  };
+  function closeSidebar() { setSidebarOpen(false); }
 
-  // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
+  // Bereken beschikbare menu-items op basis van rapporttoegang
+  const flags = useMemo(() => {
+    if (!profile) return {};
+    const allowed = profile.allowed_reports || [];
+    const isAdmin = profile.role === 'admin';
+    const has = (reportId) => isAdmin || allowed.includes(reportId);
+    return {
+      sales: has('sales'),
+      sales_index: has('sales_index'),
+      sales_traffic: has('sales_traffic'),
+      sales_discounts: has('sales_discounts'),
+      inventory_budget: has('inventory_budget'),
+      inventory_buying: has('inventory_buying'),
+      inventory_negative: has('inventory_negative'),
+      inventory_health: has('inventory_health'),
+      inventory_stockrisk: has('inventory_stockrisk'),
+      inventory_price_changes: has('inventory_price_changes'),
+      logistics_order_flow: has('logistics_order_flow'),
+      hr_payroll: has('hr_payroll'),
+      hr_urentarget: has('hr_urentarget'),
+      hr_urenplanning_overview: has('hr_urenplanning_overview'),
+    };
+  }, [profile]);
+
   const omzetItemsAll = [
-    { href: '/dashboard/sales', label: 'Actuals' },
-    { href: '/dashboard/sales/forecast', label: 'Forecast', badge: '(concept)' },
-    { href: '/dashboard/sales/index', label: 'Index', badge: '(concept)' },
-    { href: '/dashboard/sales/discounts', label: 'Kortingen' },
-    { href: '/dashboard/sales/traffic', label: 'Bezoekers en Conversie' },
+    { href: '/dashboard/sales', label: 'Omzet en Marge', flag: 'sales' },
+    { href: '/dashboard/sales/forecast', label: 'Forecast', flag: 'sales' },
+    { href: '/dashboard/sales/index', label: 'Index Rapport', flag: 'sales_index' },
+    { href: '/dashboard/sales/traffic', label: 'Bezoekers & Conversie', flag: 'sales_traffic' },
+    { href: '/dashboard/sales/discounts', label: 'Kortingen', flag: 'sales_discounts' },
   ];
   const voorraadItemsAll = [
-    { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget' },
-    { href: '/dashboard/inventory/stockrisk', label: 'Stock Risk Alert', children: [
-      { href: '/dashboard/inventory/stockrisk', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/stockrisk/appliances-houseware', label: 'Appliances & Houseware' },
-      { href: '/dashboard/inventory/stockrisk/building-materials', label: 'Building Materials' },
-      { href: '/dashboard/inventory/stockrisk/hardware', label: 'Hardware' },
-      { href: '/dashboard/inventory/stockrisk/living', label: 'Living' },
-      { href: '/dashboard/inventory/stockrisk/sanitair-keukens', label: 'Sanitair & Keukens' },
-    ]},
-    { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad' },
-    { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', children: [
-      { href: '/dashboard/inventory/health', label: 'Totaaloverzicht' },
-      { href: '/dashboard/inventory/health/appliances-houseware', label: 'Appliances & Houseware' },
-      { href: '/dashboard/inventory/health/building-materials', label: 'Building Materials' },
-      { href: '/dashboard/inventory/health/hardware', label: 'Hardware' },
-      { href: '/dashboard/inventory/health/living', label: 'Living' },
-      { href: '/dashboard/inventory/health/sanitair-keukens', label: 'Sanitair & Keukens' },
-    ]},
+    { href: '/dashboard/inventory/budget', label: 'Voorraad vs Budget', flag: 'inventory_budget' },
+    { href: '/dashboard/inventory/buying', label: 'Inkoopvoorstel', flag: 'inventory_buying' },
+    { href: '/dashboard/inventory/negative', label: 'Negatieve Voorraad', flag: 'inventory_negative' },
+    { href: '/dashboard/inventory/health', label: 'Gezondheid Voorraden', flag: 'inventory_health' },
+    { href: '/dashboard/inventory/stockrisk', label: 'Stock Risk Alert', flag: 'inventory_stockrisk' },
+    { href: '/dashboard/inventory/price-changes', label: 'Price Changes', flag: 'inventory_price_changes' },
+  ];
+  const logisticsItemsAll = [
+    { href: '/dashboard/logistics/order-flow', label: 'Order Flow', flag: 'logistics_order_flow' },
   ];
   const hrItemsAll = [
-    { href: '/dashboard/hr/salary', label: 'Salariskosten' },
-    { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
-    { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
+    { href: '/dashboard/hr/salary', label: 'Salariskosten', flag: 'hr_payroll' },
+    { href: '/dashboard/hr/urentarget', label: 'Uren Target', flag: 'hr_urentarget' },
+    { href: '/dashboard/hr/urenplanning-overview', label: 'Uren Planning', flag: 'hr_urenplanning_overview' },
   ];
-
-  // Finance menu — Accounts Payable suite
-  const isFinance = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(profile?.role);
   const financeItems = [
     { href: '/dashboard/finance/ap', label: 'AP Dashboard' },
-    { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)' },
+    { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox' },
     { href: '/dashboard/finance/reports', label: 'Rapportages' },
-    { href: '/dashboard/finance/ar', label: 'AR-ontwikkeling' },
-    { href: '/dashboard/finance/factuurstatus', label: 'Factuur status', everyone: true },
-  ];
-  // Finance-menu tonen aan finance-rollen (volledig) of aan iedereen (alleen de 'everyone'-items)
-  const visibleFinanceItems = isFinance ? financeItems : financeItems.filter(i => i.everyone);
-
-  // Logistiek menu — Order Flow portal
-  const isLogistics = ['admin', 'cfo', 'manager', 'ap_approver', 'ap_clerk'].includes(profile?.role);
-  const logisticsItems = [
-    { href: '/dashboard/logistics/order-flow', label: 'Order Flow' },
-    { href: '/dashboard/logistics/vessel-map', label: 'Schepen (wereldkaart)' },
   ];
 
-  // Marketing menu — Website foto-status
-  const isMarketing = ['admin', 'cfo', 'manager'].includes(profile?.role);
-  const marketingItems = [
-    { href: '/dashboard/marketing/website', label: 'Website foto-status' },
-  ];
+  const omzetItems = omzetItemsAll.filter(i => flags[i.flag]);
+  const voorraadItems = voorraadItemsAll.filter(i => flags[i.flag]);
+  const logisticsItems = logisticsItemsAll.filter(i => flags[i.flag]);
+  const hrItems = hrItemsAll.filter(i => flags[i.flag]);
 
-  const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
-  const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
-  const hrItems = hrItemsAll.filter(item => {
-    if (typeof item.visible !== 'undefined') return item.visible;
-    return hasReport(REPORT_MAP[item.href]);
-  });
-  const adminItems = [
-    { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
-    { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
-    { href: '/dashboard/admin/users', label: 'Gebruikersbeheer', icon: '👥' },
-    { href: '/dashboard/admin/dyflexis-import', label: 'Dyflexis Planning', icon: '📅' },
-    { href: '/dashboard/admin/dyflexis-actuals', label: 'Dyflexis Actuals', icon: '📊' },
-    { href: '/dashboard/admin/salary-import', label: 'Salaris Import', icon: '💰' },
-    { href: '/dashboard/finance/ledger-upload', label: 'Ledger laden', icon: '📒' },
-    { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
-  ];
+  // Finance blijft op rolcheck (heeft eigen rollen: cfo, ap_approver, ap_clerk)
+  const isFinance = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(profile?.role);
+
+  if (loading) return <div style={{ background: '#faf5f0', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#6b5240' }}>Laden...</div>;
+
+  const desktopSidebarWidth = isCollapsed ? '64px' : '220px';
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <LoginModal show={showLogin} onClose={() => setShowLogin(false)} supabase={supabase} onSuccess={getUser} />
-      <PageTracker />
-      <DataStatusPopup />
+    <div style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", background: '#faf5f0', minHeight: '100vh', color: '#3d2f1e' }}>
 
-      <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col transition-all duration-300 fixed h-full z-40`} style={{ background: 'linear-gradient(180deg, #e8eff7 0%, #dce6f1 100%)' }}>
-        <div className="p-4 flex items-center gap-3 border-b border-[#c5d4e6]">
-          <img src="/logo.png" alt="Logo" className="h-9 w-9 flex-shrink-0 rounded-lg" />
-          {sidebarOpen && <span className="font-bold text-[#1B3A5C] leading-tight" style={{ fontSize: '14px', letterSpacing: '0.02em', wordBreak: 'break-word', lineHeight: '1.2' }}>BOOMING SOLUTIONS</span>}
+      {/* Mobile top bar */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b border-[#e5ddd4] flex items-center justify-between px-4 h-14">
+        <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-[#3d2f1e]">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+        </button>
+        <div className="flex items-center gap-2">
+          <img src="/logo.png" alt="Booming Solutions" className="w-7 h-7 rounded" />
+          <span className="text-[13px] font-bold text-[#1a0a04]">Booming Solutions</span>
         </div>
+        <div className="w-8" />
+      </div>
 
-        <nav className="flex-1 py-4 px-3 overflow-y-auto">
-          <div className="space-y-1">
-            {/* Overzicht, Rapportages en Bestanden zijn verborgen */}
-            {omzetItems.length > 0 && <NavDropdown icon="📈" label="Omzet" items={omzetItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {user && visibleFinanceItems.length > 0 && <NavDropdown icon="💼" label="Finance" items={visibleFinanceItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {isLogistics && <NavDropdown icon="🚢" label="Logistiek" items={logisticsItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {isMarketing && <NavDropdown icon="📣" label="Marketing" items={marketingItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 flex">
+          <div className="fixed inset-0 bg-black/40" onClick={closeSidebar} />
+          <div className="relative bg-white w-[80%] max-w-[280px] h-full flex flex-col shadow-2xl">
+            <div className="p-4 border-b border-[#e5ddd4] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <img src="/logo.png" alt="Booming Solutions" className="w-8 h-8 rounded" />
+                <div>
+                  <div className="text-[13px] font-bold text-[#1a0a04]">Booming Solutions</div>
+                  <div className="text-[10px] text-[#a08a74]">CFO Dashboard</div>
+                </div>
+              </div>
+              <button onClick={closeSidebar} className="text-[#6b5240] p-1">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+              </button>
+            </div>
+            <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+              <NavItem href="/dashboard" icon="🏠" label="Home" pathname={pathname} isCollapsed={false} isMobile={true} onNavigate={closeSidebar} />
+              {omzetItems.length > 0 && <NavDropdown icon="📊" label="Omzet" items={omzetItems} pathname={pathname} isCollapsed={false} isMobile={true} onNavigate={closeSidebar} />}
+              {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} isCollapsed={false} isMobile={true} onNavigate={closeSidebar} />}
+              {logisticsItems.length > 0 && <NavDropdown icon="🚚" label="Logistiek" items={logisticsItems} pathname={pathname} isCollapsed={false} isMobile={true} onNavigate={closeSidebar} />}
+              {hrItems.length > 0 && <NavDropdown icon="👥" label="HR" items={hrItems} pathname={pathname} isCollapsed={false} isMobile={true} onNavigate={closeSidebar} />}
+              {isFinance && <NavDropdown icon="💼" label="Finance" items={financeItems} pathname={pathname} isCollapsed={false} isMobile={true} onNavigate={closeSidebar} />}
+              {profile?.role === 'admin' && (
+                <NavDropdown icon="⚙️" label="Admin" pathname={pathname} isCollapsed={false} isMobile={true} onNavigate={closeSidebar}
+                  items={[
+                    { href: '/dashboard/admin', label: 'Data Upload' },
+                    { href: '/dashboard/admin/data-status', label: 'Data Status' },
+                    { href: '/dashboard/admin/dyflexis-planning', label: 'Dyflexis Planning' },
+                    { href: '/dashboard/admin/dyflexis-actuals', label: 'Dyflexis Actuals' },
+                    { href: '/dashboard/admin/salary-import', label: 'Salaris Import' },
+                    { href: '/dashboard/admin/users', label: 'Gebruikers' },
+                    { href: '/dashboard/admin/stats', label: 'Statistieken' },
+                  ]}
+                />
+              )}
+            </nav>
+            <div className="border-t border-[#e5ddd4] p-3">
+              <button onClick={handleSignOut} className="w-full text-left px-3 py-2 rounded-lg text-[13px] text-[#6b5240] hover:bg-[#faf5f0]">Uitloggen</button>
+            </div>
           </div>
-          {isAdmin && (
-            <div className="mt-6 pt-4 border-t border-[#c5d4e6]">
-              {sidebarOpen && <p className="text-[10px] text-[#1B3A5C]/40 uppercase tracking-wider font-semibold px-3 mb-2">Admin</p>}
-              <div className="space-y-1">
-                {adminItems.map(item => (
-                  <Link key={item.href} href={item.href} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${pathname === item.href || pathname.startsWith(item.href + '/') ? 'bg-[#1B3A5C] text-white' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C] hover:bg-white/50'}`}>
-                    <span className="text-base flex-shrink-0">{item.icon}</span>{sidebarOpen && <span>{item.label}</span>}
-                  </Link>
-                ))}
-                {sidebarOpen && (
-                  <div className="mt-3 pt-3 border-t border-[#c5d4e6]/50 space-y-1">
-                    <button onClick={() => window.dispatchEvent(new Event('toggle-cgf'))}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all text-[#1B3A5C]/40 hover:text-[#1B3A5C] hover:bg-white/50 w-full text-left">
-                      <span className="text-sm flex-shrink-0">🔒</span><span>CGF Modus</span>
-                    </button>
-                    <button onClick={() => window.dispatchEvent(new Event('toggle-corrections'))}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all text-[#1B3A5C]/40 hover:text-[#1B3A5C] hover:bg-white/50 w-full text-left">
-                      <span className="text-sm flex-shrink-0">📋</span><span>Data Source</span>
-                    </button>
-                  </div>
-                )}
+        </div>
+      )}
+
+      {/* Desktop sidebar */}
+      <aside className="hidden lg:flex fixed top-0 left-0 h-full bg-white border-r border-[#e5ddd4] flex-col z-30 transition-all duration-200" style={{ width: desktopSidebarWidth }}>
+        <div className={`p-3 border-b border-[#e5ddd4] flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+          {!isCollapsed && (
+            <div className="flex items-center gap-2.5">
+              <img src="/logo.png" alt="Booming Solutions" className="w-8 h-8 rounded" />
+              <div>
+                <div className="text-[13px] font-bold text-[#1a0a04]">Booming Solutions</div>
+                <div className="text-[10px] text-[#a08a74]">CFO Dashboard</div>
               </div>
             </div>
           )}
+          {isCollapsed && <img src="/logo.png" alt="Booming Solutions" className="w-8 h-8 rounded" />}
+        </div>
+        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
+          <NavItem href="/dashboard" icon="🏠" label="Home" pathname={pathname} isCollapsed={isCollapsed} />
+          {omzetItems.length > 0 && <NavDropdown icon="📊" label="Omzet" items={omzetItems} pathname={pathname} isCollapsed={isCollapsed} />}
+          {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} isCollapsed={isCollapsed} />}
+          {logisticsItems.length > 0 && <NavDropdown icon="🚚" label="Logistiek" items={logisticsItems} pathname={pathname} isCollapsed={isCollapsed} />}
+          {hrItems.length > 0 && <NavDropdown icon="👥" label="HR" items={hrItems} pathname={pathname} isCollapsed={isCollapsed} />}
+          {isFinance && <NavDropdown icon="💼" label="Finance" items={financeItems} pathname={pathname} isCollapsed={isCollapsed} />}
+          {profile?.role === 'admin' && (
+            <NavDropdown icon="⚙️" label="Admin" pathname={pathname} isCollapsed={isCollapsed}
+              items={[
+                { href: '/dashboard/admin', label: 'Data Upload' },
+                { href: '/dashboard/admin/data-status', label: 'Data Status' },
+                { href: '/dashboard/admin/dyflexis-planning', label: 'Dyflexis Planning' },
+                { href: '/dashboard/admin/dyflexis-actuals', label: 'Dyflexis Actuals' },
+                { href: '/dashboard/admin/salary-import', label: 'Salaris Import' },
+                { href: '/dashboard/admin/users', label: 'Gebruikers' },
+                { href: '/dashboard/admin/stats', label: 'Statistieken' },
+              ]}
+            />
+          )}
         </nav>
-
-        <div className="border-t border-[#c5d4e6]">
-          <div className="p-4">
-            {user ? (
-              <>
-                {sidebarOpen && <div className="mb-2"><p className="text-xs text-[#1B3A5C]/70 truncate">{profile?.full_name || user.email?.split('@')[0]}</p><p className="text-[10px] text-[#1B3A5C]/40">{profile?.role || 'laden...'}</p></div>}
-                <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-[#1B3A5C]/50 hover:text-[#1B3A5C] transition-colors w-full"><span>🚪</span>{sidebarOpen && <span>Uitloggen</span>}</button>
-              </>
-            ) : (
-              <button onClick={() => setShowLogin(true)} className="flex items-center gap-2.5 text-sm text-[#1B3A5C] transition-all w-full px-2 py-2 rounded-lg bg-white/60 hover:bg-white border border-[#c5d4e6] hover:border-[#1B3A5C]/30 shadow-sm">
-                <span className="w-7 h-7 rounded-lg bg-[#1B3A5C] flex items-center justify-center flex-shrink-0"><span className="text-white text-xs">🔑</span></span>
-                {sidebarOpen && <span className="font-semibold text-[13px]">Inloggen</span>}
-              </button>
-            )}
-          </div>
-          {sidebarOpen && <div className="px-4 pb-3"><p className="text-[10px] text-[#1B3A5C]/30 font-mono">{APP_VERSION}</p></div>}
+        <div className="border-t border-[#e5ddd4] p-2">
+          <button onClick={toggleCollapse} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] text-[#6b5240] hover:bg-[#faf5f0] ${isCollapsed ? 'justify-center' : ''}`} title={isCollapsed ? 'Uitklappen' : 'Inklappen'}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0)' }}>
+              <path d="M9 3L5 7L9 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            {!isCollapsed && <span>Inklappen</span>}
+          </button>
+        </div>
+        <div className={`p-3 border-t border-[#e5ddd4] ${isCollapsed ? 'flex justify-center' : ''}`}>
+          {!isCollapsed ? (
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-[#1B3A5C] flex items-center justify-center text-white text-[11px] font-semibold">{profile?.full_name?.[0] || 'U'}</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[12px] font-semibold text-[#1a0a04] truncate">{profile?.full_name || 'User'}</div>
+                <button onClick={handleSignOut} className="text-[10px] text-[#a08a74] hover:text-[#E84E1B]">Uitloggen</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={handleSignOut} title="Uitloggen" className="w-8 h-8 rounded-full bg-[#1B3A5C] flex items-center justify-center text-white text-[11px] font-semibold">
+              {profile?.full_name?.[0] || 'U'}
+            </button>
+          )}
         </div>
       </aside>
 
-      <main className={`flex-1 ${sidebarOpen ? 'ml-64' : 'ml-20'} transition-all duration-300`}>
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-400 hover:text-[#1B3A5C] transition-colors">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18" /></svg>
-          </button>
-          <div className="flex items-center gap-3">
-            <button onClick={handleRefresh} disabled={refreshing} title="Ververs data" className="flex items-center gap-1.5 text-xs text-[#6b7280] hover:text-[#1B3A5C] bg-gray-50 hover:bg-gray-100 border border-gray-200 px-3 py-1.5 rounded-full font-medium transition-all disabled:opacity-50">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? 'animate-spin' : ''}><path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /></svg>
-              <span className="hidden sm:inline">{refreshing ? 'Verversen...' : 'Ververs'}</span>
-            </button>
-            {isAdmin && <span className="text-xs bg-amber-50 text-amber-600 px-3 py-1 rounded-full font-medium">Admin</span>}
-            <span className="text-xs bg-green-50 text-green-600 px-3 py-1 rounded-full font-medium">Online</span>
-          </div>
-        </header>
-        <div className="p-6">{children}</div>
+      <main className="lg:pl-[220px] pt-14 lg:pt-0 transition-all duration-200" style={{ paddingLeft: typeof window !== 'undefined' && window.innerWidth >= 1024 ? desktopSidebarWidth : undefined }}>
+        <div className="p-4 lg:p-6 max-w-[1400px] mx-auto">
+          {children}
+        </div>
       </main>
-
-      <div style={{ position: 'fixed', bottom: 0, left: sidebarOpen ? '256px' : '80px', right: 0, background: 'linear-gradient(135deg, #152238 0%, #1B2E4A 100%)', borderTop: '1px solid rgba(75,163,212,0.15)', padding: '10px 32px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', zIndex: 100, transition: 'left 0.3s' }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" /></svg>
-        <span style={{ fontSize: '11px', color: '#64748B', letterSpacing: '0.06em', fontFamily: 'monospace' }}>VERGRENDELD</span>
-        <span style={{ fontSize: '10px', color: '#475569', margin: '0 8px' }}>·</span>
-        <span style={{ fontSize: '10px', color: '#475569', fontFamily: 'monospace' }}>© 2026 Booming Solutions</span>
-        <span style={{ fontSize: '10px', color: '#475569', margin: '0 8px' }}>·</span>
-        <span style={{ fontSize: '10px', color: '#475569', fontFamily: 'monospace' }}>{APP_VERSION}</span>
-      </div>
     </div>
   );
 }
