@@ -1402,6 +1402,76 @@ async function processPoDeliveries(json) {
   return { table: 'po_deliveries', rows_imported: totalInserted };
 }
 
+/* ── v29: order_flow MEEVOEDEN vanuit de "AI Open PO"-bestanden ──
+   Het andere draadje verwerkt deze bestanden al naar po_open_headers/po_open_skus.
+   Deze twee helpers voeden DAARNAAST order_flow / order_flow_items (voor het
+   Order Flow-portaal met containers/VesselFinder), via de bestaande SQL-functies.
+   Ze raken de andere verwerking niet aan. */
+function _ofIso(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === 'number') return new Date((v - 25569) * 86400000).toISOString().slice(0, 10);
+  var d = new Date(v);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+function _ofNum(v) {
+  if (v == null || v === '') return null;
+  var n = parseFloat(String(v).replace(/,/g, ''));
+  return isNaN(n) ? null : n;
+}
+async function feedOrderFlowHeaders(json) {
+  var keys = Object.keys(json[0] || {});
+  var rows = json.map(function(row) {
+    return {
+      po_number: String(row[findCol(keys, ['po header'])] || '').trim(),
+      vendor_code: String(row[findCol(keys, ['vendor code'])] || ''),
+      vendor_name: String(row[findCol(keys, ['vendor name'])] || ''),
+      dept: String(row[findCol(keys, ['group items'])] || ''),
+      order_store: String(row[findCol(keys, ['store number'])] || ''),
+      po_created_date: _ofIso(row[findCol(keys, ['creation date'])]),
+      eta: _ofIso(row[findCol(keys, ['date expected'])]),
+      po_status: String(row[findCol(keys, ['p.o. status', 'po status', 'status'])] || ''),
+      buyer_id: String(row[findCol(keys, ['buyers id', 'buyer'])] || ''),
+      total_cost: _ofNum(row[findCol(keys, ['total cost'])]),
+    };
+  }).filter(function(r) { return r.po_number; });
+  if (!rows.length) return 0;
+  var total = 0;
+  for (var i = 0; i < rows.length; i += 2000) {
+    var res = await getSupabase().rpc('order_flow_ingest', { p: rows.slice(i, i + 2000) });
+    if (res.error) { console.error('order_flow_ingest error: ' + res.error.message); continue; }
+    total += (res.data || 0);
+  }
+  console.log('order_flow (meegevoed): ' + total + ' PO-koppen');
+  return total;
+}
+async function feedOrderFlowItems(json) {
+  var keys = Object.keys(json[0] || {});
+  var rows = json.map(function(row) {
+    return {
+      po_number: String(row[findCol(keys, ['po header'])] || '').trim(),
+      item_number: String(row[findCol(keys, ['item number'])] || '').trim(),
+      item_description: String(row[findCol(keys, ['item description'])] || ''),
+      dept_code: String(row[findCol(keys, ['department code'])] || ''),
+      dept_name: String(row[findCol(keys, ['department name'])] || ''),
+      qoo: _ofNum(row[findCol(keys, ['purchase quantity on order'])]),
+      avg_cost: _ofNum(row[findCol(keys, ['average cost'])]),
+      order_value: _ofNum(row[findCol(keys, ['order inventory'])]),
+      date_expected: _ofIso(row[findCol(keys, ['date expected'])]),
+      po_status: String(row[findCol(keys, ['p.o. status', 'po status', 'status'])] || ''),
+    };
+  }).filter(function(r) { return r.po_number && r.item_number; });
+  if (!rows.length) return 0;
+  var total = 0;
+  for (var i = 0; i < rows.length; i += 2000) {
+    var res = await getSupabase().rpc('order_flow_ingest_items', { p: rows.slice(i, i + 2000) });
+    if (res.error) { console.error('order_flow_ingest_items error: ' + res.error.message); continue; }
+    total += (res.data || 0);
+  }
+  console.log('order_flow_items (meegevoed): ' + total + ' regels');
+  return total;
+}
+
 /* ══════════════════════════════════════════════
    MAIN HANDLER
    ══════════════════════════════════════════════ */
@@ -1503,8 +1573,10 @@ export async function POST(request) {
       result = await processInvoiceLedger(getSupabase(), json, filename);
     } else if (fileType === 'po_open_headers') {
       result = await processPoHeaders(getSupabase(), json, filename);
+      try { await feedOrderFlowHeaders(json); } catch (e) { console.error('order_flow meevoeden mislukt: ' + e.message); }
     } else if (fileType === 'po_sku') {
       result = await processPoSkus(getSupabase(), json, filename);
+      try { await feedOrderFlowItems(json); } catch (e) { console.error('order_flow_items meevoeden mislukt: ' + e.message); }
     } else if (fileType === 'discounts') {
       result = await processDiscounts(getSupabase(), json, filename);
     } else {
