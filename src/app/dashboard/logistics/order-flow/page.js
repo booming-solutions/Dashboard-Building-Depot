@@ -390,6 +390,14 @@ export default function OrderFlowPage() {
     return m;
   }, [vessels]);
 
+  const poThrough = useMemo(() => {
+    let mx = null;
+    for (const r of rows) { const d = r.po_created_date ? String(r.po_created_date).slice(0, 10) : null; if (d && (!mx || d > mx)) mx = d; }
+    return mx;
+  }, [rows]);
+  const poStaleDays = poThrough ? Math.floor((Date.now() - new Date(poThrough + 'T00:00:00').getTime()) / 86400000) : null;
+  const poFreshColor = poStaleDays == null ? '#6b7280' : poStaleDays <= 3 ? '#059669' : poStaleDays <= 8 ? '#d97706' : '#dc2626';
+
   function openShip(r, e) {
     e?.stopPropagation();
     const vs = containersByPo[r.id];
@@ -429,7 +437,7 @@ export default function OrderFlowPage() {
           <label className="frange">t/m<input type="date" value={filter.etaTo} onChange={(e) => setFilter({ ...filter, etaTo: e.target.value })} /></label>
           {(filter.q || filter.store || filter.etaFrom || filter.etaTo) && <button className="link" onClick={() => setFilter({ q: '', store: '', etaFrom: '', etaTo: '' })}>wissen</button>}
         </div>
-        <div className="of-sub" style={{ marginTop: 8 }}>{filtered.length} van {rows.length} PO&apos;s · standaard alleen ETA t/m 30 dagen oud (pas &quot;ETA van&quot; aan of klik wissen voor alles)</div>
+        <div className="of-sub" style={{ marginTop: 8 }}><strong style={{ color: poFreshColor }}>PO-data bijgewerkt t/m {poThrough ? fmtDate(poThrough) : '—'}</strong>{poStaleDays != null && poStaleDays > 3 ? ` (${poStaleDays} dagen oud — controleer de import)` : ''} · {filtered.length} van {rows.length} PO&apos;s · standaard alleen ETA t/m 30 dagen oud (pas &quot;ETA van&quot; aan of klik wissen voor alles)</div>
       </div>
 
       {showMap && (
