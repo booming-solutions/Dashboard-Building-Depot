@@ -1,6 +1,14 @@
 /* ============================================================
-   BESTAND: route_email_v28.js
+   BESTAND: route_email_v30.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
+
+   WIJZIGING v30:
+   - Nieuw file type 'container_list' voor de logistiek-containerlijst
+     (dagelijks via Power Automate/PowerShell gemaild). Herkend aan de
+     unieke kolom "Special Ship To". Vult per PO de containers in
+     order_flow_containers (spatie-gescheiden nrs, 4 letters + 7 cijfers),
+     alleen Date Expected >= 2026-09-01, alleen nieuwe containers, geen
+     VesselFinder-aanroep. Zie processContainerList.
 
    WIJZIGING v28:
    - Nieuw file type 'discounts' voor het dagelijkse Compass-rapport
@@ -163,7 +171,7 @@ function getSupabase() {
   return _supabase;
 }
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
@@ -178,6 +186,14 @@ function findCol(keys, patterns) {
 /* ── Detect file type based on column headers ── */
 function detectFileType(columns, filename) {
   var cols = columns.map(function(c) { return c.toLowerCase(); });
+
+  // v30: Logistiek-containerlijst. Uniek herkenbaar aan "Special Ship To"
+  // (die kolom heeft geen enkel ander bestand). Staat bovenaan zodat hij
+  // niet met de AI Open PO-bestanden wordt verward (die delen "PO Header").
+  if (cols.some(function(c) { return c.includes('special ship to'); }) &&
+      cols.some(function(c) { return c.includes('po header'); })) {
+    return 'container_list';
+  }
 
   // v26: AP invoice ledger ("AI Open and Paid Items last 12M").
   // Staat bovenaan: dit bestand heeft geen Item Number / Store Group /
@@ -1472,6 +1488,162 @@ async function feedOrderFlowItems(json) {
   return total;
 }
 
+/* ── v30: Logistiek-containerlijst verwerken + VesselFinder ──
+   Vult per PO de containers uit "Special Ship To" (meerdere = spatie-
+   gescheiden, alleen echte containernummers: 4 letters + 7 cijfers).
+   Alleen PO's met Date Expected >= 1 september 2026. Match op order_flow,
+   voegt alleen NIEUWE containers toe (niets verwijderd, geen dubbelen).
+
+   Tracking: per PO wordt precies ÉÉN container (de lead) bij VesselFinder
+   opgehaald; de overige containers van diezelfde PO krijgen dezelfde
+   scheeps-/ETA-info en worden als 'shared' gemarkeerd -> dus 1 listing per
+   PO. De cron slaat 'shared' over, dus ook later nooit dubbele kosten. */
+var VF_API = 'https://container.vesselfinder.com/api/1.0/container';
+function _vfDate(s) { if (!s) return null; var d = new Date(s * 1000); return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10); }
+function _vfTs(s) { if (!s) return null; var d = new Date(s * 1000); return isNaN(d.getTime()) ? null : d.toISOString(); }
+function _vfPatch(j, now) {
+  var g = (j && j.general) || {};
+  var dest = g.destination || {};
+  var pol = g.origin || {};
+  var vessel = (g.currentLocation && g.currentLocation.vessel) || {};
+  return {
+    eta: _vfDate(dest.date), carrier: g.carrier || null,
+    pol_name: pol.name || null, pol_lat: (pol.lat != null ? pol.lat : null), pol_lng: (pol.lng != null ? pol.lng : null),
+    pod_name: dest.name || null, pod_lat: (dest.lat != null ? dest.lat : null), pod_lng: (dest.lng != null ? dest.lng : null),
+    vessel_name: vessel.name || null, vessel_imo: vessel.imo || null, vessel_mmsi: vessel.mmsi || null,
+    vessel_lat: (vessel.latitude != null ? vessel.latitude : null), vessel_lng: (vessel.longitude != null ? vessel.longitude : null),
+    vessel_ais_at: _vfTs(vessel.aisTimestamp),
+    tracking_progress: (g.progress != null ? g.progress : null),
+    tracking_status: 'success', tracking_message: g.carrier ? ('Carrier: ' + g.carrier) : null, tracking_updated_at: now,
+  };
+}
+
+async function processContainerList(json) {
+  var keys = Object.keys(json[0] || {});
+  var CUTOFF = '2026-09-01';
+  var CONTAINER = /^[A-Z]{4}[0-9]{7}$/;
+  var MAX_TRACK = 90; // veiligheidslimiet op VesselFinder-aanroepen per run
+
+  var byPo = {};
+  json.forEach(function(row) {
+    var po = String(row[findCol(keys, ['po header'])] || '').trim();
+    if (!po) return;
+    var de = _ofIso(row[findCol(keys, ['date expected'])]);
+    if (!de || de < CUTOFF) return;
+    var ship = String(row[findCol(keys, ['special ship to'])] || '').toUpperCase();
+    if (!ship) return;
+    var toks = ship.split(/[\s,;]+/).map(function(t) { return t.trim(); }).filter(function(t) { return CONTAINER.test(t); });
+    if (!toks.length) return;
+    if (!byPo[po]) byPo[po] = {};
+    toks.forEach(function(t) { byPo[po][t] = true; });
+  });
+
+  var poNums = Object.keys(byPo);
+  if (!poNums.length) {
+    console.log('Containerlijst: geen containers met Date Expected >= ' + CUTOFF);
+    return { table: 'order_flow_containers', rows_imported: 0, pos_matched: 0, pos_unmatched: 0 };
+  }
+
+  // Match PO-nummers op order_flow
+  var idByPo = {};
+  for (var i = 0; i < poNums.length; i += 500) {
+    var chunk = poNums.slice(i, i + 500);
+    var res = await getSupabase().from('order_flow').select('id, po_number').in('po_number', chunk);
+    (res.data || []).forEach(function(r) { idByPo[String(r.po_number)] = r.id; });
+  }
+
+  var rows = [];
+  var matchedPoIds = [];
+  var matched = 0, unmatched = 0;
+  poNums.forEach(function(po) {
+    var id = idByPo[po];
+    if (!id) { unmatched++; return; }
+    matched++;
+    matchedPoIds.push(id);
+    Object.keys(byPo[po]).forEach(function(cn) { rows.push({ po_id: id, container_no: cn, sealine: 'AUTO' }); });
+  });
+
+  // Nieuwe containers toevoegen (geen dubbelen, niets verwijderen)
+  for (var j = 0; j < rows.length; j += 500) {
+    var b = rows.slice(j, j + 500);
+    var r2 = await getSupabase().from('order_flow_containers').upsert(b, { onConflict: 'po_id,container_no', ignoreDuplicates: true });
+    if (r2.error) console.error('containerlijst upsert error: ' + r2.error.message);
+  }
+
+  // Containers per PO teruglezen (met id + status)
+  var contByPo = {};
+  for (var k = 0; k < matchedPoIds.length; k += 200) {
+    var idchunk = matchedPoIds.slice(k, k + 200);
+    var cres = await getSupabase().from('order_flow_containers')
+      .select('id, po_id, container_no, sealine, shared, tracking_status')
+      .in('po_id', idchunk);
+    (cres.data || []).forEach(function(c) { (contByPo[c.po_id] = contByPo[c.po_id] || []).push(c); });
+  }
+
+  var key = process.env.VESSELFINDER_API_KEY;
+  var now = new Date().toISOString();
+  var tracked = 0, queued = 0, errors = 0, remaining = null;
+
+  for (var p = 0; p < matchedPoIds.length; p++) {
+    var poId = matchedPoIds[p];
+    var list = (contByPo[poId] || []).slice().sort(function(a, bb) { return String(a.container_no).localeCompare(String(bb.container_no)); });
+    if (!list.length) continue;
+
+    // Lead bepalen: een al-succesvol getrackte container, anders de eerste geldige
+    var lead = list.find(function(c) { return c.tracking_status === 'success' && !c.shared; }) ||
+               list.find(function(c) { return CONTAINER.test(String(c.container_no || '').toUpperCase()); }) || list[0];
+
+    // Precies één lead (shared=false), rest shared=true
+    var otherIds = list.filter(function(c) { return c.id !== lead.id; }).map(function(c) { return c.id; });
+    if (lead.shared) await getSupabase().from('order_flow_containers').update({ shared: false }).eq('id', lead.id);
+    if (otherIds.length) await getSupabase().from('order_flow_containers').update({ shared: true }).in('id', otherIds);
+
+    // Lead al getrackt? dan niets ophalen (geen kosten), wel data doorzetten naar siblings
+    if (lead.tracking_status === 'success') continue;
+
+    if (!key) continue; // geen API key -> alleen vullen, cron traceert later
+    if (tracked >= MAX_TRACK) continue; // limiet bereikt -> rest volgt via cron/volgende import
+
+    var container = String(lead.container_no || '').trim().toUpperCase();
+    if (container.length !== 11) continue;
+    var sealine = (String(lead.sealine || '').trim().toUpperCase()) || 'AUTO';
+
+    var resp, j2;
+    try {
+      resp = await fetch(VF_API + '/' + encodeURIComponent(key) + '/' + encodeURIComponent(container) + '/' + encodeURIComponent(sealine), { headers: { Accept: 'application/json' } });
+      j2 = await resp.json();
+    } catch (e) { errors++; continue; }
+
+    var status = j2 && j2.status;
+    if (resp.status === 202 || status === 'queued' || status === 'processing') {
+      queued++;
+      await getSupabase().from('order_flow_containers').update({ tracking_status: 'processing', tracking_message: 'VesselFinder verwerkt de aanvraag', tracking_updated_at: now }).eq('id', lead.id);
+      continue; // cron pikt 'm later op en zet door naar siblings
+    }
+    if (status === 'error' || !resp.ok) {
+      errors++;
+      await getSupabase().from('order_flow_containers').update({ tracking_status: 'error', tracking_message: (j2 && (j2.errorDescription || j2.errorCode)) || ('HTTP ' + resp.status), tracking_updated_at: now }).eq('id', lead.id);
+      continue;
+    }
+
+    // Succes: lead bijwerken + doorzetten naar de overige containers van deze PO
+    var patch = _vfPatch(j2, now);
+    var leadPatch = Object.assign({}, patch);
+    if (sealine !== 'AUTO') leadPatch.sealine = sealine;
+    await getSupabase().from('order_flow_containers').update(leadPatch).eq('id', lead.id);
+    if (otherIds.length) await getSupabase().from('order_flow_containers').update(patch).in('id', otherIds);
+
+    // Vroegste ETA oprollen naar de PO
+    if (patch.eta) await getSupabase().from('order_flow').update({ eta: patch.eta, eta_source: 'vesselfinder' }).eq('id', poId);
+
+    remaining = (j2 && j2.subscription && j2.subscription.containersRemaining != null) ? j2.subscription.containersRemaining : remaining;
+    tracked++;
+  }
+
+  console.log('Containerlijst: ' + rows.length + ' containers voor ' + matched + " PO's | getrackt " + tracked + ', in wachtrij ' + queued + ', fouten ' + errors + (remaining != null ? (', listings over ' + remaining) : ''));
+  return { table: 'order_flow_containers', rows_imported: rows.length, pos_matched: matched, pos_unmatched: unmatched, tracked: tracked, queued: queued, errors: errors, containers_remaining: remaining };
+}
+
 /* ══════════════════════════════════════════════
    MAIN HANDLER
    ══════════════════════════════════════════════ */
@@ -1577,6 +1749,8 @@ export async function POST(request) {
     } else if (fileType === 'po_sku') {
       result = await processPoSkus(getSupabase(), json, filename);
       try { await feedOrderFlowItems(json); } catch (e) { console.error('order_flow_items meevoeden mislukt: ' + e.message); }
+    } else if (fileType === 'container_list') {
+      result = await processContainerList(json);
     } else if (fileType === 'discounts') {
       result = await processDiscounts(getSupabase(), json, filename);
     } else {
