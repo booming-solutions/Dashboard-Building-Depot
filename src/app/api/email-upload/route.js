@@ -1575,7 +1575,7 @@ async function processContainerList(json) {
   for (var k = 0; k < matchedPoIds.length; k += 200) {
     var idchunk = matchedPoIds.slice(k, k + 200);
     var cres = await getSupabase().from('order_flow_containers')
-      .select('id, po_id, container_no, sealine, shared, tracking_status')
+      .select('id, po_id, container_no, sealine, shared, tracking_status, eta, carrier, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, vessel_name, vessel_imo, vessel_mmsi, vessel_lat, vessel_lng, vessel_ais_at, tracking_progress')
       .in('po_id', idchunk);
     (cres.data || []).forEach(function(c) { (contByPo[c.po_id] = contByPo[c.po_id] || []).push(c); });
   }
@@ -1598,8 +1598,21 @@ async function processContainerList(json) {
     if (lead.shared) await getSupabase().from('order_flow_containers').update({ shared: false }).eq('id', lead.id);
     if (otherIds.length) await getSupabase().from('order_flow_containers').update({ shared: true }).in('id', otherIds);
 
-    // Lead al getrackt? dan niets ophalen (geen kosten), wel data doorzetten naar siblings
-    if (lead.tracking_status === 'success') continue;
+    // Lead al getrackt? Geen nieuwe VesselFinder-aanroep (geen kosten),
+    // maar wel de scheepsdata doorzetten naar de (nu shared) siblings.
+    if (lead.tracking_status === 'success') {
+      if (otherIds.length) {
+        await getSupabase().from('order_flow_containers').update({
+          eta: lead.eta, carrier: lead.carrier,
+          pol_name: lead.pol_name, pol_lat: lead.pol_lat, pol_lng: lead.pol_lng,
+          pod_name: lead.pod_name, pod_lat: lead.pod_lat, pod_lng: lead.pod_lng,
+          vessel_name: lead.vessel_name, vessel_imo: lead.vessel_imo, vessel_mmsi: lead.vessel_mmsi,
+          vessel_lat: lead.vessel_lat, vessel_lng: lead.vessel_lng, vessel_ais_at: lead.vessel_ais_at,
+          tracking_progress: lead.tracking_progress, tracking_status: 'success', tracking_updated_at: now,
+        }).in('id', otherIds);
+      }
+      continue;
+    }
 
     if (!key) continue; // geen API key -> alleen vullen, cron traceert later
     if (tracked >= MAX_TRACK) continue; // limiet bereikt -> rest volgt via cron/volgende import
