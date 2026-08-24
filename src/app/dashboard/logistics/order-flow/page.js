@@ -44,7 +44,6 @@ const isBonaireMultimart = (r) => ['B', 'M'].includes(String(r.order_store || ''
 const demColor = (usd) => (usd == null ? '' : usd <= 0 ? 'g' : usd <= 300 ? 'o' : 'r');
 const mapPos = (r) => {
   if (r.vessel_lat != null && r.vessel_lng != null) return { lat: +r.vessel_lat, lng: +r.vessel_lng, live: true, place: r.vessel_name };
-  if (r.pod_lat != null && r.pod_lng != null) return { lat: +r.pod_lat, lng: +r.pod_lng, live: false, place: r.pod_name };
   if (r.pol_lat != null && r.pol_lng != null) return { lat: +r.pol_lat, lng: +r.pol_lng, live: false, place: r.pol_name };
   return null;
 };
@@ -192,8 +191,8 @@ export default function OrderFlowPage() {
   }
   async function loadAllContainers() {
     const { data } = await supabase.from('order_flow_containers')
-      .select('id, po_id, container_no, eta, carrier, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, order_flow ( po_number, vendor_name )')
-      .or('vessel_lat.not.is.null,pod_lat.not.is.null,pol_lat.not.is.null');
+      .select('id, po_id, container_no, eta, carrier, tracking_progress, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, order_flow ( po_number, vendor_name )')
+      .or('vessel_lat.not.is.null,pol_lat.not.is.null');
     setAllContainers(data || []);
   }
   async function addContainers(str) {
@@ -375,6 +374,7 @@ export default function OrderFlowPage() {
   const itemsTotal = useMemo(() => items.reduce((s, i) => s + (Number(i.order_value) || 0), 0), [items]);
 
   const vessels = useMemo(() => allContainers.map((c) => {
+    if (c.tracking_progress != null && c.tracking_progress >= 100) return null;
     const p = mapPos(c);
     if (!p) return null;
     return {
@@ -443,7 +443,7 @@ export default function OrderFlowPage() {
       {showMap && (
         <div className="of-card">
           <div className="of-detail-head">
-            <div className="of-card-title">Schepen op de kaart <span className="of-sub">{vessels.length} met een positie (🚢 live · 📍 laatst bekende haven)</span></div>
+            <div className="of-card-title">Schepen op de kaart <span className="of-sub">{vessels.length} onderweg (🚢 live positie · 📍 vertrekhaven) · aangekomen niet getoond</span></div>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <button className="btn" disabled={refreshing} onClick={refreshPositions}>{refreshing ? 'Verversen…' : 'Ververs posities'}</button>
               <button className="link" onClick={() => setShowMap(false)}>sluiten ✕</button>

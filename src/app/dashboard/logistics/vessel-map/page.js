@@ -24,7 +24,6 @@ const fmtDate = (d) => {
 };
 const mapPos = (r) => {
   if (r.vessel_lat != null && r.vessel_lng != null) return { lat: +r.vessel_lat, lng: +r.vessel_lng, live: true, place: r.vessel_name };
-  if (r.pod_lat != null && r.pod_lng != null) return { lat: +r.pod_lat, lng: +r.pod_lng, live: false, place: r.pod_name };
   if (r.pol_lat != null && r.pol_lng != null) return { lat: +r.pol_lat, lng: +r.pol_lng, live: false, place: r.pol_name };
   return null;
 };
@@ -41,8 +40,8 @@ export default function VesselMapPage() {
 
   const loadRows = useCallback(async () => {
     const { data } = await supabase.from('order_flow_containers')
-      .select('id, container_no, eta, carrier, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, tracking_updated_at, order_flow ( po_number, vendor_name )')
-      .or('vessel_lat.not.is.null,pod_lat.not.is.null,pol_lat.not.is.null');
+      .select('id, container_no, eta, carrier, tracking_progress, vessel_name, vessel_imo, vessel_lat, vessel_lng, pol_name, pol_lat, pol_lng, pod_name, pod_lat, pod_lng, tracking_updated_at, order_flow ( po_number, vendor_name )')
+      .or('vessel_lat.not.is.null,pol_lat.not.is.null');
     setRows(data || []);
     setLoading(false);
     setLastUpdate(new Date());
@@ -86,6 +85,7 @@ export default function VesselMapPage() {
   const vessels = useMemo(() => {
     const term = q.trim().toLowerCase();
     return rows.filter((r) => {
+      if (r.tracking_progress != null && r.tracking_progress >= 100) return false;
       const po = r.order_flow?.po_number || '';
       if (!term) return true;
       const hay = `${po} ${r.order_flow?.vendor_name || ''} ${r.container_no || ''}`.toLowerCase();
@@ -107,7 +107,7 @@ export default function VesselMapPage() {
     <div style={{ padding: 24, maxWidth: 1360, margin: '0 auto', fontFamily: 'system-ui,Arial,sans-serif' }}>
       <h1 style={{ color: '#1B3A5C', margin: '0 0 4px', fontSize: 24 }}>Schepen wereldwijd</h1>
       <p style={{ color: '#6b7280', fontSize: 13, margin: '0 0 14px' }}>
-        Alle containers met een positie via VesselFinder. De kaart ververst automatisch elke minuut.
+        Containers die onderweg zijn (🚢 live positie · 📍 vertrekhaven). Aangekomen zendingen worden niet getoond. De kaart ververst automatisch elke minuut.
       </p>
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
