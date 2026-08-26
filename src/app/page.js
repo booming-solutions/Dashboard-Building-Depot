@@ -3,51 +3,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { translations } from '@/lib/translations';
-
-function LanguageSwitcher({ lang, setLang }) {
-  return (
-    <div className="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
-      <button
-        onClick={() => setLang('nl')}
-        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
-          lang === 'nl' ? 'bg-white text-navy shadow-sm' : 'text-gray-400 hover:text-gray-600'
-        }`}
-      >
-        NL
-      </button>
-      <button
-        onClick={() => setLang('en')}
-        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
-          lang === 'en' ? 'bg-white text-navy shadow-sm' : 'text-gray-400 hover:text-gray-600'
-        }`}
-      >
-        EN
-      </button>
-    </div>
-  );
-}
-
-function Navbar({ t, lang, setLang }) {
-  return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/92 backdrop-blur-xl border-b border-navy/5 px-6 py-3">
-      <div className="max-w-6xl mx-auto flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-3 no-underline">
-          <img src="/logo.png" alt="Booming Solutions" className="h-10 w-10 object-contain" />
-          <span className="font-display text-xl font-semibold text-navy tracking-tight">Booming Solutions</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-6">
-          <a href="#services" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">{t.nav.services}</a>
-          <a href="#dashboards" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">{t.nav.dashboards}</a>
-          <a href="#contact" className="text-sm font-medium text-gray-500 hover:text-navy transition-colors">{t.nav.contact}</a>
-          <LanguageSwitcher lang={lang} setLang={setLang} />
-          <Link href="/login" className="bg-navy text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-navy-light transition-all hover:-translate-y-0.5">
-            {t.nav.login}
-          </Link>
-        </div>
-      </div>
-    </nav>
-  );
-}
+import { useLang } from '@/lib/useLang';
+import SiteNav from '@/components/SiteNav';
+import SiteFooter from '@/components/SiteFooter';
 
 function Hero({ t }) {
   return (
@@ -103,6 +61,59 @@ function Hero({ t }) {
                   }}
                 />
               ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * De twee deuren. Dit is het uithangbord: wie via Google op "Red Cube" hier
+ * binnenkomt, ziet meteen dat hij goed zit en klikt in één stap door.
+ */
+function Brands({ t }) {
+  return (
+    <section id="brands" className="py-24 px-6 bg-white border-b border-gray-100">
+      <div className="max-w-5xl mx-auto">
+        <p className="text-xs uppercase tracking-widest text-blue font-semibold mb-3">{t.brands.label}</p>
+        <h2 className="font-display text-3xl md:text-4xl font-semibold text-navy tracking-tight mb-4 text-balance">
+          {t.brands.title}
+        </h2>
+        <p className="text-base text-gray-500 leading-relaxed max-w-2xl mb-12">{t.brands.subtitle}</p>
+
+        <div className="grid md:grid-cols-2 gap-5">
+          {/* AI & Finance */}
+          <div className="bg-gray-50 rounded-2xl p-8 border border-gray-100 border-t-4 border-t-blue flex flex-col">
+            <h3 className="font-display text-2xl font-semibold text-navy">{t.brands.ai.name}</h3>
+            <p className="text-sm font-medium text-blue mt-1">{t.brands.ai.tagline}</p>
+            <p className="text-sm text-gray-500 leading-relaxed mt-4 flex-1">{t.brands.ai.desc}</p>
+            <a
+              href="#services"
+              className="inline-flex items-center gap-2 self-start mt-6 bg-navy text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-light transition-all hover:-translate-y-0.5"
+            >
+              {t.brands.ai.cta} →
+            </a>
+          </div>
+
+          {/* Red Cube */}
+          <div className="bg-gray-50 rounded-2xl p-8 border border-gray-100 border-t-4 border-t-gold flex flex-col">
+            <h3 className="font-display text-2xl font-semibold text-navy">{t.brands.rc.name}</h3>
+            <p className="text-sm font-medium text-gold-dark mt-1">{t.brands.rc.tagline}</p>
+            <p className="text-sm text-gray-500 leading-relaxed mt-4 flex-1">{t.brands.rc.desc}</p>
+            <div className="flex flex-wrap items-center gap-4 mt-6">
+              <a
+                href="https://www.redcube.kitchen"
+                target="_blank"
+                rel="noopener"
+                className="inline-flex items-center gap-2 bg-gold text-navy-deep px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-gold-light transition-all hover:-translate-y-0.5 shadow-lg shadow-gold/20"
+              >
+                {t.brands.rc.cta} →
+              </a>
+              <Link href="/red-cube" className="text-sm font-medium text-navy hover:underline">
+                {t.brands.rc.more}
+              </Link>
             </div>
           </div>
         </div>
@@ -174,7 +185,7 @@ function ContactForm({ t }) {
       const res = await fetch('/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, topic: 'algemeen' }),
       });
 
       if (res.ok) {
@@ -270,26 +281,19 @@ function ContactForm({ t }) {
   );
 }
 
-function Footer({ t }) {
-  return (
-    <footer className="py-8 px-6 bg-navy-deep text-white/40 text-center text-sm">
-      <p>{t.footer.rights} · <a href="#" className="text-gold hover:underline">{t.footer.privacy}</a> · <a href="#" className="text-gold hover:underline">{t.footer.terms}</a></p>
-    </footer>
-  );
-}
-
 export default function Home() {
-  const [lang, setLang] = useState('nl');
+  const [lang, setLang] = useLang();
   const t = translations[lang];
 
   return (
     <main>
-      <Navbar t={t} lang={lang} setLang={setLang} />
+      <SiteNav t={t} lang={lang} setLang={setLang} />
       <Hero t={t} />
+      <Brands t={t} />
       <Services t={t} />
       <DashboardSection t={t} />
       <ContactForm t={t} />
-      <Footer t={t} />
+      <SiteFooter t={t} />
     </main>
   );
 }

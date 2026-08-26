@@ -41,9 +41,21 @@ export async function middleware(request) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
+  // ── Projectomgeving: eigen ingang, los van /dashboard ──────────────
+  const isProjects = request.nextUrl.pathname.startsWith('/projects');
+  const isProjectsLogin = request.nextUrl.pathname === '/projects/login';
+
+  if (isProjects && !isProjectsLogin && !user) {
+    return NextResponse.redirect(new URL('/projects/login', request.url));
+  }
+
+  if (isProjectsLogin && user) {
+    return NextResponse.redirect(new URL('/projects', request.url));
+  }
+
   return response;
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/login', '/api/:path*'],
+  matcher: ['/dashboard/:path*', '/login', '/projects/:path*', '/api/:path*'],
 };

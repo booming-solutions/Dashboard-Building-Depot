@@ -11,6 +11,14 @@ const nextConfig = {
       },
     ];
   },
+
+  // Mensen typen de merknaam aan elkaar; /red-cube is de echte URL.
+  async redirects() {
+    return [
+      { source: '/redcube', destination: '/red-cube', permanent: true },
+      { source: '/redcube/:path*', destination: '/red-cube', permanent: true },
+    ];
+  },
 };
 
 module.exports = nextConfig;

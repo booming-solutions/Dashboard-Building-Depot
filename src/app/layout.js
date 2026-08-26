@@ -1,11 +1,19 @@
 import './globals.css';
 
 export const metadata = {
+  metadataBase: new URL('https://www.boomingsolutions.ai'),
   title: 'Booming Solutions — CFO Services & AI Dashboards',
   description: 'Interim CFO-services gecombineerd met intelligente AI-dashboards. Helder inzicht in uw financiën.',
   manifest: '/manifest.json',
+};
+
+// In Next 14 horen themeColor en viewport in een aparte viewport-export.
+// Stonden ze in `metadata`, dan negeert Next ze en waarschuwt bij elke build.
+export const viewport = {
   themeColor: '#1B3A5C',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1',
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({ children }) {
