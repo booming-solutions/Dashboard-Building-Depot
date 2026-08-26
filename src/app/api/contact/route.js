@@ -11,20 +11,24 @@
 
    Env-vars in Vercel:
      RESEND_API_KEY   verplicht — anders kan er niets verstuurd worden
-     CONTACT_INBOX    optioneel — waar algemene aanvragen heen gaan
-     TRAINING_INBOX   optioneel — waar taaltraining-aanvragen heen gaan
-     CONTACT_FROM     optioneel — afzender op een geverifieerd domein
+     CONTACT_INBOX    waar algemene aanvragen heen gaan
+     TRAINING_INBOX   optioneel — aparte inbox voor taaltraining
+     CONTACT_FROM     optioneel — afzender. Standaard noreply@boomingsolutions.ai,
+                      hetzelfde geverifieerde domein dat de dagelijkse omzetmail
+                      (src/app/api/cron/daily-report) al gebruikt.
+
+   Controleren of het goed staat: open https://www.boomingsolutions.ai/api/contact
+   in je browser. Die GET verklapt geen sleutels, alleen of ze gezet zijn.
    ============================================================ */
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const CONTACT_INBOX = process.env.CONTACT_INBOX || 'jeroen@boomingsolutions.nl';
+const CONTACT_INBOX = process.env.CONTACT_INBOX || '';
 const TRAINING_INBOX = process.env.TRAINING_INBOX || CONTACT_INBOX;
 const FROM =
   process.env.CONTACT_FROM ||
-  process.env.ORDER_FLOW_FROM ||
-  'Booming Solutions <no-reply@building-depot.net>';
+  'Booming Solutions <noreply@boomingsolutions.ai>';
 
 const MAX = { name: 200, email: 200, company: 200, message: 5000 };
 
@@ -39,6 +43,35 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Alleen het domein tonen, zodat het adres niet publiek op straat ligt. */
+function mask(address) {
+  if (!address) return null;
+  const at = address.lastIndexOf('@');
+  return at === -1 ? '***' : `***@${address.slice(at + 1)}`;
+}
+
+/**
+ * Statuscheck voor in de browser. Geeft nooit de API-sleutel of het volledige
+ * e-mailadres terug — alleen of de instellingen aanwezig zijn.
+ */
+export async function GET() {
+  const missing = [];
+  if (!process.env.RESEND_API_KEY) missing.push('RESEND_API_KEY');
+  if (!CONTACT_INBOX) missing.push('CONTACT_INBOX');
+
+  return Response.json({
+    gereed: missing.length === 0,
+    ontbreekt: missing,
+    afzender: FROM,
+    afzenderIsTestdomein: FROM.includes('resend.dev'),
+    contactInbox: mask(CONTACT_INBOX),
+    trainingInbox: mask(TRAINING_INBOX),
+    let_op: FROM.includes('resend.dev')
+      ? 'Met onboarding@resend.dev kan Resend alleen mailen naar het e-mailadres van je eigen Resend-account. Zet CONTACT_FROM op een adres van een geverifieerd domein.'
+      : undefined,
+  });
 }
 
 export async function POST(request) {
@@ -83,11 +116,15 @@ export async function POST(request) {
     </div>
   `;
 
-  if (!process.env.RESEND_API_KEY) {
-    // Nooit stilzwijgend weggooien: minstens in de Vercel-logs bewaren.
-    console.error('[contact] RESEND_API_KEY ontbreekt — inzending niet verstuurd:', {
-      topic, name, email, company, message,
-    });
+  // Nooit stilzwijgend weggooien: wat er misgaat, gaat altijd eerst de log in.
+  const logboek = { topic, name, email, company, message };
+
+  if (!process.env.RESEND_API_KEY || !to) {
+    console.error(
+      '[contact] Niet verstuurd — ontbrekende configuratie:',
+      { RESEND_API_KEY: Boolean(process.env.RESEND_API_KEY), to: Boolean(to) },
+      logboek
+    );
     return Response.json({ error: 'E-mail is niet geconfigureerd' }, { status: 503 });
   }
 
@@ -103,13 +140,13 @@ export async function POST(request) {
 
     if (!res.ok) {
       const detail = await res.text();
-      console.error('[contact] Resend gaf een fout:', res.status, detail, { topic, name, email, message });
+      console.error('[contact] Resend gaf een fout:', res.status, detail, logboek);
       return Response.json({ error: 'Versturen mislukt' }, { status: 502 });
     }
 
     return Response.json({ ok: true });
   } catch (e) {
-    console.error('[contact] Onverwachte fout:', e?.message, { topic, name, email, message });
+    console.error('[contact] Onverwachte fout:', e?.message, logboek);
     return Response.json({ error: 'Versturen mislukt' }, { status: 500 });
   }
 }
