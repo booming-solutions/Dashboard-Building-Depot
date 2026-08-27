@@ -1,6 +1,17 @@
 /* ============================================================
-   BESTAND: route_email_v30.js
+   BESTAND: route_email_v31.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
+
+   WIJZIGING v31:
+   - Nieuw file type 'rc_intraday' voor het Compass 30-min rapport
+     "Epicor Compass Query AI - RC sales tracker" (filename
+     RC_sales_update_MM-DD-YY.csv). Bevat één snapshot per dag voor
+     dept 26 store 1 met cumulatieve dagverkopen. Upsert op
+     (sale_date, store_number, dept_code) naar compass_ticket_intraday.
+     Trigger op die tabel roept red-cube-sales-alert edge function aan
+     die Pushover push stuurt bij wijziging.
+   - Detectie + parselogica in src/lib/rcIntradayImport.js
+   - Detectie op naam (RC_sales_update_...) — staat bovenaan voor snelheid.
 
    WIJZIGING v30:
    - Nieuw file type 'container_list' voor de logistiek-containerlijst
@@ -157,6 +168,7 @@ import * as XLSX from 'xlsx';
 import { isInvoiceLedgerFile, processInvoiceLedger } from '@/lib/ledgerImport';
 import { isPoHeaderFile, isPoSkuFile, processPoHeaders, processPoSkus } from '@/lib/poImport';
 import { isDiscountFile, processDiscounts } from '@/lib/discountImport';
+import { isRcIntradayFile, processRcIntraday } from '@/lib/rcIntradayImport';
 
 // Service role for deletes (RLS bypass)
 // Lazy initialization: create client only when needed (not at module load)
@@ -186,6 +198,12 @@ function findCol(keys, patterns) {
 /* ── Detect file type based on column headers ── */
 function detectFileType(columns, filename) {
   var cols = columns.map(function(c) { return c.toLowerCase(); });
+
+  // v31: Compass 30-min "RC sales tracker" (filename: RC_sales_update_MM-DD-YY.csv).
+  // Voor alle andere detecties: filename is uniek en herkenning gaat snel.
+  if (isRcIntradayFile(columns, filename)) {
+    return 'rc_intraday';
+  }
 
   // v30: Logistiek-containerlijst. Uniek herkenbaar aan "Special Ship To"
   // (die kolom heeft geen enkel ander bestand). Staat bovenaan zodat hij
@@ -1766,6 +1784,8 @@ export async function POST(request) {
       result = await processContainerList(json);
     } else if (fileType === 'discounts') {
       result = await processDiscounts(getSupabase(), json, filename);
+    } else if (fileType === 'rc_intraday') {
+      result = await processRcIntraday(getSupabase(), json, filename);
     } else {
       console.error('Unknown file type. Columns: ' + columns.join(', '));
       return Response.json({ 
