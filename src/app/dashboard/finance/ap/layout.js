@@ -278,9 +278,12 @@ export default function APLayout({ children }) {
     availableEntities: ENTITY_ORDER,
   };
   
+  // Mailbox komt in 1 box binnen voor alle administraties — geen entiteit-banner daar.
+  const hideBrandBanner = (pathname || '').includes('/mailbox');
+
   return (
     <ApRoleContext.Provider value={contextValue}>
-      <BrandBanner ctx={contextValue} />
+      {!hideBrandBanner && <BrandBanner ctx={contextValue} />}
       {isAdmin && <RoleSwitcherBanner ctx={contextValue} />}
       {children}
     </ApRoleContext.Provider>

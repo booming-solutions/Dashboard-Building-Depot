@@ -45,6 +45,20 @@ const CAT_OPTS = [
 ];
 const CLERK_COLORS = ['#2f6fed', '#7a45c4', '#1f8a52', '#c77700', '#c0392b', '#0b7285'];
 
+// De drie AP Clerks die het werk verdelen (profiles.id).
+const LADIES = [
+  { id: 'e39b2531-47be-4ea6-93e6-7ceb783e1fdb', label: 'Daya' },
+  { id: 'b6517206-ec69-4989-ae81-601ba573dca8', label: 'Mel' },
+  { id: 'aa906f68-e000-455f-95f1-67b7b69140f8', label: 'Ethy' },
+];
+const LADY_IDS = LADIES.map((l) => l.id);
+// Legenda — wie hoort welke leverancier/kostensoort te krijgen.
+const ASSIGN_LEGEND = [
+  { who: 'Daya', wat: 'Ivo en John' },
+  { who: 'Mel',  wat: 'Kosten, Daniel, RCC en MMC' },
+  { who: 'Etty', wat: 'Gijs, Henk en Bonaire' },
+];
+
 function fmtMoney(v, cur) {
   const n = parseFloat(v);
   if (isNaN(n)) return '';
@@ -208,7 +222,9 @@ export default function MailboxPage() {
   }
 
   const passFilter = useCallback((r) => {
-    if (fClerk && r.assigned_clerk !== fClerk) return false;
+    if (fClerk === '__none__') { if (r.assigned_clerk) return false; }
+    else if (fClerk === '__other__') { if (!r.assigned_clerk || LADY_IDS.includes(r.assigned_clerk)) return false; }
+    else if (fClerk) { if (r.assigned_clerk !== fClerk) return false; }
     if (fCat && r.doc_type !== fCat) return false;
     if (fEnt && r.entity !== fEnt) return false;
     if (q) {
@@ -233,6 +249,20 @@ export default function MailboxPage() {
     base.forEach((r) => { const a = r._age; if (a <= 2) b[0]++; else if (a <= 7) b[1]++; else if (a <= 30) b[2]++; else b[3]++; });
     return { total: base.length, buckets: b };
   }, [rows, passFilter]);
+
+  // Verdeling van de open werklijst over de drie dames + niet toegewezen + overig
+  const verdeling = useMemo(() => {
+    const open = rows.filter(FOLDERS[0].test);
+    const c = { none: 0, other: 0 };
+    LADY_IDS.forEach((id) => { c[id] = 0; });
+    open.forEach((r) => {
+      if (!r.assigned_clerk) c.none++;
+      else if (LADY_IDS.includes(r.assigned_clerk)) c[r.assigned_clerk]++;
+      else c.other++;
+    });
+    return c;
+  }, [rows]);
+  const scopeLabel = (v) => (v === '__none__' ? 'niet toegewezen' : v === '__other__' ? 'overig' : (LADIES.find((l) => l.id === v)?.label || 'alle clerks'));
 
   async function doExport() {
     const rowsOut = rows.filter(passFilter).map((r) => ({
@@ -261,38 +291,63 @@ export default function MailboxPage() {
       </div>
       {err && <div className="mb-3 text-[12px] bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2">{err}</div>}
 
-      {/* overzichtstabel */}
-      <div className="mb-4 bg-white border border-gray-200 rounded-xl p-3 overflow-x-auto">
-        <div className="text-[12px] font-semibold text-[#1B3A5C]/60 mb-2">
-          📈 Openstaand in werklijst — beweegt mee met de filters
-          <span className="ml-2 font-normal">{fClerk ? `· ${clerkName(fClerk)}` : '· alle clerks'}{fEnt ? ` · ${fEnt}` : ''}{fCat ? ` · ${fCat}` : ''}</span>
-        </div>
-        <table className="text-[12.5px] tabular-nums">
-          <thead>
-            <tr className="text-[11px] uppercase tracking-wide text-[#1B3A5C]/50">
-              <th className="text-left font-semibold px-3 py-1.5">Peildatum</th>
-              <th className="text-right font-semibold px-3 py-1.5">Totaal</th>
-              <th className="text-right font-semibold px-3 py-1.5">0–2 d</th>
-              <th className="text-right font-semibold px-3 py-1.5">3–7 d</th>
-              <th className="text-right font-semibold px-3 py-1.5">8–30 d</th>
-              <th className="text-right font-semibold px-3 py-1.5">30+ d</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="font-bold text-[#1B3A5C] border-t border-gray-100">
-              <td className="text-left px-3 py-1.5">Nu</td>
-              <td className="text-right px-3 py-1.5">{overview.total}</td>
-              {overview.buckets.map((x, i) => <td key={i} className="text-right px-3 py-1.5">{x}</td>)}
-            </tr>
-            {['Gisteren', '-1 week', '-1 maand'].map((lab) => (
-              <tr key={lab} className="text-[#1B3A5C]/45 border-t border-gray-100">
-                <td className="text-left px-3 py-1.5">{lab}</td>
-                {[0, 1, 2, 3, 4].map((i) => <td key={i} className="text-right px-3 py-1.5">—</td>)}
+      {/* overzicht + verdeling */}
+      <div className="mb-4 grid grid-cols-1 lg:grid-cols-[1fr_330px] gap-4">
+        {/* overzichtstabel */}
+        <div className="bg-white border border-gray-200 rounded-xl p-3 overflow-x-auto">
+          <div className="text-[12px] font-semibold text-[#1B3A5C]/60 mb-2">
+            📈 Openstaand in werklijst — beweegt mee met de naam-filter
+            <span className="ml-2 font-normal">· {scopeLabel(fClerk)}{fEnt ? ` · ${fEnt}` : ''}{fCat ? ` · ${fCat}` : ''}</span>
+          </div>
+          <table className="text-[12.5px] tabular-nums">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wide text-[#1B3A5C]/50">
+                <th className="text-left font-semibold px-3 py-1.5">Peildatum</th>
+                <th className="text-right font-semibold px-3 py-1.5">Totaal</th>
+                <th className="text-right font-semibold px-3 py-1.5">0–2 d</th>
+                <th className="text-right font-semibold px-3 py-1.5">3–7 d</th>
+                <th className="text-right font-semibold px-3 py-1.5">8–30 d</th>
+                <th className="text-right font-semibold px-3 py-1.5">30+ d</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="text-[11px] text-[#1B3A5C]/40 mt-1 italic">Historie vult zich vanaf de eerste maandag-meting.</div>
+            </thead>
+            <tbody>
+              <tr className="font-bold text-[#1B3A5C] border-t border-gray-100">
+                <td className="text-left px-3 py-1.5">Nu</td>
+                <td className="text-right px-3 py-1.5">{overview.total}</td>
+                {overview.buckets.map((x, i) => <td key={i} className="text-right px-3 py-1.5">{x}</td>)}
+              </tr>
+              {['Gisteren', '-1 week', '-1 maand'].map((lab) => (
+                <tr key={lab} className="text-[#1B3A5C]/45 border-t border-gray-100">
+                  <td className="text-left px-3 py-1.5">{lab}</td>
+                  {[0, 1, 2, 3, 4].map((i) => <td key={i} className="text-right px-3 py-1.5">—</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="text-[11px] text-[#1B3A5C]/40 mt-1 italic">Historie vult zich vanaf de eerste maandag-meting.</div>
+        </div>
+
+        {/* verdeling + legenda */}
+        <div className="bg-white border border-gray-200 rounded-xl p-3">
+          <div className="text-[12px] font-semibold text-[#1B3A5C]/60 mb-2">👥 Verdeling werklijst — klik om te filteren</div>
+          <div className="space-y-1 mb-3">
+            {[...LADIES.map((l) => ({ key: l.id, label: l.label })), { key: '__none__', label: 'Niet toegewezen' }, { key: '__other__', label: 'Overig' }].map((b) => {
+              const cnt = b.key === '__none__' ? verdeling.none : b.key === '__other__' ? verdeling.other : (verdeling[b.key] || 0);
+              const active = fClerk === b.key;
+              return (
+                <button key={b.key} onClick={() => setFClerk(active ? '' : b.key)}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[12.5px] border transition-colors ${active ? 'border-[#2f6fed] bg-blue-50' : 'border-transparent hover:bg-gray-50'}`}>
+                  <span className="font-medium text-[#1B3A5C]">{b.label}</span>
+                  <span className="font-bold tabular-nums text-[#1B3A5C]">{cnt}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="text-[11px] font-semibold text-[#1B3A5C]/50 uppercase tracking-wide mb-1">Wie krijgt wat</div>
+          <ul className="text-[12px] text-[#1B3A5C]/80 space-y-0.5 leading-snug">
+            {ASSIGN_LEGEND.map((x) => (<li key={x.who}><span className="font-semibold">{x.who}:</span> {x.wat}</li>))}
+          </ul>
+        </div>
       </div>
 
       {/* tabs */}
@@ -311,8 +366,10 @@ export default function MailboxPage() {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Zoek leverancier, factuur, PO…"
           className="text-[13px] px-3 py-1.5 border border-gray-200 rounded-lg min-w-[220px]" />
         <select value={fClerk} onChange={(e) => setFClerk(e.target.value)} className="text-[13px] px-2 py-1.5 border border-gray-200 rounded-lg">
-          <option value="">Alle clerks</option>
-          {clerks.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+          <option value="">Alle</option>
+          {LADIES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+          <option value="__none__">Niet toegewezen</option>
+          <option value="__other__">Overig</option>
         </select>
         <select value={fCat} onChange={(e) => setFCat(e.target.value)} className="text-[13px] px-2 py-1.5 border border-gray-200 rounded-lg">
           <option value="">Alle categorieën</option>
