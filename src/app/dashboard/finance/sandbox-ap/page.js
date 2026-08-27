@@ -361,6 +361,13 @@ export default function APDashboard() {
         <h3 className="text-[14px] font-bold text-[#1B3A5C] mb-3">Snelkoppelingen</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <ActionCard
+            href="/dashboard/finance/sandbox-ap/mailbox"
+            icon="📬"
+            label="Mailbox"
+            desc="AP-mailbox werklijst — classificeren, boeken, toewijzen"
+            available
+          />
+          <ActionCard
             href="/dashboard/finance/sandbox-ap/upload"
             icon="📥"
             label="Data Upload"
