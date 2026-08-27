@@ -343,10 +343,7 @@ export default function MailboxPage() {
               );
             })}
           </div>
-          <div className="text-[11px] font-semibold text-[#1B3A5C]/50 uppercase tracking-wide mb-1">Wie krijgt wat</div>
-          <ul className="text-[12px] text-[#1B3A5C]/80 space-y-0.5 leading-snug">
-            {ASSIGN_LEGEND.map((x) => (<li key={x.who}><span className="font-semibold">{x.who}:</span> {x.wat}</li>))}
-          </ul>
+          <div className="text-[11px] text-[#1B3A5C]/40 italic">De verdeelregels staan vastgepind bovenaan de tabel.</div>
         </div>
       </div>
 
@@ -384,17 +381,21 @@ export default function MailboxPage() {
 
       {/* tabel */}
       <div className="border border-gray-200 rounded-xl overflow-auto max-h-[70vh] bg-white">
+        <div className="sticky top-0 left-0 z-40 h-9 flex items-center gap-2 px-3 bg-[#1B3A5C] text-white text-[12px] whitespace-nowrap">
+          <span className="font-bold tracking-wide">WIE KRIJGT WAT</span>
+          <span className="opacity-90 font-normal">Daya: Ivo en John&nbsp;&nbsp;·&nbsp;&nbsp;Mel: Kosten, Daniel, RCC en MMC&nbsp;&nbsp;·&nbsp;&nbsp;Etty: Gijs, Henk en Bonaire</span>
+        </div>
         <table className="w-full border-separate border-spacing-0 min-w-[1220px] text-[13px]">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-[#1B3A5C]/50">
-              <th className="sticky top-0 left-0 z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[62px]">Datum</th>
-              <th className="sticky top-0 left-[62px] z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[250px] shadow-[6px_0_6px_-6px_rgba(0,0,0,0.12)]">Leverancier</th>
-              <th className="sticky top-0 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Factuur / PO</th>
-              <th className="sticky top-0 z-20 bg-[#f7f9fc] text-right font-semibold px-3 py-2 border-b border-gray-200">Bedrag</th>
-              <th className="sticky top-0 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Categorie</th>
-              <th className="sticky top-0 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Ledger-status</th>
-              <th className="sticky top-0 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Toegewezen</th>
-              <th className="sticky top-0 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Actie / bestemming</th>
+              <th className="sticky top-9 left-0 z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[62px]">Datum</th>
+              <th className="sticky top-9 left-[62px] z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[250px] shadow-[6px_0_6px_-6px_rgba(0,0,0,0.12)]">Leverancier</th>
+              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Factuur / PO</th>
+              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-right font-semibold px-3 py-2 border-b border-gray-200">Bedrag</th>
+              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Categorie</th>
+              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Ledger-status</th>
+              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Toegewezen</th>
+              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Actie / bestemming</th>
             </tr>
           </thead>
           <tbody>
