@@ -1555,7 +1555,12 @@ function _vfPatch(j, now) {
 }
 
 async function processContainerList(json) {
-  var keys = Object.keys(json[0] || {});
+  // Kolomnamen uit ALLE rijen halen (lege cellen laat de parser weg, dus
+  // één rij kan een kolom missen). Union voorkomt dat "Special Ship To"
+  // verdwijnt als de eerste rij 'm leeg heeft.
+  var keySet = {};
+  for (var ki = 0; ki < json.length; ki++) { var kk = Object.keys(json[ki] || {}); for (var kj = 0; kj < kk.length; kj++) keySet[kk[kj]] = true; }
+  var keys = Object.keys(keySet);
   var CUTOFF = '2026-09-01';
   var CONTAINER = /^[A-Z]{4}[0-9]{7}$/;
   var MAX_TRACK = 90; // veiligheidslimiet op VesselFinder-aanroepen per run
@@ -1574,26 +1579,7 @@ async function processContainerList(json) {
     toks.forEach(function(t) { byPo[po][t] = true; });
   });
 
-  (function() {
-    var _deKey = findCol(keys, ['date expected']);
-    var _shipKey = findCol(keys, ['special ship to']);
-    var _poKey = findCol(keys, ['po header']);
-    var st = { rows: json.length, dated: 0, sept: 0, cont: 0, both: 0, maxdate: '', sample_sept: [] };
-    json.forEach(function(row) {
-      var d = _clDate(row[_deKey]);
-      var ship = String(row[_shipKey] || '').toUpperCase();
-      var hasC = ship.split(/[\s,;]+/).some(function(t) { return CONTAINER.test(t.trim()); });
-      if (d) { st.dated++; if (d > st.maxdate) st.maxdate = d; }
-      if (d && d >= CUTOFF) st.sept++;
-      if (hasC) st.cont++;
-      if (d && d >= CUTOFF && hasC) { st.both++; }
-      if (d && d >= CUTOFF && st.sample_sept.length < 3) {
-        st.sample_sept.push(row);
-      }
-    });
-    console.log('Containerlijst stat rows=' + st.rows + ' sept=' + st.sept + ' cont=' + st.cont);
-    console.log('Containerlijst volledige rijen: ' + JSON.stringify(st.sample_sept));
-  })();
+  console.log('Containerlijst: ' + Object.keys(byPo).length + " PO-treffers uit " + json.length + ' rijen');
   var poNums = Object.keys(byPo);
   if (!poNums.length) {
     console.log('Containerlijst: geen containers met Date Expected >= ' + CUTOFF);
