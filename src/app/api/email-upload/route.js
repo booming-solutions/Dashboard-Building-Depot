@@ -1574,10 +1574,22 @@ async function processContainerList(json) {
     toks.forEach(function(t) { byPo[po][t] = true; });
   });
 
-  if (json[0]) {
+  (function() {
     var _deKey = findCol(keys, ['date expected']);
-    console.log('Containerlijst debug: voorbeeld Date Expected ruw=' + JSON.stringify(json[0][_deKey]) + ' geparsed=' + _clDate(json[0][_deKey]) + ' | PO-treffers=' + Object.keys(byPo).length);
-  }
+    var _shipKey = findCol(keys, ['special ship to']);
+    var _poKey = findCol(keys, ['po header']);
+    var st = { rows: json.length, dated: 0, sept: 0, cont: 0, both: 0, maxdate: '', sample_sept: [] };
+    json.forEach(function(row) {
+      var d = _clDate(row[_deKey]);
+      var ship = String(row[_shipKey] || '').toUpperCase();
+      var hasC = ship.split(/[\s,;]+/).some(function(t) { return CONTAINER.test(t.trim()); });
+      if (d) { st.dated++; if (d > st.maxdate) st.maxdate = d; }
+      if (d && d >= CUTOFF) st.sept++;
+      if (hasC) st.cont++;
+      if (d && d >= CUTOFF && hasC) { st.both++; if (st.sample_sept.length < 3) st.sample_sept.push(String(row[_poKey]) + '=' + d + '/' + ship.replace(/\s+/g, ' ').trim().slice(0, 30)); }
+    });
+    console.log('Containerlijst stat: ' + JSON.stringify(st));
+  })();
   var poNums = Object.keys(byPo);
   if (!poNums.length) {
     console.log('Containerlijst: geen containers met Date Expected >= ' + CUTOFF);
