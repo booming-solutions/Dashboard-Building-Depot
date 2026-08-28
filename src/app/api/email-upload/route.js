@@ -1456,8 +1456,13 @@ function _clDate(v) {
   var str = String(v).trim();
   var m = /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/.exec(str);        // YYYY-MM-DD
   if (m) return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
-  m = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/.exec(str);            // DD-MM-YYYY (NL)
-  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  m = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/.exec(str);            // DD-MM-YYYY of MM-DD-YYYY
+  if (m) {
+    var a = parseInt(m[1], 10), b = parseInt(m[2], 10), yr = m[3];
+    var dd = a, mm = b;                       // NL-standaard: dag-maand
+    if (b > 12 && a <= 12) { mm = a; dd = b; } // maar als 2e getal > 12, dan is dat de dag
+    return yr + '-' + ('0' + mm).slice(-2) + '-' + ('0' + dd).slice(-2);
+  }
   var d2 = new Date(str);
   return isNaN(d2.getTime()) ? null : d2.toISOString().slice(0, 10);
 }
@@ -1569,6 +1574,10 @@ async function processContainerList(json) {
     toks.forEach(function(t) { byPo[po][t] = true; });
   });
 
+  if (json[0]) {
+    var _deKey = findCol(keys, ['date expected']);
+    console.log('Containerlijst debug: voorbeeld Date Expected ruw=' + JSON.stringify(json[0][_deKey]) + ' geparsed=' + _clDate(json[0][_deKey]) + ' | PO-treffers=' + Object.keys(byPo).length);
+  }
   var poNums = Object.keys(byPo);
   if (!poNums.length) {
     console.log('Containerlijst: geen containers met Date Expected >= ' + CUTOFF);
