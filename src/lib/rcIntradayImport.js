@@ -2,28 +2,20 @@
    BESTAND: rcIntradayImport.js
    KOPIEER NAAR: src/lib/rcIntradayImport.js
 
-   Parser voor het Compass 30-min rapport "RC sales tracker".
-   Filename: RC_sales_update_MM-DD-YY.csv
-   Subject:  Epicor Compass Query AI - RC sales tracker
-
-   Bevat één dagsnapshot voor dept 26 store 1:
-     Department Code, Department Name, Store Number, Store Short Name,
-     Date, Sales, Gross Margin
-
-   Bedragen met komma-duizendtal (bv "4,214.11"). Datum MM/DD/YYYY.
-
-   Strategie: UPSERT op (sale_date, store_number, dept_code) in tabel
-   compass_ticket_intraday. De trigger op die tabel roept vervolgens
-   automatisch de red-cube-sales-alert edge function aan.
+   v2: filename patroon tolerant voor onderscheid tussen underscore/spatie
+   Compass filename kan zijn:
+     - RC_sales_update_08-27-26.csv (originele naam)
+     - RC sales update_08-27-26.csv (na email transport)
    ============================================================ */
 
-// Filename patroon: RC_sales_update_08-27-26.csv
+// Filename patroon: matcht zowel onderstrepen als spaties
 export function isRcIntradayFile(columns, filename) {
   var fn = String(filename || '').toLowerCase();
-  if (/^rc_sales_update_/i.test(fn)) return true;
+  // Normaliseer spaties naar onderstrepen voor de check
+  var normalized = fn.replace(/\s+/g, '_');
+  if (/^rc_sales_update_/i.test(normalized)) return true;
 
-  // Fallback op kolom-signatuur (voor het geval Compass naam wijzigt):
-  // Compact: exact 7 kolommen inclusief "Store Short Name" + "Gross Margin"
+  // Fallback op kolom-signatuur
   var cols = (columns || []).map(function(c) { return String(c || '').toLowerCase(); });
   var hasShort = cols.some(function(c) { return c.includes('store short name'); });
   var hasMargin = cols.some(function(c) { return c.includes('gross margin'); });
@@ -32,7 +24,6 @@ export function isRcIntradayFile(columns, filename) {
   return hasShort && hasMargin && hasSales && hasDept && cols.length <= 8;
 }
 
-// Parse "4,214.11" → 4214.11. Leeg → 0.
 function parseAmount(v) {
   if (v === null || v === undefined || v === '') return 0;
   var s = String(v).replace(/[,\s]/g, '').replace(/[^\d.\-]/g, '');
@@ -40,7 +31,6 @@ function parseAmount(v) {
   return isNaN(n) ? 0 : n;
 }
 
-// Parse MM/DD/YYYY → YYYY-MM-DD
 function parseDate(v) {
   if (!v) return null;
   var s = String(v).trim();
@@ -52,11 +42,9 @@ function parseDate(v) {
   return y + '-' + mo + '-' + d;
 }
 
-// Cast dept_code met leading zero voor 1-digit (consistent met sales_data conventie)
 function normalizeDeptCode(v) {
   if (v === null || v === undefined || v === '') return null;
   var s = String(v).trim();
-  // Verwijder eventuele ".0" van Excel/CSV float parsing
   s = s.replace(/\.0+$/, '');
   if (/^\d$/.test(s)) return '0' + s;
   return s;
@@ -69,11 +57,9 @@ export async function processRcIntraday(supabase, rows, filename) {
 
   var toUpsert = [];
   var skipped = 0;
-  var errors = [];
 
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
-    // Kolomnamen kunnen variëren in casing — normaliseer via lookup
     var lookup = {};
     Object.keys(r).forEach(function(k) { lookup[k.toLowerCase().trim()] = r[k]; });
 
