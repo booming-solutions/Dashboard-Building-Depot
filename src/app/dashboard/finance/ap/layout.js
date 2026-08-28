@@ -278,13 +278,17 @@ export default function APLayout({ children }) {
     availableEntities: ENTITY_ORDER,
   };
   
-  // Mailbox komt in 1 box binnen voor alle administraties — geen entiteit-banner daar.
-  const hideBrandBanner = (pathname || '').includes('/mailbox');
+  // Mailbox komt in 1 box binnen voor alle administraties — geen entiteit-banner
+  // en geen Test-modus-balk daar (de mailbox is productie, geen speeltuin).
+  const isMailbox = (pathname || '').includes('/mailbox');
+  const hideBrandBanner = isMailbox;
 
   return (
     <ApRoleContext.Provider value={contextValue}>
       {!hideBrandBanner && <BrandBanner ctx={contextValue} />}
-      {isAdmin && <RoleSwitcherBanner ctx={contextValue} />}
+      {/* Test-modus / rol-switcher verwijderd — dit is de productie-omgeving, geen speeltuin.
+          Terugzetten kan door de volgende regel te ontcommentariëren:
+          {isAdmin && <RoleSwitcherBanner ctx={contextValue} />} */}
       {children}
     </ApRoleContext.Provider>
   );

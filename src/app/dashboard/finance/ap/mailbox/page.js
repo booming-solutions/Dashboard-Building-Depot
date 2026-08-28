@@ -65,6 +65,9 @@ function fmtMoney(v, cur) {
   return (cur || 'XCG') + ' ' + new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 function fmtDate(s) { return s ? new Date(s).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit' }) : '—'; }
+function fmtDateTime(s) {
+  return s ? new Date(s).toLocaleString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+}
 function daysOpen(s) { return s ? Math.max(0, Math.floor((Date.now() - new Date(s).getTime()) / 86400000)) : 0; }
 function initials(name) {
   if (!name) return '?';
@@ -91,6 +94,10 @@ export default function MailboxPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
+  const [snaps, setSnaps] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [dismissed, setDismissed] = useState(() => new Set());
 
   const [folder, setFolder] = useState('inbox');
   const [q, setQ] = useState('');
@@ -98,6 +105,7 @@ export default function MailboxPage() {
   const [fCat, setFCat] = useState('');
   const [fEnt, setFEnt] = useState('');
   const [mail, setMail] = useState(null);
+  const [sort, setSort] = useState({ key: 'received_at', dir: 'asc' });
 
   const clerkColor = useCallback((id) => {
     const i = clerks.findIndex((c) => c.id === id);
@@ -107,13 +115,19 @@ export default function MailboxPage() {
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [{ data: mb, error: e1 }, { data: cl }] = await Promise.all([
+    const [{ data: mb, error: e1 }, { data: cl }, { data: meta }, { data: sn }, { data: rl }] = await Promise.all([
       supabase.from('ap_mailbox').select('*').order('received_at', { ascending: true }),
       supabase.from('profiles').select('id, full_name, role').in('role', ['ap_clerk', 'admin']).eq('is_active', true).order('full_name'),
+      supabase.from('ap_mailbox_meta').select('value_ts').eq('key', 'last_sync_at').maybeSingle(),
+      supabase.from('ap_mailbox_snapshots').select('*').order('snapshot_date', { ascending: false }).limit(120),
+      supabase.from('ap_mailbox_routing').select('match_type, match_value, clerk_id, active'),
     ]);
     if (e1) setErr(e1.message);
     setRows((mb || []).map((r) => ({ ...r, _age: daysOpen(r.received_at) })));
     setClerks(cl || []);
+    setLastSync(meta?.value_ts || null);
+    setSnaps(sn || []);
+    setRules(rl || []);
     setLoading(false);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
@@ -139,13 +153,11 @@ export default function MailboxPage() {
   async function setCategory(row, doc_type) { await patch(row.id, { doc_type }, 'categorie', { van: row.doc_type, naar: doc_type }); }
 
   async function assign(row, clerkId) {
+    // Alleen toewijzen. Het "voortaan altijd"-leren gebeurt via de voorstellen-strook bovenaan
+    // (verschijnt zodra je een leverancier vaak genoeg aan dezelfde persoon toewijst).
     const fields = { assigned_clerk: clerkId || null, assigned_at: clerkId ? new Date().toISOString() : null, assigned_by: effectiveProfileId };
     if (clerkId && row.status === 'nieuw') fields.status = 'toegewezen';
     await patch(row.id, fields, 'toegewezen', { clerk: clerkName(clerkId) });
-    if (clerkId && row.vendor_guess) {
-      const always = window.confirm(`Mails van "${row.vendor_guess}" voortaan automatisch aan ${clerkName(clerkId)} toewijzen? (ook de openstaande van nu)`);
-      if (always) await applyRouting(row.vendor_guess, clerkId);
-    }
   }
 
   async function applyRouting(vendor, clerkId) {
@@ -163,11 +175,14 @@ export default function MailboxPage() {
     await load(); setBusy(false);
   }
 
+  function dismissSuggestion(vendor) { setDismissed((d) => new Set(d).add((vendor || '').toLowerCase())); }
+  async function acceptSuggestion(vendor, clerkId) { await applyRouting(vendor, clerkId); }
+
   async function setDest(row, key) {
     if (!key) return;
     if (key === 'factuur_gevraagd') {
       const ext = row.sender_email && !/building-depot\.net$/i.test(row.sender_email) ? row.sender_email : '';
-      setMail({ row, to: ext });
+      setMail({ row, to: ext, kind: 'invoice' });
       return;
     }
     await patch(row.id, {
@@ -208,14 +223,15 @@ export default function MailboxPage() {
     try {
       const res = await fetch('/api/mailbox/resend-request', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: mail.to, vendor: mail.row.vendor_guess, invoice_number: mail.row.invoice_number }),
+        body: JSON.stringify({ to: mail.to, vendor: mail.row.vendor_guess, invoice_number: mail.row.invoice_number, kind: mail.kind || 'invoice' }),
       });
       const j = await res.json();
       if (!j.ok) throw new Error(j.error || 'Versturen mislukt');
+      const resolution = mail.kind === 'statement' ? 'facturen_gevraagd' : 'factuur_gevraagd';
       await patch(mail.row.id, {
         status: 'factuur_gevraagd', outlook_folder: 'Factuur gevraagd',
-        resolved_by: effectiveProfileId, resolved_at: new Date().toISOString(), resolution: 'factuur_gevraagd',
-      }, 'factuur_gevraagd', { to: mail.to });
+        resolved_by: effectiveProfileId, resolved_at: new Date().toISOString(), resolution,
+      }, resolution, { to: mail.to, kind: mail.kind || 'invoice' });
       setMail(null);
     } catch (e) { setErr(e.message); }
     setBusy(false);
@@ -234,10 +250,27 @@ export default function MailboxPage() {
     return true;
   }, [fClerk, fCat, fEnt, q]);
 
+  const SORT_ACC = {
+    received_at: (r) => r.received_at || '',
+    vendor_guess: (r) => (r.vendor_guess || '').toLowerCase(),
+    ref: (r) => (r.invoice_number || r.po_number || '').toLowerCase(),
+    amount: (r) => (r.amount == null ? Number.NEGATIVE_INFINITY : parseFloat(r.amount)),
+    doc_type: (r) => r.doc_type || '',
+    ledger_match: (r) => r.ledger_match || '',
+    assigned: (r) => clerkName(r.assigned_clerk).toLowerCase(),
+  };
   const folderRows = useMemo(() => {
     const f = FOLDERS.find((x) => x.key === folder);
-    return rows.filter(f.test).filter(passFilter);
-  }, [rows, folder, passFilter]);
+    const list = rows.filter(f.test).filter(passFilter);
+    const acc = SORT_ACC[sort.key] || SORT_ACC.received_at;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const av = acc(a), bv = acc(b);
+      if (av < bv) return -dir;
+      if (av > bv) return dir;
+      return 0;
+    });
+  }, [rows, folder, passFilter, sort, clerkName]);
 
   const counts = useMemo(() => {
     const c = {}; FOLDERS.forEach((f) => { c[f.key] = rows.filter(f.test).length; }); return c;
@@ -264,6 +297,46 @@ export default function MailboxPage() {
   }, [rows]);
   const scopeLabel = (v) => (v === '__none__' ? 'niet toegewezen' : v === '__other__' ? 'overig' : (LADIES.find((l) => l.id === v)?.label || 'alle clerks'));
 
+  // Wekelijkse KPI-historie (maandag-metingen) — beweegt mee met de naam-filter.
+  const scopeClerkId = fClerk && fClerk !== '__none__' && fClerk !== '__other__' ? fClerk : null;
+  const history = useMemo(() => {
+    const seen = new Set(); const out = [];
+    for (const s of snaps) {
+      if (scopeClerkId ? s.clerk_id !== scopeClerkId : s.clerk_id !== null) continue;
+      if (seen.has(s.snapshot_date)) continue;
+      seen.add(s.snapshot_date); out.push(s);
+      if (out.length >= 4) break;
+    }
+    return out;
+  }, [snaps, scopeClerkId]);
+
+  // Voorstellen: leverancier die >=3x handmatig naar dezelfde persoon ging, nog geen vaste regel,
+  // en met een duidelijke voorkeur (geen split over meerdere personen, bv. per entiteit).
+  const suggestions = useMemo(() => {
+    const ruleVendors = new Set(rules.filter((r) => r.active && r.match_type === 'vendor_name').map((r) => (r.match_value || '').toLowerCase()));
+    const byVendor = new Map();
+    rows.forEach((r) => {
+      if (!r.assigned_clerk || !r.vendor_guess || r.vendor_guess === '(onbekend)') return;
+      if (!byVendor.has(r.vendor_guess)) byVendor.set(r.vendor_guess, {});
+      const t = byVendor.get(r.vendor_guess);
+      t[r.assigned_clerk] = (t[r.assigned_clerk] || 0) + 1;
+    });
+    const out = [];
+    byVendor.forEach((tally, vendor) => {
+      if (ruleVendors.has(vendor.toLowerCase()) || dismissed.has(vendor.toLowerCase())) return;
+      const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+      const [topClerk, topN] = entries[0];
+      const secondN = entries[1] ? entries[1][1] : 0;
+      if (topN >= 3 && secondN < 2) out.push({ vendor, clerkId: topClerk, count: topN });
+    });
+    return out.sort((a, b) => b.count - a.count).slice(0, 6);
+  }, [rows, rules, dismissed]);
+
+  function sortBy(key) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+  }
+  const arrow = (k) => (sort.key === k ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕');
+
   async function doExport() {
     const rowsOut = rows.filter(passFilter).map((r) => ({
       Datum: fmtDate(r.received_at), Leverancier: r.vendor_guess || '',
@@ -284,15 +357,52 @@ export default function MailboxPage() {
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <h1 className="text-[20px] font-extrabold text-[#1B3A5C]">Mailbox</h1>
         <span className="text-[12px] text-[#1B3A5C]/50">{rows.length} berichten · {counts.inbox} in werklijst</span>
+        <span className="text-[12px] text-[#1B3A5C]/40" title="Moment waarop de mailbox voor het laatst automatisch is opgehaald">🕑 Laatst bijgewerkt: {fmtDateTime(lastSync)}</span>
         <button onClick={doExport} disabled={busy}
           className="ml-auto text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-[#1B3A5C] text-white hover:bg-[#152e49] disabled:opacity-50">
           ⬇ Exporteer acties (Excel)
         </button>
       </div>
+
+      {/* Verdeling per persoon — bovenaan; klik om meteen op die persoon te filteren */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[#1B3A5C]/45 mr-1">👥 Verdeling werklijst</span>
+        {[...LADIES.map((l) => ({ key: l.id, label: l.label })), { key: '__none__', label: 'Niet toegewezen' }, { key: '__other__', label: 'Overig' }].map((b) => {
+          const cnt = b.key === '__none__' ? verdeling.none : b.key === '__other__' ? verdeling.other : (verdeling[b.key] || 0);
+          const active = fClerk === b.key;
+          return (
+            <button key={b.key} onClick={() => setFClerk(active ? '' : b.key)}
+              title="Klik om alleen deze regels te tonen"
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12.5px] border transition-colors ${active ? 'border-[#2f6fed] bg-blue-50 text-[#1B3A5C]' : 'border-gray-200 bg-white text-[#1B3A5C]/80 hover:bg-gray-50'}`}>
+              <span className="font-medium">{b.label}</span>
+              <span className="font-bold tabular-nums">{cnt}</span>
+            </button>
+          );
+        })}
+        {fClerk && <button onClick={() => setFClerk('')} className="text-[12px] text-[#2f6fed] hover:underline ml-1">× filter wissen</button>}
+      </div>
+
       {err && <div className="mb-3 text-[12px] bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2">{err}</div>}
 
-      {/* overzicht + verdeling */}
-      <div className="mb-4 grid grid-cols-1 lg:grid-cols-[1fr_330px] gap-4">
+      {/* voorstellen — leren met melding */}
+      {suggestions.length > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <div className="text-[12px] font-semibold text-amber-900 mb-2">💡 Voorstellen — vaste toewijzing leren</div>
+          <div className="space-y-1.5">
+            {suggestions.map((s) => (
+              <div key={s.vendor} className="flex items-center gap-2 flex-wrap text-[12.5px]">
+                <span className="text-amber-900">Je wijst <b>{s.vendor}</b> vaak toe aan <b>{clerkName(s.clerkId)}</b> ({s.count}×). Voortaan altijd?</span>
+                <button onClick={() => acceptSuggestion(s.vendor, s.clerkId)} disabled={busy}
+                  className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-[#1B3A5C] text-white hover:bg-[#152e49] disabled:opacity-50">✓ Vaste regel maken</button>
+                <button onClick={() => dismissSuggestion(s.vendor)} className="text-[12px] text-amber-800/70 hover:underline">negeren</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* overzicht (volle breedte) */}
+      <div className="mb-4">
         {/* overzichtstabel */}
         <div className="bg-white border border-gray-200 rounded-xl p-3 overflow-x-auto">
           <div className="text-[12px] font-semibold text-[#1B3A5C]/60 mb-2">
@@ -316,34 +426,23 @@ export default function MailboxPage() {
                 <td className="text-right px-3 py-1.5">{overview.total}</td>
                 {overview.buckets.map((x, i) => <td key={i} className="text-right px-3 py-1.5">{x}</td>)}
               </tr>
-              {['Gisteren', '-1 week', '-1 maand'].map((lab) => (
-                <tr key={lab} className="text-[#1B3A5C]/45 border-t border-gray-100">
-                  <td className="text-left px-3 py-1.5">{lab}</td>
-                  {[0, 1, 2, 3, 4].map((i) => <td key={i} className="text-right px-3 py-1.5">—</td>)}
+              {history.length === 0 ? (
+                <tr className="border-t border-gray-100">
+                  <td colSpan={6} className="text-left px-3 py-2 text-[11px] text-[#1B3A5C]/40 italic">Nog geen meting — de historie vult zich vanaf de eerstvolgende maandag.</td>
+                </tr>
+              ) : history.map((s) => (
+                <tr key={s.snapshot_date} className="text-[#1B3A5C]/55 border-t border-gray-100">
+                  <td className="text-left px-3 py-1.5">{fmtDate(s.snapshot_date)}</td>
+                  <td className="text-right px-3 py-1.5">{s.assigned_open}</td>
+                  <td className="text-right px-3 py-1.5">{s.age_0_2}</td>
+                  <td className="text-right px-3 py-1.5">{s.age_3_7}</td>
+                  <td className="text-right px-3 py-1.5">{s.age_8_30}</td>
+                  <td className="text-right px-3 py-1.5">{s.age_30plus}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div className="text-[11px] text-[#1B3A5C]/40 mt-1 italic">Historie vult zich vanaf de eerste maandag-meting.</div>
-        </div>
-
-        {/* verdeling + legenda */}
-        <div className="bg-white border border-gray-200 rounded-xl p-3">
-          <div className="text-[12px] font-semibold text-[#1B3A5C]/60 mb-2">👥 Verdeling werklijst — klik om te filteren</div>
-          <div className="space-y-1 mb-3">
-            {[...LADIES.map((l) => ({ key: l.id, label: l.label })), { key: '__none__', label: 'Niet toegewezen' }, { key: '__other__', label: 'Overig' }].map((b) => {
-              const cnt = b.key === '__none__' ? verdeling.none : b.key === '__other__' ? verdeling.other : (verdeling[b.key] || 0);
-              const active = fClerk === b.key;
-              return (
-                <button key={b.key} onClick={() => setFClerk(active ? '' : b.key)}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[12.5px] border transition-colors ${active ? 'border-[#2f6fed] bg-blue-50' : 'border-transparent hover:bg-gray-50'}`}>
-                  <span className="font-medium text-[#1B3A5C]">{b.label}</span>
-                  <span className="font-bold tabular-nums text-[#1B3A5C]">{cnt}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="text-[11px] text-[#1B3A5C]/40 italic">De verdeelregels staan vastgepind bovenaan de tabel.</div>
+          <div className="text-[11px] text-[#1B3A5C]/40 mt-1 italic">Wekelijkse meting (maandag 07:00). De bovenste rij "Nu" is live; de rijen eronder zijn eerdere metingen.</div>
         </div>
       </div>
 
@@ -388,13 +487,13 @@ export default function MailboxPage() {
         <table className="w-full border-separate border-spacing-0 min-w-[1220px] text-[13px]">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-[#1B3A5C]/50">
-              <th className="sticky top-9 left-0 z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[62px]">Datum</th>
-              <th className="sticky top-9 left-[62px] z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[250px] shadow-[6px_0_6px_-6px_rgba(0,0,0,0.12)]">Leverancier</th>
-              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Factuur / PO</th>
-              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-right font-semibold px-3 py-2 border-b border-gray-200">Bedrag</th>
-              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Categorie</th>
-              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Ledger-status</th>
-              <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Toegewezen</th>
+              <th onClick={() => sortBy('received_at')} title="Sorteren op datum" className="cursor-pointer select-none sticky top-9 left-0 z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[62px] hover:text-[#1B3A5C]">Datum<span className="text-[#1B3A5C]/30">{arrow('received_at')}</span></th>
+              <th onClick={() => sortBy('vendor_guess')} title="Sorteren op leverancier" className="cursor-pointer select-none sticky top-9 left-[62px] z-30 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 w-[250px] shadow-[6px_0_6px_-6px_rgba(0,0,0,0.12)] hover:text-[#1B3A5C]">Leverancier<span className="text-[#1B3A5C]/30">{arrow('vendor_guess')}</span></th>
+              <th onClick={() => sortBy('ref')} title="Sorteren op factuur/PO" className="cursor-pointer select-none sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 hover:text-[#1B3A5C]">Factuur / PO<span className="text-[#1B3A5C]/30">{arrow('ref')}</span></th>
+              <th onClick={() => sortBy('amount')} title="Sorteren op bedrag" className="cursor-pointer select-none sticky top-9 z-20 bg-[#f7f9fc] text-right font-semibold px-3 py-2 border-b border-gray-200 hover:text-[#1B3A5C]">Bedrag<span className="text-[#1B3A5C]/30">{arrow('amount')}</span></th>
+              <th onClick={() => sortBy('doc_type')} title="Sorteren op categorie" className="cursor-pointer select-none sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 hover:text-[#1B3A5C]">Categorie<span className="text-[#1B3A5C]/30">{arrow('doc_type')}</span></th>
+              <th onClick={() => sortBy('ledger_match')} title="Sorteren op ledger-status" className="cursor-pointer select-none sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 hover:text-[#1B3A5C]">Ledger-status<span className="text-[#1B3A5C]/30">{arrow('ledger_match')}</span></th>
+              <th onClick={() => sortBy('assigned')} title="Sorteren op toegewezen persoon — zo krijg je bv. het hele lijstje van Ethy bij elkaar" className="cursor-pointer select-none sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200 hover:text-[#1B3A5C]">Toegewezen<span className="text-[#1B3A5C]/30">{arrow('assigned')}</span></th>
               <th className="sticky top-9 z-20 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Actie / bestemming</th>
             </tr>
           </thead>
@@ -462,6 +561,13 @@ export default function MailboxPage() {
                       <option value="">{curDest ? '— verplaatsen —' : 'Actie kiezen…'}</option>
                       {DEST.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
                     </select>
+                    {r.doc_type === 'statement' && (
+                      <button
+                        onClick={() => { const ext = r.sender_email && !/building-depot\.net$/i.test(r.sender_email) ? r.sender_email : ''; setMail({ row: r, to: ext, kind: 'statement' }); }}
+                        disabled={busy}
+                        title="Vraag de onderliggende originele facturen op bij de leverancier"
+                        className="mt-1.5 block text-[11px] font-medium text-[#2f6fed] hover:underline">📄 Originele facturen opvragen</button>
+                    )}
                   </td>
                 </tr>
               );
@@ -474,18 +580,24 @@ export default function MailboxPage() {
       {mail && (
         <div className="fixed inset-0 bg-[#16233b]/45 flex items-center justify-center p-4 z-50" onClick={() => setMail(null)}>
           <div className="bg-white rounded-2xl max-w-[640px] w-full shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-gray-200 font-semibold text-[#1B3A5C]">✉️ Factuur opvragen bij {mail.row.vendor_guess}</div>
+            <div className="px-5 py-4 border-b border-gray-200 font-semibold text-[#1B3A5C]">
+              {mail.kind === 'statement' ? `📄 Originele facturen opvragen bij ${mail.row.vendor_guess}` : `✉️ Factuur opvragen bij ${mail.row.vendor_guess}`}
+            </div>
             <div className="px-5 py-4 max-h-[62vh] overflow-auto space-y-3">
               <label className="block text-[12px] font-semibold text-[#1B3A5C]/70">Aan (e-mail leverancier)</label>
               <input value={mail.to} onChange={(e) => setMail({ ...mail, to: e.target.value })} placeholder="leverancier@voorbeeld.com"
                 className="w-full text-[13px] px-3 py-2 border border-gray-200 rounded-lg" />
               <div className="rounded-lg border border-gray-200 bg-[#fbfcfe] p-3 text-[12.5px] whitespace-pre-wrap">
                 <div className="text-[10.5px] uppercase tracking-wide text-[#1B3A5C]/50 font-bold mb-1">Nederlands</div>
-                {`Beste ${mail.row.vendor_guess},\n\nIn onze administratie ontbreekt de onderliggende factuur${mail.row.invoice_number ? ` met referentie ${mail.row.invoice_number}` : ''}. Zou u de factuur (bij voorkeur als PDF) willen (her)sturen naar ap.invoices@building-depot.net? Dan verwerken wij hem direct.\n\nAlvast bedankt.\n\nMet vriendelijke groet,\nBuilding Depot — Crediteurenadministratie`}
+                {mail.kind === 'statement'
+                  ? `Beste ${mail.row.vendor_guess},\n\nWij ontvingen een rekeningoverzicht (statement), maar om de betaling te kunnen verwerken hebben wij de onderliggende originele facturen nodig. Zou u die (bij voorkeur als PDF) willen sturen naar ap.invoices@building-depot.net? Dan verwerken wij ze direct.\n\nAlvast bedankt.\n\nMet vriendelijke groet,\nBuilding Depot — Crediteurenadministratie`
+                  : `Beste ${mail.row.vendor_guess},\n\nIn onze administratie ontbreekt de onderliggende factuur${mail.row.invoice_number ? ` met referentie ${mail.row.invoice_number}` : ''}. Zou u de factuur (bij voorkeur als PDF) willen (her)sturen naar ap.invoices@building-depot.net? Dan verwerken wij hem direct.\n\nAlvast bedankt.\n\nMet vriendelijke groet,\nBuilding Depot — Crediteurenadministratie`}
               </div>
               <div className="rounded-lg border border-gray-200 bg-[#fbfcfe] p-3 text-[12.5px] whitespace-pre-wrap">
                 <div className="text-[10.5px] uppercase tracking-wide text-[#1B3A5C]/50 font-bold mb-1">English</div>
-                {`Dear ${mail.row.vendor_guess},\n\nWe are missing the underlying invoice${mail.row.invoice_number ? ` (ref ${mail.row.invoice_number})` : ''}. Could you please (re)send it (preferably as PDF) to ap.invoices@building-depot.net so we can process it right away?\n\nThank you in advance.\n\nKind regards,\nBuilding Depot — Accounts Payable`}
+                {mail.kind === 'statement'
+                  ? `Dear ${mail.row.vendor_guess},\n\nWe received a statement of account, but in order to process payment we need the underlying original invoices. Could you please send them (preferably as PDF) to ap.invoices@building-depot.net so we can process them right away?\n\nThank you in advance.\n\nKind regards,\nBuilding Depot — Accounts Payable`
+                  : `Dear ${mail.row.vendor_guess},\n\nWe are missing the underlying invoice${mail.row.invoice_number ? ` (ref ${mail.row.invoice_number})` : ''}. Could you please (re)send it (preferably as PDF) to ap.invoices@building-depot.net so we can process it right away?\n\nThank you in advance.\n\nKind regards,\nBuilding Depot — Accounts Payable`}
               </div>
             </div>
             <div className="px-5 py-3 border-t border-gray-200 flex gap-2 justify-end">
