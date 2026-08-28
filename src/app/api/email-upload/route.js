@@ -1587,12 +1587,12 @@ async function processContainerList(json) {
       if (d && d >= CUTOFF) st.sept++;
       if (hasC) st.cont++;
       if (d && d >= CUTOFF && hasC) { st.both++; }
-      if (d && d >= CUTOFF && st.sample_sept.length < 4) {
-        st.sample_sept.push({ po: row[_poKey], shipKey: _shipKey, shipRaw: row[_shipKey], shipType: typeof row[_shipKey] });
+      if (d && d >= CUTOFF && st.sample_sept.length < 3) {
+        st.sample_sept.push(row);
       }
     });
-    console.log('Containerlijst stat: ' + JSON.stringify(st));
-    console.log('Containerlijst kolomsleutels: ' + JSON.stringify(keys));
+    console.log('Containerlijst stat rows=' + st.rows + ' sept=' + st.sept + ' cont=' + st.cont);
+    console.log('Containerlijst volledige rijen: ' + JSON.stringify(st.sample_sept));
   })();
   var poNums = Object.keys(byPo);
   if (!poNums.length) {
