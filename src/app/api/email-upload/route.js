@@ -1448,6 +1448,19 @@ function _ofIso(v) {
   var d = new Date(v);
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
+function _clDate(v) {
+  // Robuuste datum-parser voor de containerlijst (snapt ook DD-MM-YYYY / DD/MM/YYYY).
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+  if (typeof v === 'number') { var dn = new Date(Math.round((v - 25569) * 86400000)); return isNaN(dn.getTime()) ? null : dn.toISOString().slice(0, 10); }
+  var str = String(v).trim();
+  var m = /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/.exec(str);        // YYYY-MM-DD
+  if (m) return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
+  m = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/.exec(str);            // DD-MM-YYYY (NL)
+  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  var d2 = new Date(str);
+  return isNaN(d2.getTime()) ? null : d2.toISOString().slice(0, 10);
+}
 function _ofNum(v) {
   if (v == null || v === '') return null;
   var n = parseFloat(String(v).replace(/,/g, ''));
@@ -1546,7 +1559,7 @@ async function processContainerList(json) {
   json.forEach(function(row) {
     var po = String(row[findCol(keys, ['po header'])] || '').trim();
     if (!po) return;
-    var de = _ofIso(row[findCol(keys, ['date expected'])]);
+    var de = _clDate(row[findCol(keys, ['date expected'])]);
     if (!de || de < CUTOFF) return;
     var ship = String(row[findCol(keys, ['special ship to'])] || '').toUpperCase();
     if (!ship) return;
