@@ -1,5 +1,5 @@
 /* ============================================================
-   BESTAND: route_email_v31.js
+   BESTAND: route_email_v32.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
 
    WIJZIGING v31:
@@ -1598,10 +1598,12 @@ async function processContainerList(json) {
     (cres.data || []).forEach(function(c) { (contByPo[c.po_id] = contByPo[c.po_id] || []).push(c); });
   }
 
-  var key = process.env.VESSELFINDER_API_KEY;
+  // GEEN VesselFinder-aanroep in de import (te traag -> worker-timeout).
+  // De import zet per PO precies één lead (shared=false) en de rest op shared=true.
+  // De cron (/api/order-flow/track-refresh) traceert de leads (1 per PO) en zet
+  // de scheepsdata door naar de shared siblings. Direct verversen kan met de knop
+  // "Ververs posities".
   var now = new Date().toISOString();
-  var tracked = 0, queued = 0, errors = 0, remaining = null;
-
   for (var p = 0; p < matchedPoIds.length; p++) {
     var poId = matchedPoIds[p];
     var list = (contByPo[poId] || []).slice().sort(function(a, bb) { return String(a.container_no).localeCompare(String(bb.container_no)); });
@@ -1611,68 +1613,25 @@ async function processContainerList(json) {
     var lead = list.find(function(c) { return c.tracking_status === 'success' && !c.shared; }) ||
                list.find(function(c) { return CONTAINER.test(String(c.container_no || '').toUpperCase()); }) || list[0];
 
-    // Precies één lead (shared=false), rest shared=true
     var otherIds = list.filter(function(c) { return c.id !== lead.id; }).map(function(c) { return c.id; });
     if (lead.shared) await getSupabase().from('order_flow_containers').update({ shared: false }).eq('id', lead.id);
     if (otherIds.length) await getSupabase().from('order_flow_containers').update({ shared: true }).in('id', otherIds);
 
-    // Lead al getrackt? Geen nieuwe VesselFinder-aanroep (geen kosten),
-    // maar wel de scheepsdata doorzetten naar de (nu shared) siblings.
-    if (lead.tracking_status === 'success') {
-      if (otherIds.length) {
-        await getSupabase().from('order_flow_containers').update({
-          eta: lead.eta, carrier: lead.carrier,
-          pol_name: lead.pol_name, pol_lat: lead.pol_lat, pol_lng: lead.pol_lng,
-          pod_name: lead.pod_name, pod_lat: lead.pod_lat, pod_lng: lead.pod_lng,
-          vessel_name: lead.vessel_name, vessel_imo: lead.vessel_imo, vessel_mmsi: lead.vessel_mmsi,
-          vessel_lat: lead.vessel_lat, vessel_lng: lead.vessel_lng, vessel_ais_at: lead.vessel_ais_at,
-          tracking_progress: lead.tracking_progress, tracking_status: 'success', tracking_updated_at: now,
-        }).in('id', otherIds);
-      }
-      continue;
+    // Is de lead al getrackt? Dan de scheepsdata doorzetten naar de siblings.
+    if (lead.tracking_status === 'success' && otherIds.length) {
+      await getSupabase().from('order_flow_containers').update({
+        eta: lead.eta, carrier: lead.carrier,
+        pol_name: lead.pol_name, pol_lat: lead.pol_lat, pol_lng: lead.pol_lng,
+        pod_name: lead.pod_name, pod_lat: lead.pod_lat, pod_lng: lead.pod_lng,
+        vessel_name: lead.vessel_name, vessel_imo: lead.vessel_imo, vessel_mmsi: lead.vessel_mmsi,
+        vessel_lat: lead.vessel_lat, vessel_lng: lead.vessel_lng, vessel_ais_at: lead.vessel_ais_at,
+        tracking_progress: lead.tracking_progress, tracking_status: 'success', tracking_updated_at: now,
+      }).in('id', otherIds);
     }
-
-    if (!key) continue; // geen API key -> alleen vullen, cron traceert later
-    if (tracked >= MAX_TRACK) continue; // limiet bereikt -> rest volgt via cron/volgende import
-
-    var container = String(lead.container_no || '').trim().toUpperCase();
-    if (container.length !== 11) continue;
-    var sealine = (String(lead.sealine || '').trim().toUpperCase()) || 'AUTO';
-
-    var resp, j2;
-    try {
-      resp = await fetch(VF_API + '/' + encodeURIComponent(key) + '/' + encodeURIComponent(container) + '/' + encodeURIComponent(sealine), { headers: { Accept: 'application/json' } });
-      j2 = await resp.json();
-    } catch (e) { errors++; continue; }
-
-    var status = j2 && j2.status;
-    if (resp.status === 202 || status === 'queued' || status === 'processing') {
-      queued++;
-      await getSupabase().from('order_flow_containers').update({ tracking_status: 'processing', tracking_message: 'VesselFinder verwerkt de aanvraag', tracking_updated_at: now }).eq('id', lead.id);
-      continue; // cron pikt 'm later op en zet door naar siblings
-    }
-    if (status === 'error' || !resp.ok) {
-      errors++;
-      await getSupabase().from('order_flow_containers').update({ tracking_status: 'error', tracking_message: (j2 && (j2.errorDescription || j2.errorCode)) || ('HTTP ' + resp.status), tracking_updated_at: now }).eq('id', lead.id);
-      continue;
-    }
-
-    // Succes: lead bijwerken + doorzetten naar de overige containers van deze PO
-    var patch = _vfPatch(j2, now);
-    var leadPatch = Object.assign({}, patch);
-    if (sealine !== 'AUTO') leadPatch.sealine = sealine;
-    await getSupabase().from('order_flow_containers').update(leadPatch).eq('id', lead.id);
-    if (otherIds.length) await getSupabase().from('order_flow_containers').update(patch).in('id', otherIds);
-
-    // Vroegste ETA oprollen naar de PO
-    if (patch.eta) await getSupabase().from('order_flow').update({ eta: patch.eta, eta_source: 'vesselfinder' }).eq('id', poId);
-
-    remaining = (j2 && j2.subscription && j2.subscription.containersRemaining != null) ? j2.subscription.containersRemaining : remaining;
-    tracked++;
   }
 
-  console.log('Containerlijst: ' + rows.length + ' containers voor ' + matched + " PO's | getrackt " + tracked + ', in wachtrij ' + queued + ', fouten ' + errors + (remaining != null ? (', listings over ' + remaining) : ''));
-  return { table: 'order_flow_containers', rows_imported: rows.length, pos_matched: matched, pos_unmatched: unmatched, tracked: tracked, queued: queued, errors: errors, containers_remaining: remaining };
+  console.log('Containerlijst: ' + rows.length + ' containers voor ' + matched + " PO's toegevoegd (tracking via cron)");
+  return { table: 'order_flow_containers', rows_imported: rows.length, pos_matched: matched, pos_unmatched: unmatched };
 }
 
 /* ══════════════════════════════════════════════
