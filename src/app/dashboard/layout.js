@@ -1,32 +1,38 @@
 /* ============================================================
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
-   (overschrijft de bestaande layout.js)    
-
+   (overschrijft de bestaande layout.js)
+   WIJZIGINGEN V27.20:
+   - REPORT_MAP uitgebreid met de logistics-rapporten:
+     · /dashboard/logistics/order-flow  → logistics_order_flow
+     · /dashboard/logistics/vessel-map  → logistics_vessel_map
+   - Logistiek: de rolcheck (isLogistics) is vervangen door een
+     check op rapporttoegang. Admin ziet alles; andere gebruikers
+     zien het Logistiek-menu alleen als ze minimaal één
+     logistics-rapport in allowed_reports hebben. De items binnen
+     het menu worden per gebruiker gefilterd (net als Omzet,
+     Voorraad en HR).
+   - Versie naar V27.20
    WIJZIGINGEN V27.19:
    - Finance: 'AR-ontwikkeling' link toegevoegd
      (/dashboard/finance/ar).
    - Versie naar V27.19
-
    WIJZIGINGEN V27.18:
    - Logistiek menu: 'Schepen (wereldkaart)' toegevoegd
      (/dashboard/logistics/vessel-map).
    - Versie naar V27.18
-
    WIJZIGINGEN V27.17:
    - Marketing menu toegevoegd (Website foto-status →
      /dashboard/marketing/website). Zichtbaar voor
      admin/cfo/manager (pas de rollenlijst aan op de regel
      'const isMarketing = ...').
    - Versie naar V27.17
-
    WIJZIGINGEN V27.16:
    - Logistiek menu toegevoegd met Order Flow portal
      (/dashboard/logistics/order-flow). Zichtbaar voor
      admin/cfo/manager/ap_approver/ap_clerk (pas de rollenlijst
      aan op de regel 'const isLogistics = ...').
    - Versie naar V27.16
-
    WIJZIGINGEN V27.15:
    - Finance menu vereenvoudigd tot 3 hoofdlinks:
      · AP Dashboard  (van hieruit verder navigeren)
@@ -36,7 +42,6 @@
      Worklist, PCS Import, Bank Import) zijn nu alleen bereikbaar
      via de tegels op de dashboards zelf.
    - Versie naar V27.15
-
    WIJZIGINGEN V27.14:
    - Omzet/Index: badge (concept) toegevoegd.
    - Voorraad/Price Changes: tijdelijk verwijderd uit menu
@@ -44,7 +49,6 @@
    - Finance: 'Rapportages' link toegevoegd.
    - Finance: 'AP Sandbox' toegevoegd als uitvouwbaar submenu.
    - Versie naar V27.14
-
    WIJZIGINGEN V27.13:
    - Finance menu toegevoegd (Accounts Payable suite). Zichtbaar
      voor admin/cfo/ap_approver/ap_clerk. Submenu's:
@@ -55,31 +59,25 @@
      · Eagle Sync
      · Project Clean Up (PCS / Bank / Werklijst)
    - Versie naar V27.13
-
    WIJZIGINGEN V27.12:
    - Admin menu: Salaris Import (Celery C4 + C16) toegevoegd
    - Versie naar V27.12
-
    WIJZIGINGEN V27.11:
    - Urenplanning menu-item verwijderd (pagina was overbodig)
    - Admin menu: Dyflexis Planning + Dyflexis Actuals toegevoegd
-
    WIJZIGINGEN V27.07 (oud):
    - BUM-rol opgeheven, BUMs zijn nu 'manager'
    - isBum check vervangen door isManager
    - Urenplanning zichtbaar voor admin + manager
    ============================================================ */
 'use client';
-
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
-
-const APP_VERSION = 'V27.19';
-
+const APP_VERSION = 'V27.20';
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
   const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
@@ -87,7 +85,6 @@ function NavSubItem({ item, pathname, sidebarOpen }) {
   const isActive = isSelfActive || isChildActive;
   const [subOpen, setSubOpen] = useState(isChildActive);
   useEffect(() => { if (isChildActive) setSubOpen(true); }, [isChildActive]);
-
   if (!hasChildren) {
     return (
       <Link href={item.href}
@@ -98,7 +95,6 @@ function NavSubItem({ item, pathname, sidebarOpen }) {
       </Link>
     );
   }
-
   return (
     <div>
       <button onClick={() => setSubOpen(!subOpen)}
@@ -120,12 +116,10 @@ function NavSubItem({ item, pathname, sidebarOpen }) {
     </div>
   );
 }
-
 function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
   const isAnyActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
   const [open, setOpen] = useState(isAnyActive);
   useEffect(() => { if (isAnyActive) setOpen(true); }, [isAnyActive]);
-
   if (!sidebarOpen) {
     return (
       <div className="relative group">
@@ -151,7 +145,6 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
       </div>
     );
   }
-
   return (
     <div>
       <button onClick={() => setOpen(!open)}
@@ -170,21 +163,18 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
     </div>
   );
 }
-
 function LoginModal({ show, onClose, supabase, onSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   if (!show) return null;
-
   async function handleLogin() {
     setLoading(true); setError('');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) { setError(error.message); setLoading(false); }
     else { onSuccess(); onClose(); setEmail(''); setPassword(''); setLoading(false); }
   }
-
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
       <div className="bg-white rounded-2xl p-7 w-[360px] shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -205,7 +195,6 @@ function LoginModal({ show, onClose, supabase, onSuccess }) {
     </div>
   );
 }
-
 export default function DashboardLayout({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -215,7 +204,6 @@ export default function DashboardLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
-
   const loadProfile = useCallback(async (userId) => {
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
@@ -236,7 +224,6 @@ export default function DashboardLayout({ children }) {
       console.error('Profile load error:', e);
     }
   }, [supabase]);
-
   useEffect(() => {
     async function init() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -257,7 +244,6 @@ export default function DashboardLayout({ children }) {
     }
     init();
   }, []);
-
   async function getUser() {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user) {
@@ -268,15 +254,12 @@ export default function DashboardLayout({ children }) {
       setProfile(null);
     }
   }
-
   async function handleLogout() { await supabase.auth.signOut(); setUser(null); setProfile(null); router.push('/'); router.refresh(); }
   function handleRefresh() { setRefreshing(true); window.location.reload(); }
-
   const isAdmin = profile?.role === 'admin';
   const isManager = profile?.role === 'manager';
   const allowedReports = profile?.allowed_reports || [];
-  const hasReport = (id) => isAdmin || allowedReports.includes(id);
-
+  const hasReport = (id) => isAdmin || (!!id && allowedReports.includes(id));
   const REPORT_MAP = {
     '/dashboard/sales': 'sales',
     '/dashboard/sales/forecast': 'sales',
@@ -292,8 +275,9 @@ export default function DashboardLayout({ children }) {
     '/dashboard/hr/salary': 'hr_payroll',
     '/dashboard/hr/urentarget': 'hr_urentarget',
     '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
+    '/dashboard/logistics/order-flow': 'logistics_order_flow',
+    '/dashboard/logistics/vessel-map': 'logistics_vessel_map',
   };
-
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
   const omzetItemsAll = [
     { href: '/dashboard/sales', label: 'Actuals' },
@@ -327,7 +311,6 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
     { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
   ];
-
   // Finance menu — Accounts Payable suite
   const isFinance = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(profile?.role);
   const financeItems = [
@@ -339,26 +322,26 @@ export default function DashboardLayout({ children }) {
   ];
   // Finance-menu tonen aan finance-rollen (volledig) of aan iedereen (alleen de 'everyone'-items)
   const visibleFinanceItems = isFinance ? financeItems : financeItems.filter(i => i.everyone);
-
-  // Logistiek menu — Order Flow portal
-  const isLogistics = ['admin', 'cfo', 'manager', 'ap_approver', 'ap_clerk'].includes(profile?.role);
-  const logisticsItems = [
+  // Logistiek menu — zichtbaarheid via rapporttoegang (niet meer via rol).
+  // Admin ziet alles; andere gebruikers zien alleen de logistics-rapporten
+  // die in hun allowed_reports staan. Staat er geen enkele in, dan verdwijnt
+  // het hele menu (logisticsItems.length === 0).
+  const logisticsItemsAll = [
     { href: '/dashboard/logistics/order-flow', label: 'Order Flow' },
     { href: '/dashboard/logistics/vessel-map', label: 'Schepen (wereldkaart)' },
   ];
-
   // Marketing menu — Website foto-status
   const isMarketing = ['admin', 'cfo', 'manager'].includes(profile?.role);
   const marketingItems = [
     { href: '/dashboard/marketing/website', label: 'Website foto-status' },
   ];
-
   const omzetItems = omzetItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const voorraadItems = voorraadItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const hrItems = hrItemsAll.filter(item => {
     if (typeof item.visible !== 'undefined') return item.visible;
     return hasReport(REPORT_MAP[item.href]);
   });
+  const logisticsItems = logisticsItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
@@ -369,19 +352,16 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/finance/ledger-upload', label: 'Ledger laden', icon: '📒' },
     { href: '/dashboard/admin/stats', label: 'Statistieken', icon: '📊' },
   ];
-
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <LoginModal show={showLogin} onClose={() => setShowLogin(false)} supabase={supabase} onSuccess={getUser} />
       <PageTracker />
       <DataStatusPopup />
-
       <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col transition-all duration-300 fixed h-full z-40`} style={{ background: 'linear-gradient(180deg, #e8eff7 0%, #dce6f1 100%)' }}>
         <div className="p-4 flex items-center gap-3 border-b border-[#c5d4e6]">
           <img src="/logo.png" alt="Logo" className="h-9 w-9 flex-shrink-0 rounded-lg" />
           {sidebarOpen && <span className="font-bold text-[#1B3A5C] leading-tight" style={{ fontSize: '14px', letterSpacing: '0.02em', wordBreak: 'break-word', lineHeight: '1.2' }}>BOOMING SOLUTIONS</span>}
         </div>
-
         <nav className="flex-1 py-4 px-3 overflow-y-auto">
           <div className="space-y-1">
             {/* Overzicht, Rapportages en Bestanden zijn verborgen */}
@@ -389,7 +369,7 @@ export default function DashboardLayout({ children }) {
             {voorraadItems.length > 0 && <NavDropdown icon="📦" label="Voorraad" items={voorraadItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {hrItems.length > 0 && <NavDropdown icon="💰" label="HR" items={hrItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {user && visibleFinanceItems.length > 0 && <NavDropdown icon="💼" label="Finance" items={visibleFinanceItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
-            {isLogistics && <NavDropdown icon="🚢" label="Logistiek" items={logisticsItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
+            {logisticsItems.length > 0 && <NavDropdown icon="🚢" label="Logistiek" items={logisticsItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
             {isMarketing && <NavDropdown icon="📣" label="Marketing" items={marketingItems} pathname={pathname} sidebarOpen={sidebarOpen} />}
           </div>
           {isAdmin && (
@@ -417,7 +397,6 @@ export default function DashboardLayout({ children }) {
             </div>
           )}
         </nav>
-
         <div className="border-t border-[#c5d4e6]">
           <div className="p-4">
             {user ? (
@@ -435,7 +414,6 @@ export default function DashboardLayout({ children }) {
           {sidebarOpen && <div className="px-4 pb-3"><p className="text-[10px] text-[#1B3A5C]/30 font-mono">{APP_VERSION}</p></div>}
         </div>
       </aside>
-
       <main className={`flex-1 ${sidebarOpen ? 'ml-64' : 'ml-20'} transition-all duration-300`}>
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-400 hover:text-[#1B3A5C] transition-colors">
@@ -452,7 +430,6 @@ export default function DashboardLayout({ children }) {
         </header>
         <div className="p-6">{children}</div>
       </main>
-
       <div style={{ position: 'fixed', bottom: 0, left: sidebarOpen ? '256px' : '80px', right: 0, background: 'linear-gradient(135deg, #152238 0%, #1B2E4A 100%)', borderTop: '1px solid rgba(75,163,212,0.15)', padding: '10px 32px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', zIndex: 100, transition: 'left 0.3s' }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" /></svg>
         <span style={{ fontSize: '11px', color: '#64748B', letterSpacing: '0.06em', fontFamily: 'monospace' }}>VERGRENDELD</span>
