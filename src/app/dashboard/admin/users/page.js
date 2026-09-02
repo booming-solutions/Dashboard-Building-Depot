@@ -1,8 +1,13 @@
 /* ============================================================
-   BESTAND: page_admin_v12.js
+   BESTAND: page_admin_v13.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
-   
+
+   WIJZIGING t.o.v. v12:
+   - Schepen (wereldkaart) (logistics_vessel_map) toegevoegd
+     onder Logistiek. Sluit aan op layout.js V27.20, waar het
+     Logistiek-menu op rapporttoegang draait i.p.v. op rol.
+
    WIJZIGING t.o.v. v11:
    - Order Flow (logistics_order_flow) toegevoegd onder Logistiek
    ============================================================ */
@@ -30,6 +35,7 @@ var REPORTS = [
   { id: 'finance_sandbox_ap', label: 'AP Sandbox', group: 'Finance', icon: '🧪' },
   { id: 'finance_reports', label: 'Finance Rapportages', group: 'Finance', icon: '📑' },
   { id: 'logistics_order_flow', label: 'Order Flow', group: 'Logistiek', icon: '🚢' },
+  { id: 'logistics_vessel_map', label: 'Schepen (wereldkaart)', group: 'Logistiek', icon: '🗺️' },
   { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },
   { id: 'files', label: 'Bestanden', group: 'Algemeen', icon: '📁' },
 ];
