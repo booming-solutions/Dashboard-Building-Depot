@@ -61,6 +61,11 @@ const LADY_IDS = LADIES.map((l) => l.id);
 const EXTRA_ASSIGNEE_EMAILS = [
   'lucavanderbreggen@gmail.com',   // Luca van der Breggen
   'm.fullinck@building-depot.net', // Marisol Fullink
+  't.gijsbertha@building-depot.net', // Tineke Gijsbertha
+];
+// Personen die ALTIJD als chip in de verdelingsstrook staan, ook zonder open items.
+const ALWAYS_SHOW_ASSIGNEE_IDS = [
+  'b7078674-b130-4269-be6e-707ab9694071', // Tineke Gijsbertha
 ];
 // Legenda — wie hoort welke leverancier/kostensoort te krijgen.
 const ASSIGN_LEGEND = [
@@ -113,6 +118,7 @@ export default function MailboxPage() {
 
   const [rows, setRows] = useState([]);
   const [clerks, setClerks] = useState([]);
+  const [people, setPeople] = useState({}); // id -> full_name, om elke toegewezen persoon bij naam te tonen
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -141,6 +147,10 @@ export default function MailboxPage() {
     return CLERK_COLORS[i >= 0 ? i % CLERK_COLORS.length : 0];
   }, [clerks]);
   const clerkName = useCallback((id) => clerks.find((c) => c.id === id)?.full_name || '', [clerks]);
+  // Volledige naam van wie dan ook (dames-nickname eerst, dan profiel-naam).
+  const nameFull = useCallback((id) => LADIES.find((l) => l.id === id)?.label || people[id] || clerkName(id) || 'Onbekend', [people, clerkName]);
+  // Compacte naam (voornaam) voor de chips/filters.
+  const nameShort = useCallback((id) => { const n = nameFull(id); return n === 'Onbekend' ? n : n.split(/\s+/)[0]; }, [nameFull]);
 
   // Streefdatum-helpers
   const isOpen = (r) => OPEN_STATUS.includes(r.status);
@@ -156,7 +166,7 @@ export default function MailboxPage() {
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [{ data: mb, error: e1 }, { data: cl }, { data: meta }, { data: sn }, { data: rl }] = await Promise.all([
+    const [{ data: mb, error: e1 }, { data: cl }, { data: meta }, { data: sn }, { data: rl }, { data: pp }] = await Promise.all([
       supabase.from('ap_mailbox').select('*').order('received_at', { ascending: true }),
       supabase.from('profiles').select('id, full_name, role')
         .or(`role.in.(ap_clerk,admin),email.in.(${EXTRA_ASSIGNEE_EMAILS.join(',')})`)
@@ -164,10 +174,12 @@ export default function MailboxPage() {
       supabase.from('ap_mailbox_meta').select('value_ts').eq('key', 'last_sync_at').maybeSingle(),
       supabase.from('ap_mailbox_snapshots').select('*').order('snapshot_date', { ascending: false }).limit(120),
       supabase.from('ap_mailbox_routing').select('match_type, match_value, clerk_id, active'),
+      supabase.from('profiles').select('id, full_name'), // namen van iedereen, voor de verdelingsstrook
     ]);
     if (e1) setErr(e1.message);
     setRows((mb || []).map((r) => ({ ...r, _age: daysOpen(r.received_at) })));
     setClerks(cl || []);
+    setPeople(Object.fromEntries((pp || []).map((p) => [p.id, p.full_name])));
     setLastSync(meta?.value_ts || null);
     setSnaps(sn || []);
     setRules(rl || []);
@@ -287,7 +299,6 @@ export default function MailboxPage() {
 
   const passFilter = useCallback((r) => {
     if (fClerk === '__none__') { if (r.assigned_clerk) return false; }
-    else if (fClerk === '__other__') { if (!r.assigned_clerk || LADY_IDS.includes(r.assigned_clerk)) return false; }
     else if (fClerk) { if (r.assigned_clerk !== fClerk) return false; }
     if (fCat && r.doc_type !== fCat) return false;
     if (fEnt && r.entity !== fEnt) return false;
@@ -343,21 +354,27 @@ export default function MailboxPage() {
     return { total: base.length, buckets: b };
   }, [rows, passFilter]);
 
-  // Verdeling van de open werklijst over de drie dames + niet toegewezen + overig,
-  // inclusief hoeveel er per persoon TE LAAT zijn (deadline voorbij).
+  // Verdeling van de open werklijst: één chip per persoon met open toegewezen items
+  // (plus altijd de personen uit ALWAYS_SHOW_ASSIGNEE_IDS), met teller + hoeveel te laat.
   const verdeling = useMemo(() => {
     const open = rows.filter(FOLDERS[0].test);
-    const c = { none: 0, other: 0 };
-    const late = { none: 0, other: 0 };
-    LADY_IDS.forEach((id) => { c[id] = 0; late[id] = 0; });
+    const agg = new Map();
+    const none = { count: 0, late: 0 };
+    let totalLate = 0;
     open.forEach((r) => {
-      const bucket = !r.assigned_clerk ? 'none' : (LADY_IDS.includes(r.assigned_clerk) ? r.assigned_clerk : 'other');
-      c[bucket]++;
-      if (r.due_date && r.due_date < todayStr) late[bucket]++;
+      const late = !!(r.due_date && r.due_date < todayStr);
+      if (late) totalLate++;
+      if (!r.assigned_clerk) { none.count++; if (late) none.late++; return; }
+      if (!agg.has(r.assigned_clerk)) agg.set(r.assigned_clerk, { count: 0, late: 0 });
+      const a = agg.get(r.assigned_clerk); a.count++; if (late) a.late++;
     });
-    return { c, late };
-  }, [rows, todayStr]);
-  const scopeLabel = (v) => (v === '__none__' ? 'niet toegewezen' : v === '__other__' ? 'overig' : (LADIES.find((l) => l.id === v)?.label || 'alle clerks'));
+    ALWAYS_SHOW_ASSIGNEE_IDS.forEach((id) => { if (!agg.has(id)) agg.set(id, { count: 0, late: 0 }); });
+    const list = [...agg.entries()]
+      .map(([id, v]) => ({ id, name: nameShort(id), count: v.count, late: v.late }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    return { list, none, totalLate };
+  }, [rows, todayStr, nameShort]);
+  const scopeLabel = (v) => (!v ? 'alle' : v === '__none__' ? 'niet toegewezen' : nameShort(v));
 
   // Werklijst: open items gegroepeerd per persoon, daarbinnen per deadline-dag.
   const werklijst = useMemo(() => {
@@ -378,10 +395,9 @@ export default function MailboxPage() {
     order.forEach((k) => {
       if (seen.has(k)) return; seen.add(k);
       const items = byClerk.get(k) || [];
-      if (k === '__none__' && items.length === 0) return;      // lege 'niet toegewezen' niet tonen
-      if (k.startsWith('other:') && items.length === 0) return;
+      if (items.length === 0) return;      // lege groepen (0 open items) niet tonen
       const clerkId = k === '__none__' ? null : (k.startsWith('other:') ? k.slice(6) : k);
-      const label = k === '__none__' ? 'Niet toegewezen' : (LADIES.find((l) => l.id === clerkId)?.label || clerkName(clerkId) || 'Onbekend');
+      const label = k === '__none__' ? 'Niet toegewezen' : nameFull(clerkId);
       // groepeer per deadline-bucket
       const buckets = {};
       DUE_ORDER.forEach((d) => { buckets[d.key] = []; });
@@ -490,7 +506,6 @@ export default function MailboxPage() {
   const wlGroupMatch = (g) => {
     if (!fClerk) return true;
     if (fClerk === '__none__') return g.key === '__none__';
-    if (fClerk === '__other__') return g.key.startsWith('other:');
     return g.clerkId === fClerk;
   };
 
@@ -527,7 +542,7 @@ export default function MailboxPage() {
 
   if (loading) return <div className="text-[14px] text-[#1B3A5C]/40 py-10">Mailbox laden…</div>;
 
-  const totalLate = verdeling.late.none + verdeling.late.other + LADY_IDS.reduce((s, id) => s + (verdeling.late[id] || 0), 0);
+  const totalLate = verdeling.totalLate;
 
   return (
     <div className="max-w-[1500px]">
@@ -556,20 +571,27 @@ export default function MailboxPage() {
           Rechts van het aantal: hoeveel er TE LAAT zijn (rode teller per persoon). */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-[#1B3A5C]/45 mr-1">👥 Verdeling werklijst</span>
-        {[...LADIES.map((l) => ({ key: l.id, label: l.label })), { key: '__none__', label: 'Niet toegewezen' }, { key: '__other__', label: 'Overig' }].map((b) => {
-          const cnt = b.key === '__none__' ? verdeling.c.none : b.key === '__other__' ? verdeling.c.other : (verdeling.c[b.key] || 0);
-          const late = b.key === '__none__' ? verdeling.late.none : b.key === '__other__' ? verdeling.late.other : (verdeling.late[b.key] || 0);
-          const active = fClerk === b.key;
+        {verdeling.list.map((b, i) => {
+          const active = fClerk === b.id;
           return (
-            <button key={b.key} onClick={() => setFClerk(active ? '' : b.key)}
+            <button key={b.id} onClick={() => setFClerk(active ? '' : b.id)}
               title="Klik om alleen deze regels te tonen"
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12.5px] border transition-colors ${active ? 'border-[#2f6fed] bg-blue-50 text-[#1B3A5C]' : 'border-gray-200 bg-white text-[#1B3A5C]/80 hover:bg-gray-50'}`}>
-              <span className="font-medium">{b.label}</span>
-              <span className="font-bold tabular-nums">{cnt}</span>
-              {late > 0 && <span className="text-[10px] font-bold text-white bg-[#c0392b] rounded-full px-1.5 tabular-nums" title={`${late} te laat`}>⏰ {late}</span>}
+              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: CLERK_COLORS[i % CLERK_COLORS.length] }} />
+              <span className="font-medium">{b.name}</span>
+              <span className="font-bold tabular-nums">{b.count}</span>
+              {b.late > 0 && <span className="text-[10px] font-bold text-white bg-[#c0392b] rounded-full px-1.5 tabular-nums" title={`${b.late} te laat`}>⏰ {b.late}</span>}
             </button>
           );
         })}
+        {(() => { const active = fClerk === '__none__'; return (
+          <button onClick={() => setFClerk(active ? '' : '__none__')} title="Nog niet toegewezen regels"
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12.5px] border transition-colors ${active ? 'border-[#2f6fed] bg-blue-50 text-[#1B3A5C]' : 'border-dashed border-gray-300 bg-white text-[#1B3A5C]/70 hover:bg-gray-50'}`}>
+            <span className="font-medium">Niet toegewezen</span>
+            <span className="font-bold tabular-nums">{verdeling.none.count}</span>
+            {verdeling.none.late > 0 && <span className="text-[10px] font-bold text-white bg-[#c0392b] rounded-full px-1.5 tabular-nums" title={`${verdeling.none.late} te laat`}>⏰ {verdeling.none.late}</span>}
+          </button>
+        ); })()}
         {fClerk && <button onClick={() => setFClerk('')} className="text-[12px] text-[#2f6fed] hover:underline ml-1">× filter wissen</button>}
       </div>
 
@@ -644,9 +666,8 @@ export default function MailboxPage() {
               className="text-[13px] px-3 py-1.5 border border-gray-200 rounded-lg min-w-[220px]" />
             <select value={fClerk} onChange={(e) => setFClerk(e.target.value)} className="text-[13px] px-2 py-1.5 border border-gray-200 rounded-lg">
               <option value="">Alle personen</option>
-              {LADIES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+              {verdeling.list.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               <option value="__none__">Niet toegewezen</option>
-              <option value="__other__">Overig</option>
             </select>
             <select value={fCat} onChange={(e) => setFCat(e.target.value)} className="text-[13px] px-2 py-1.5 border border-gray-200 rounded-lg">
               <option value="">Alle categorieën</option>
@@ -748,9 +769,8 @@ export default function MailboxPage() {
               className="text-[13px] px-3 py-1.5 border border-gray-200 rounded-lg min-w-[220px]" />
             <select value={fClerk} onChange={(e) => setFClerk(e.target.value)} className="text-[13px] px-2 py-1.5 border border-gray-200 rounded-lg">
               <option value="">Alle</option>
-              {LADIES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+              {verdeling.list.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               <option value="__none__">Niet toegewezen</option>
-              <option value="__other__">Overig</option>
             </select>
             <select value={fCat} onChange={(e) => setFCat(e.target.value)} className="text-[13px] px-2 py-1.5 border border-gray-200 rounded-lg">
               <option value="">Alle categorieën</option>
