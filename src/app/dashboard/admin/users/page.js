@@ -1,7 +1,12 @@
 /* ============================================================
-   BESTAND: page_admin_v13.js
+   BESTAND: page_admin_v14.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
+
+   WIJZIGING t.o.v. v13:
+   - AR-ontwikkeling (finance_ar) toegevoegd onder Finance.
+     Sluit aan op layout.js V27.21, waar het Finance-menu op
+     rapporttoegang draait i.p.v. op rol.
 
    WIJZIGING t.o.v. v12:
    - Schepen (wereldkaart) (logistics_vessel_map) toegevoegd
@@ -34,6 +39,7 @@ var REPORTS = [
   { id: 'finance_ap', label: 'AP Dashboard', group: 'Finance', icon: '💼' },
   { id: 'finance_sandbox_ap', label: 'AP Sandbox', group: 'Finance', icon: '🧪' },
   { id: 'finance_reports', label: 'Finance Rapportages', group: 'Finance', icon: '📑' },
+  { id: 'finance_ar', label: 'AR-ontwikkeling', group: 'Finance', icon: '💹' },
   { id: 'logistics_order_flow', label: 'Order Flow', group: 'Logistiek', icon: '🚢' },
   { id: 'logistics_vessel_map', label: 'Schepen (wereldkaart)', group: 'Logistiek', icon: '🗺️' },
   { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },

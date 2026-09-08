@@ -2,6 +2,20 @@
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
+   WIJZIGINGEN V27.21:
+   - Finance: de rolcheck (isFinance) is vervangen door een check
+     op rapporttoegang, net als Omzet/Voorraad/HR/Logistiek.
+     Admin ziet alles; andere gebruikers zien per item:
+       · AP Dashboard      → finance_ap
+       · AP Sandbox        → finance_sandbox_ap
+       · Rapportages       → finance_reports
+       · AR-ontwikkeling   → finance_ar   (NIEUW rapport-id)
+       · Factuur status    → everyone (blijft voor iedereen)
+   - REPORT_MAP uitgebreid met de vier finance-paden.
+   - LET OP: draai eerst de bijbehorende SQL, anders verliezen
+     ap_approver/ap_clerk hun Finance-items (hun rol gaf toegang,
+     hun allowed_reports nog niet).
+   - Versie naar V27.21
    WIJZIGINGEN V27.20:
    - REPORT_MAP uitgebreid met de logistics-rapporten:
      · /dashboard/logistics/order-flow  → logistics_order_flow
@@ -77,7 +91,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
-const APP_VERSION = 'V27.20';
+const APP_VERSION = 'V27.21';
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
   const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
@@ -277,6 +291,12 @@ export default function DashboardLayout({ children }) {
     '/dashboard/hr/urenplanning-overview': 'hr_urenplanning_overview',
     '/dashboard/logistics/order-flow': 'logistics_order_flow',
     '/dashboard/logistics/vessel-map': 'logistics_vessel_map',
+    '/dashboard/finance/ap': 'finance_ap',
+    '/dashboard/finance/sandbox-ap': 'finance_sandbox_ap',
+    '/dashboard/finance/reports': 'finance_reports',
+    '/dashboard/finance/ar': 'finance_ar',
+    // '/dashboard/finance/factuurstatus' staat bewust NIET in de map:
+    // dat item is voor iedereen zichtbaar (everyone: true).
   };
   // Sales menu: Actuals, Forecast (concept), Index, Bezoekers en Conversie
   const omzetItemsAll = [
@@ -311,17 +331,17 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
     { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
   ];
-  // Finance menu — Accounts Payable suite
-  const isFinance = ['admin', 'cfo', 'ap_approver', 'ap_clerk'].includes(profile?.role);
-  const financeItems = [
+  // Finance menu — Accounts Payable suite.
+  // Zichtbaarheid via rapporttoegang (niet meer via rol). Admin ziet alles;
+  // andere gebruikers zien alleen de finance-rapporten die in hun
+  // allowed_reports staan. 'Factuur status' blijft voor iedereen zichtbaar.
+  const financeItemsAll = [
     { href: '/dashboard/finance/ap', label: 'AP Dashboard' },
     { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)' },
     { href: '/dashboard/finance/reports', label: 'Rapportages' },
     { href: '/dashboard/finance/ar', label: 'AR-ontwikkeling' },
     { href: '/dashboard/finance/factuurstatus', label: 'Factuur status', everyone: true },
   ];
-  // Finance-menu tonen aan finance-rollen (volledig) of aan iedereen (alleen de 'everyone'-items)
-  const visibleFinanceItems = isFinance ? financeItems : financeItems.filter(i => i.everyone);
   // Logistiek menu — zichtbaarheid via rapporttoegang (niet meer via rol).
   // Admin ziet alles; andere gebruikers zien alleen de logistics-rapporten
   // die in hun allowed_reports staan. Staat er geen enkele in, dan verdwijnt
@@ -342,6 +362,7 @@ export default function DashboardLayout({ children }) {
     return hasReport(REPORT_MAP[item.href]);
   });
   const logisticsItems = logisticsItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
+  const visibleFinanceItems = financeItemsAll.filter(item => item.everyone || hasReport(REPORT_MAP[item.href]));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },
