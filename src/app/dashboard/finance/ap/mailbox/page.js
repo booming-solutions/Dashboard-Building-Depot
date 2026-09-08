@@ -62,6 +62,7 @@ const EXTRA_ASSIGNEE_EMAILS = [
   'lucavanderbreggen@gmail.com',   // Luca van der Breggen
   'm.fullinck@building-depot.net', // Marisol Fullink
   't.gijsbertha@building-depot.net', // Tineke Gijsbertha
+  'm.adriana@building-depot.net',  // Miluska Adriana (ap_approver)
 ];
 // Personen die ALTIJD als chip in de verdelingsstrook staan, ook zonder open items.
 const ALWAYS_SHOW_ASSIGNEE_IDS = [

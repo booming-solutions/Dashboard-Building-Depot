@@ -7,8 +7,11 @@
    dus GEEN npm-pakket nodig, breekt de build nooit.
 
    Env-vars (Vercel):
-     RESEND_API_KEY   -> vereist om echt te versturen
-     ORDER_FLOW_FROM  -> optioneel afzenderadres (default hieronder)
+     RESEND_API_KEY       -> vereist om echt te versturen
+     ORDER_FLOW_FROM      -> optioneel afzender (default: Building Depot Crediteuren <ap.invoices@building-depot.net>)
+     ORDER_FLOW_REPLY_TO  -> optioneel antwoordadres (default: ap.invoices@building-depot.net)
+   Let op: de afzender moet op een in Resend GEVERIFIEERD domein zitten
+   (building-depot.net). Reply-to mag elk adres zijn.
 
    Body (JSON): { to, vendor, invoice_number, kind }
      kind = 'invoice'  (default) -> vraag de ene ontbrekende factuur op
@@ -34,7 +37,11 @@ export async function POST(req) {
   if (!key) {
     return NextResponse.json({ ok: false, error: 'Mailversturen is nog niet geconfigureerd (RESEND_API_KEY ontbreekt).' }, { status: 503 });
   }
-  const from = process.env.ORDER_FLOW_FROM || 'Building Depot <no-reply@building-depot.net>';
+  // Afzender + reply-to op de AP-mailbox, zodat antwoorden van leveranciers
+  // in ap.invoices@building-depot.net terugkomen. (Vereist dat building-depot.net
+  // geverifieerd is in Resend.) Beide overschrijfbaar via env-vars.
+  const from = process.env.ORDER_FLOW_FROM || 'Building Depot Crediteuren <ap.invoices@building-depot.net>';
+  const replyTo = process.env.ORDER_FLOW_REPLY_TO || 'ap.invoices@building-depot.net';
 
   const refNL = ref ? ` met referentie ${ref}` : '';
   const refEN = ref ? ` (ref ${ref})` : '';
@@ -66,7 +73,7 @@ export async function POST(req) {
     const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to, subject, html }),
+      body: JSON.stringify({ from, to, subject, html, reply_to: replyTo }),
     });
     if (!r.ok) {
       const t = await r.text().catch(() => '');
