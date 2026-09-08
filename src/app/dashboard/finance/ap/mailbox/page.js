@@ -278,23 +278,26 @@ export default function MailboxPage() {
   }
 
   async function sendResend() {
-    if (!mail) return;
-    setBusy(true);
+    if (!mail || mail.sending || mail.sent) return;
+    setMail((m) => (m ? { ...m, sending: true, error: null } : m));
     try {
       const res = await fetch('/api/mailbox/resend-request', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: mail.to, vendor: mail.row.vendor_guess, invoice_number: mail.row.invoice_number, kind: mail.kind || 'invoice' }),
       });
-      const j = await res.json();
-      if (!j.ok) throw new Error(j.error || 'Versturen mislukt');
+      const j = await res.json().catch(() => ({ ok: false, error: 'Onverwacht antwoord van de server' }));
+      if (!res.ok || !j.ok) throw new Error(j.error || `Versturen mislukt (status ${res.status})`);
+      // gelukt → status bijwerken en groen vinkje tonen
       const resolution = mail.kind === 'statement' ? 'facturen_gevraagd' : 'factuur_gevraagd';
       await patch(mail.row.id, {
         status: 'factuur_gevraagd', outlook_folder: 'Factuur gevraagd',
         resolved_by: effectiveProfileId, resolved_at: new Date().toISOString(), resolution,
       }, resolution, { to: mail.to, kind: mail.kind || 'invoice' });
-      setMail(null);
-    } catch (e) { setErr(e.message); }
-    setBusy(false);
+      setMail((m) => (m ? { ...m, sending: false, sent: true } : m));
+      setTimeout(() => setMail(null), 2000);
+    } catch (e) {
+      setMail((m) => (m ? { ...m, sending: false, error: e.message } : m));
+    }
   }
 
   const passFilter = useCallback((r) => {
@@ -876,7 +879,7 @@ export default function MailboxPage() {
 
       {/* herzendingsmodal */}
       {mail && (
-        <div className="fixed inset-0 bg-[#16233b]/45 flex items-center justify-center p-4 z-50" onClick={() => setMail(null)}>
+        <div className="fixed inset-0 bg-[#16233b]/45 flex items-center justify-center p-4 z-50" onClick={() => { if (!mail.sending) setMail(null); }}>
           <div className="bg-white rounded-2xl max-w-[640px] w-full shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-200 font-semibold text-[#1B3A5C]">
               {mail.kind === 'statement' ? `📄 Originele facturen opvragen bij ${mail.row.vendor_guess}` : `✉️ Factuur opvragen bij ${mail.row.vendor_guess}`}
@@ -898,10 +901,33 @@ export default function MailboxPage() {
                   : `Dear ${mail.row.vendor_guess},\n\nWe are missing the underlying invoice${mail.row.invoice_number ? ` (ref ${mail.row.invoice_number})` : ''}. Could you please (re)send it (preferably as PDF) to ap.invoices@building-depot.net so we can process it right away?\n\nThank you in advance.\n\nKind regards,\nBuilding Depot — Accounts Payable`}
               </div>
             </div>
-            <div className="px-5 py-3 border-t border-gray-200 flex gap-2 justify-end">
-              <button onClick={() => setMail(null)} className="text-[13px] font-semibold px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">Annuleren</button>
-              <button onClick={sendResend} disabled={busy || !mail.to}
-                className="text-[13px] font-semibold px-4 py-2 rounded-lg bg-[#2f6fed] text-white hover:bg-[#2258c9] disabled:opacity-50">Versturen</button>
+            {/* statusregel: groen vinkje bij succes, rode melding bij een fout */}
+            {mail.sent && (
+              <div className="mx-5 mb-1 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] font-semibold text-emerald-700">
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600 text-white text-[12px]">✓</span>
+                Verstuurd naar {mail.to} — de mail is de deur uit.
+              </div>
+            )}
+            {mail.error && (
+              <div className="mx-5 mb-1 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
+                <b>Niet verstuurd.</b> {mail.error}
+                {/RESEND_API_KEY|geconfigureerd|niet geconfigureerd/i.test(mail.error) &&
+                  <div className="mt-1 text-[11.5px] text-red-700/80">Mailversturen is nog niet aangezet. Zet <b>RESEND_API_KEY</b> in Vercel en verifieer het domein building-depot.net in Resend.</div>}
+              </div>
+            )}
+            <div className="px-5 py-3 border-t border-gray-200 flex gap-2 justify-end items-center">
+              {mail.sent ? (
+                <button onClick={() => setMail(null)} className="text-[13px] font-semibold px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">✓ Klaar — sluiten</button>
+              ) : (
+                <>
+                  <button onClick={() => setMail(null)} disabled={mail.sending} className="text-[13px] font-semibold px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50">Annuleren</button>
+                  <button onClick={sendResend} disabled={mail.sending || !mail.to}
+                    className="text-[13px] font-semibold px-4 py-2 rounded-lg bg-[#2f6fed] text-white hover:bg-[#2258c9] disabled:opacity-50 inline-flex items-center gap-2">
+                    {mail.sending && <span className="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                    {mail.sending ? 'Versturen…' : (mail.error ? 'Opnieuw versturen' : 'Versturen')}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
