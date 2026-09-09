@@ -2,6 +2,15 @@
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
+   WIJZIGINGEN V27.22:
+   - Finance: 'Vooruitbetalingen' toegevoegd
+     (/dashboard/finance/vooruitbetalingen), badge (preview).
+     Nieuwe pagina voor de Keukendepot-aanbetalingen: Excel inlezen,
+     controleren en als batch klaarzetten voor Eagle.
+   - REPORT_MAP uitgebreid met finance_prepay.
+   - LET OP: voeg 'finance_prepay' toe aan allowed_reports van de
+     gebruikers die deze pagina mogen zien. Admin ziet hem sowieso.
+   - Versie naar V27.22
    WIJZIGINGEN V27.21:
    - Finance: de rolcheck (isFinance) is vervangen door een check
      op rapporttoegang, net als Omzet/Voorraad/HR/Logistiek.
@@ -91,7 +100,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
-const APP_VERSION = 'V27.21';
+const APP_VERSION = 'V27.22';
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
   const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
@@ -295,6 +304,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/finance/sandbox-ap': 'finance_sandbox_ap',
     '/dashboard/finance/reports': 'finance_reports',
     '/dashboard/finance/ar': 'finance_ar',
+    '/dashboard/finance/vooruitbetalingen': 'finance_prepay',
     // '/dashboard/finance/factuurstatus' staat bewust NIET in de map:
     // dat item is voor iedereen zichtbaar (everyone: true).
   };
@@ -340,6 +350,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)' },
     { href: '/dashboard/finance/reports', label: 'Rapportages' },
     { href: '/dashboard/finance/ar', label: 'AR-ontwikkeling' },
+    { href: '/dashboard/finance/vooruitbetalingen', label: 'Vooruitbetalingen', badge: '(preview)' },
     { href: '/dashboard/finance/factuurstatus', label: 'Factuur status', everyone: true },
   ];
   // Logistiek menu — zichtbaarheid via rapporttoegang (niet meer via rol).
