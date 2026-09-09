@@ -1,0 +1,56 @@
+{
+  "_uitleg": "Velden worden gezocht op hun plek binnen het deelvenster. rel = [afstand vanaf links, afstand vanaf boven] in pixels, gemeten vanaf de linkerbovenhoek van het deelvenster (parent). tol = hoeveel pixels het mag afwijken. Draai 'calibrate' opnieuw als Eagle is gewijzigd.",
+  "_herkomst": "Afgeleid uit controls.txt van bd-laptop-72, 9 september 2026. Deelvenster 32768 = kopblok, 32770 = tab 1. Main.",
+
+  "window_title_re": ".*New A/P Transactions.*",
+  "backend": "uia",
+
+  "pace_seconds": 0.25,
+  "dialog_wait_seconds": 8.0,
+  "field_retries": 2,
+  "tolerantie": 20,
+
+  "fields": {
+    "trx_type":        { "parent": "32768", "rel": [97, 11],  "tol": 26, "_veld": "Trx Type" },
+    "vendor":          { "parent": "32768", "rel": [97, 47],  "_veld": "Vendor" },
+    "voucher_date":    { "parent": "32768", "rel": [830, 12], "_veld": "Voucher Date" },
+    "invoice_date":    { "parent": "32768", "rel": [830, 50], "_veld": "Invoice Date" },
+    "vendor_ref_no":   { "parent": "32768", "rel": [575, 82], "_veld": "Vendor Ref No" },
+
+    "ap_account_main": { "parent": "32770", "rel": [143, 40], "_veld": "AP Account, linkervak" },
+    "ap_account_sub":  { "parent": "32770", "rel": [243, 40], "_veld": "AP Account, rechtervak (entiteit)" },
+    "terms_code":      { "parent": "32770", "rel": [143, 73], "_veld": "Terms Code" },
+    "voucher_ref":     { "parent": "32770", "rel": [140, 137], "_veld": "Voucher Ref" },
+    "invoice_amount":  { "parent": "32770", "rel": [790, 6],  "_veld": "Invoice Amount" }
+  },
+
+  "current_voucher":   { "parent": "32768", "rel": [575, 11], "_veld": "Current Voucher (alleen uitlezen)" },
+
+  "_niet_gebruikt": {
+    "_uitleg": "Deze velden zijn wel herkend maar worden bewust niet aangeraakt.",
+    "remit_to":        { "parent": "32768", "rel": [97, 82] },
+    "po_number":       { "parent": "32768", "rel": [575, 47] },
+    "applies_to":      { "parent": "32770", "rel": [143, 7] },
+    "bank_code":       { "parent": "32770", "rel": [143, 107] },
+    "due_date":        { "parent": "32770", "rel": [143, 193] },
+    "disc_date":       { "parent": "32770", "rel": [143, 233] },
+    "check_date":      { "parent": "32770", "rel": [143, 273] },
+    "check_no":        { "parent": "32770", "rel": [140, 310] },
+    "non_discount_amt":{ "parent": "32770", "rel": [790, 40] },
+    "misc_charges":    { "parent": "32770", "rel": [790, 73] },
+    "sales_tax":       { "parent": "32770", "rel": [790, 140] },
+    "freight":         { "parent": "32770", "rel": [790, 208] }
+  },
+
+  "distribution": {
+    "window_title_re": ".*[Aa]dd distribution.*",
+    "gekalibreerd": false,
+    "account_main": { "index": 0 },
+    "account_sub": { "index": 1 },
+    "job": { "index": 2 },
+    "amount": { "index": 3 },
+    "ok_button": "OK"
+  },
+
+  "niet_aanraken": ["Due Date", "Disc Date", "Check Date", "Check No"]
+}
