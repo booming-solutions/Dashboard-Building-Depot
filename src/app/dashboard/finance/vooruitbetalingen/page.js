@@ -73,6 +73,7 @@ export default function VooruitbetalingenPage() {
   const [sent, setSent] = useState(null);
   const [showPayload, setShowPayload] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [downloadOk, setDownloadOk] = useState(null);
 
   const minDatum = useMemo(() => minBoekdatum(vandaag), [vandaag]);
   const maxDatum = useMemo(
@@ -125,19 +126,40 @@ export default function VooruitbetalingenPage() {
 
   /* ------------------------------------------------------------ acties */
 
+  /**
+   * Zet de batch klaar voor de Eagle Bridge.
+   *
+   * Voorlopig gaat dat via een bestand: de browser kan geen programma op de
+   * PC starten, maar wél een download geven. Het .eaglebatch-bestand is aan
+   * de Bridge gekoppeld, dus dubbelklikken start hem met deze batch.
+   *
+   * TODO (volgende stap): batch eerst opslaan via /api/finance/prepay-batches
+   * en de Bridge starten met eagleprepay://batch/{id}, zodat de status per
+   * regel (vouchernummer) terugkomt in het dashboard.
+   */
   function handleSend() {
+    const stamp = boekdatum.replace(/-/g, '');
+    const batchId = `${stamp}-${entity}-${Date.now().toString().slice(-6)}`;
     const batch = buildBatch({
-      rows, rowState, entity, boekdatumISO: boekdatum, fileName, modal,
-      batchId: null,
+      rows, rowState, entity, boekdatumISO: boekdatum, fileName, modal, batchId,
     });
-    // TODO (na preview):
-    //  1. POST naar /api/finance/prepay-batches -> batch opslaan in Supabase,
-    //     regels met dedupeKey zodat dubbel boeken onmogelijk is.
-    //  2. Met het teruggekregen batchId de Bridge starten:
-    //     window.location.href = `eagleprepay://batch/${batchId}`;
-    //  3. Status per regel terugkoppelen (vouchernummer of foutmelding).
+
+    try {
+      const blob = new Blob([JSON.stringify(batch, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vooruitbetalingen-${batchId}.eaglebatch`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setDownloadOk(true);
+    } catch (err) {
+      setDownloadOk(false);
+    }
+
     setSent(batch);
-    setShowPayload(true);
   }
 
   function copyManual() {
@@ -588,12 +610,24 @@ export default function VooruitbetalingenPage() {
                   Rekening {PREPAY_CONFIG.apAccountMain}-{entity}, distributie {PREPAY_CONFIG.distributionAccountMain}-{entity},
                   datum {eagleDate(boekdatumObj)}
                   {manualRows.length ? ` · ${manualRows.length} regel(s) blijven achter voor handmatig boeken.` : '.'}
-                  {sent && <><br /><span className="text-gray-500">Preview: de batch is nog niet opgeslagen en de Bridge is nog niet gestart.</span></>}
+                  {sent && (
+                    <><br />
+                      <span className="text-emerald-700 font-medium">
+                        Batch {sent.batchId} is gedownload als .eaglebatch-bestand.
+                      </span>{' '}
+                      <span className="text-gray-500">
+                        Zet Eagle klaar op New A/P Transactions en dubbelklik het bestand om de Bridge te starten.
+                      </span>
+                    </>
+                  )}
+                  {downloadOk === false && (
+                    <><br /><span className="text-red-700 font-medium">De download werd geblokkeerd. Sta downloads toe voor deze site en probeer opnieuw.</span></>
+                  )}
                 </>}
           </div>
           <button type="button" disabled={blocked} onClick={handleSend}
             className="px-4 py-2 rounded-lg bg-[#1B3A5C] text-white text-[13px] font-semibold hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed">
-            Batch klaarzetten voor Eagle
+            Batch downloaden voor Eagle
           </button>
           <button type="button" onClick={() => setShowPayload(v => !v)}
             className="px-4 py-2 rounded-lg border border-gray-300 text-[13px] font-semibold text-[#1B3A5C] hover:bg-gray-50">
