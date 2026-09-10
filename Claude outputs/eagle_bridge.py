@@ -282,13 +282,55 @@ def tekstregel_masker(afbeelding, drempel=90):
              .point(lambda v: 255 if v > 100 else 0))
 
 
-def tekstverschil(a, b):
-    """Aandeel afwijkende beeldpunten tussen twee tekstmaskers (0 = gelijk, 1 = niets gemeen)."""
+def tekstverschil(a, b, schuif=3):
+    """
+    Aandeel afwijkende beeldpunten tussen twee tekstmaskers
+    (0 = gelijk, 1 = niets gemeen).
+
+    Verschuivingstolerant: hetzelfde venster op een andere schermschaal
+    levert een masker op dat een paar beeldpunten verschoven kan zijn
+    (gemeten: 0,18 zonder, 0,07 mét tolerantie), terwijl een venster met
+    andere tekst ruim boven 0,25 blijft. De maskers worden eerst iets
+    verdikt en daarna over kleine verschuivingen vergeleken; de kleinste
+    afwijking telt.
+    """
+    from PIL import ImageFilter
     ma, mb = tekstregel_masker(a), tekstregel_masker(b)
     if ma is None or mb is None:
         return 1.0
-    pa, pb = list(ma.getdata()), list(mb.getdata())
-    return sum(1 for x, y in zip(pa, pb) if x != y) / len(pa)
+    ma = ma.filter(ImageFilter.MaxFilter(3))
+    mb = mb.filter(ImageFilter.MaxFilter(3))
+    w, h = ma.size
+    pa, pb = ma.load(), mb.load()
+    beste = 1.0
+    for dx in range(-schuif, schuif + 1):
+        for dy in range(-2, 3):
+            n = t = 0
+            for y in range(h):
+                yy = y + dy
+                if yy < 0 or yy >= h:
+                    continue
+                for x in range(w):
+                    xx = x + dx
+                    if xx < 0 or xx >= w:
+                        continue
+                    t += 1
+                    if (pa[x, y] > 0) != (pb[xx, yy] > 0):
+                        n += 1
+            if t:
+                beste = min(beste, n / t)
+    return beste
+
+
+def referentiebeelden(regel):
+    """Alle referentiebeelden van een bekend venster: 'bestand' en/of lijst 'bestanden'."""
+    namen = []
+    if regel.get("bestand"):
+        namen.append(regel["bestand"])
+    for n in regel.get("bestanden") or []:
+        if n and n not in namen:
+            namen.append(n)
+    return namen
 
 
 def schermuitsnede(bbox):
@@ -596,15 +638,105 @@ class Eagle:
     # config.json, zodat het de volgende keer meteen goed gaat.
     STRATEGIEEN = ["selectie", "keuzelijst", "cijfers_wis", "cijfers_home", "settext", "settext_cijfers"]
 
-    def _voer_in(self, doel, waarde, strategie, kandidaten=None):
+    # -- tekst in een keuzevak krijgen ----------------------------------
+    #
+    # Toetsaanslagen in Eagle's keuzevakken zijn onbetrouwbaar: een
+    # herhaalde toets valt weg ('2099-000' werd '209-000'), ook met pauzes.
+    # Daarom gaat de tekst in één keer via het klembord naar binnen
+    # (Ctrl+A, Ctrl+V — zoals plakken met de hand), en wordt hij daarna
+    # teruggelezen. Pas als het klembord niet werkt, wordt er toets voor
+    # toets getypt, waarbij na elke toets wordt gekeken of hij is
+    # aangekomen en zo niet, opnieuw wordt gestuurd.
+
+    @staticmethod
+    def _klembord_zet(tekst):
+        import win32clipboard, win32con
+        for _ in range(5):
+            try:
+                win32clipboard.OpenClipboard()
+                try:
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, tekst)
+                finally:
+                    win32clipboard.CloseClipboard()
+                return True
+            except Exception:
+                time.sleep(0.1)
+        return False
+
+    def _tekst_klopt(self, gelezen, waarde):
+        g = (gelezen or "").replace(" ", "").upper()
+        v = waarde.replace(" ", "").upper()
+        return bool(g) and (g == v or g.startswith(v) or self._gelijk(gelezen, waarde))
+
+    def _zet_tekst_in_keuzevak(self, doel, waarde):
+        from pywinauto import keyboard
+        pauze = self.pace / 2
+
+        # 1. Plakken via het klembord: de hele waarde in één keer.
+        if self._klembord_zet(waarde):
+            keyboard.send_keys("^a")
+            time.sleep(pauze)
+            keyboard.send_keys("^v")
+            time.sleep(self.pace)
+            gelezen = self._lees(doel)
+            if self._tekst_klopt(gelezen, waarde):
+                log(f"  keuzelijst: '{waarde}' geplakt (leest '{gelezen}')")
+                return True
+            if not gelezen:
+                # Niet terug te lezen zolang de lijst open staat; plakken is
+                # deterministisch, dus we vertrouwen erop.
+                log(f"  keuzelijst: '{waarde}' geplakt (vak niet terug te lezen)")
+                return True
+            log(f"  keuzelijst: plakken gaf '{gelezen}' in plaats van '{waarde}' — nu toets voor toets", "WARN")
+        else:
+            log("  keuzelijst: klembord niet beschikbaar — toets voor toets", "WARN")
+
+        # 2. Toets voor toets, met controle na elke toets.
+        keyboard.send_keys("^a{DEL}")
+        time.sleep(pauze)
+        for poging in range(3):
+            fout = False
+            for i, ch in enumerate(waarde):
+                verwacht = waarde[: i + 1]
+                for herhaal in range(3):
+                    keyboard.send_keys(ch if ch != " " else "{SPACE}", pause=0.05)
+                    time.sleep(0.12)
+                    gelezen = self._lees(doel)
+                    if not gelezen or self._tekst_klopt(gelezen, verwacht):
+                        break
+                    if len(gelezen) > len(verwacht):
+                        # Te veel tekens (bijv. automatische aanvulling): wis en begin opnieuw.
+                        fout = True
+                        break
+                    log(f"  keuzelijst: toets '{ch}' niet aangekomen (leest '{gelezen}') — opnieuw", "WARN")
+                if fout:
+                    break
+            gelezen = self._lees(doel)
+            if not gelezen or self._tekst_klopt(gelezen, waarde):
+                log(f"  keuzelijst: '{waarde}' getypt (leest '{gelezen}')")
+                return True
+            log(f"  keuzelijst: poging {poging + 1} gaf '{gelezen}' in plaats van '{waarde}' — wissen en opnieuw", "WARN")
+            keyboard.send_keys("^a{DEL}")
+            time.sleep(pauze)
+        raise BridgeStop(f"Kreeg '{waarde}' niet in het keuzevak (laatst gelezen: '{self._lees(doel)}').")
+
+    def _voer_in(self, doel, waarde, strategie, kandidaten=None, enter_aantal=1, plakken=False):
         cijfers = re.sub(r"\D", "", waarde)
         pauze = self.pace / 2
 
         if strategie == "keuzelijst":
+            # plakken=False (kopscherm: Trx Type, Vendor, Terms Code): de
+            # bewezen manier — pijltje, waarde typen, Enter, Tab. NIET wijzigen.
+            # plakken=True (alleen het distributiescherm, Account Number):
+            # de waarde gaat via het klembord naar binnen, met terugleescontrole.
             # Zoals een mens het doet bij een keuzeveld: op het pijltje klikken
             # zodat de lijst opent, de waarde typen, en met Enter kiezen. Pas
             # dan koppelt Eagle de waarde (leveranciersnaam verschijnt, Remit To
             # wordt gevuld). Typen + Tab laat het vak "not on file".
+            # Sommige keuzevakken (Account Number in het distributiescherm)
+            # hebben twee keer Enter nodig voordat Eagle de omschrijving erbij
+            # zoekt ("Clearing Account Payments"): enter_aantal.
             from pywinauto import keyboard
             houder = doel
             for c in (kandidaten or []):
@@ -616,10 +748,26 @@ class Eagle:
             r = houder.rectangle()
             houder.click_input(coords=(max(4, r.width() - 8), r.height() // 2))
             time.sleep(self.pace)
-            keyboard.send_keys(waarde, with_spaces=True)
-            time.sleep(pauze)
-            keyboard.send_keys("{ENTER}")
-            time.sleep(pauze)
+            if plakken:
+                self._zet_tekst_in_keuzevak(doel, waarde)
+            else:
+                # Typen zoals altijd; daarna één keer kijken wat er in het vak
+                # staat. Eagle laat soms toetsen vallen ('4741' werd '4').
+                # Klopt het niet, dan wissen en langzamer opnieuw typen.
+                # Is het vak niet uit te lezen (Trx Type), dan gebeurt er
+                # niets extra's.
+                for poging in range(3):
+                    keyboard.send_keys(waarde, with_spaces=True, pause=0.05 * (poging + 1))
+                    time.sleep(pauze)
+                    getypt = self._lees(doel)
+                    if not getypt or self._tekst_klopt(getypt, waarde):
+                        break
+                    log(f"  keuzelijst: getypt '{getypt}' in plaats van '{waarde}' — wissen en opnieuw", "WARN")
+                    keyboard.send_keys("^a{DEL}")
+                    time.sleep(pauze)
+            for _ in range(max(1, int(enter_aantal or 1))):
+                keyboard.send_keys("{ENTER}")
+                time.sleep(pauze if not plakken else self.pace)
             # Het keuzevak houdt na Enter de focus; met Tab laten we het los,
             # anders belandt de invoer van het volgende veld hierin.
             keyboard.send_keys("{TAB}")
@@ -678,7 +826,8 @@ class Eagle:
                 if strategie != "keuzelijst":
                     self._klik_in_veld(doel)
                     time.sleep(self.pace / 2)
-                self._voer_in(doel, waarde, strategie, kandidaten)
+                self._voer_in(doel, waarde, strategie, kandidaten,
+                              enter_aantal=spec.get("enter_aantal", 1))
                 time.sleep(self.pace)
 
                 # Bevestigen. Eagle valideert keuzevelden pas bij het verlaten
@@ -1205,10 +1354,12 @@ class Eagle:
                 if regel.get("knoppen") is not None and regel["knoppen"] != len(v["knoppen"]):
                     log(f"  '{regel['naam']}': {len(v['knoppen'])} knop(pen) gezien, {regel['knoppen']} verwacht "
                         "— telt niet mee als afwijzing", "WARN")
-                pad = SCRIPT_DIR / "dialogen" / regel["bestand"]
-                if not pad.exists():
+                paden = [SCRIPT_DIR / "dialogen" / n for n in referentiebeelden(regel)]
+                paden_aanwezig = [p for p in paden if p.exists()]
+                if paden and not paden_aanwezig:
                     # Eerste keer: de vorm klopt, er is nog geen referentiebeeld.
                     # Dit beeld wordt de referentie; daarna moet ook het beeld kloppen.
+                    pad = paden[0]
                     try:
                         pad.parent.mkdir(parents=True, exist_ok=True)
                         v["beeld"].save(pad)
@@ -1217,10 +1368,14 @@ class Eagle:
                     except Exception as e:
                         log(f"kon referentiebeeld niet opslaan: {e}", "WARN")
                     return regel, v
-                try:
-                    score = tekstverschil(huidig, Image.open(pad))
-                except Exception as e:
-                    log(f"vergelijken met {pad.name} mislukt: {e}", "WARN")
+                # Meerdere referentiebeelden (bijv. per schermschaal): de beste telt.
+                score = 999.0
+                for pad in paden_aanwezig:
+                    try:
+                        score = min(score, tekstverschil(huidig, Image.open(pad)))
+                    except Exception as e:
+                        log(f"vergelijken met {pad.name} mislukt: {e}", "WARN")
+                if score >= 999.0:
                     continue
                 if score < beste_score:
                     beste, beste_score = regel, score
@@ -1451,11 +1606,9 @@ class Eagle:
         # Rekening: één vak voor hoofdrekening én entiteit. Het formaat staat
         # in config.json (account_formaat); standaard "2099" bij entiteit 000
         # en "2099-700" bij een andere entiteit.
+        # Altijd voluit: '2099-000' of '2099-700'. Alleen '2099' geeft "Account not on file".
         formaat = dcfg.get("account_formaat") or "{main}-{sub}"
-        if str(account_sub) == "000" and dcfg.get("sub_000_weglaten", True):
-            account_waarde = str(account_main)
-        else:
-            account_waarde = formaat.format(main=account_main, sub=account_sub)
+        account_waarde = formaat.format(main=account_main, sub=account_sub)
 
         def omhulsels_van(ctrl):
             """Keuzelijst-omhulsels (fpOCXComboBox) rond dit invoervak, voor de pijltjesklik."""
@@ -1476,6 +1629,15 @@ class Eagle:
                 pass
             return uit
 
+        # Account Number: pijltje, '2099-000' typen, dan TWEE keer Enter —
+        # pas bij de tweede Enter zoekt Eagle de omschrijving erbij
+        # ("Clearing Account Payments"). Zelfde gedrag als bij Vendor.
+        enter_aantal = int(dcfg.get("enter_aantal", 2) or 2)
+
+        def scherm_zelf_gesloten():
+            """Waar: Eagle heeft het distributiescherm al zelf gesloten (Enter = OK)."""
+            return self._distributie_venster() is None
+
         def vul_ctrl(naam, ctrl, waarde, keuzelijst=False):
             waarde = str(waarde)
             volgorde = list(self.STRATEGIEEN)
@@ -1489,37 +1651,64 @@ class Eagle:
                     if strategie != "keuzelijst":
                         self._klik_in_veld(ctrl)
                         time.sleep(self.pace / 2)
-                    self._voer_in(ctrl, waarde, strategie, kandidaten)
+                    self._voer_in(ctrl, waarde, strategie, kandidaten,
+                                  enter_aantal=enter_aantal if keuzelijst else 1,
+                                  plakken=keuzelijst)
                     time.sleep(self.pace)
                     commit = self.cfg.get("commit_key", "{TAB}")
                     if commit and strategie != "keuzelijst":
                         ctrl.type_keys(commit, set_foreground=False)
                         time.sleep(self.pace)
                 except Exception as e:
+                    if scherm_zelf_gesloten():
+                        return "gesloten"
                     log(f"  {naam}: manier '{strategie}' mislukt: {e}", "WARN")
                     continue
+                if scherm_zelf_gesloten():
+                    return "gesloten"
                 gelezen = self._lees(ctrl)
-                if self._gelijk(gelezen, waarde):
-                    log(f"  {naam:18} = {waarde}   (manier: {strategie})")
-                    return
+                if self._gelijk(gelezen, waarde) or gelezen.replace(" ", "").upper().startswith(waarde.replace(" ", "").upper()):
+                    log(f"  {naam:18} = {waarde}   (manier: {strategie}; leest '{gelezen}')")
+                    return "ok"
                 log(f"  {naam}: manier '{strategie}' gaf '{gelezen}', verwacht '{waarde}'", "WARN")
             raise BridgeStop(
                 f"Distributieveld '{naam}' laat zich niet vullen met '{waarde}'. Gestopt vóór OK.\n"
                 "De kopregel staat al in Eagle — maak deze boeking zelf af of annuleer het scherm."
             , na_add=True)
 
-        vul_ctrl("distributie account", toewijzing["account"], account_waarde, keuzelijst=True)
+        # Eerst kijken of het bedrag al goed staat (Eagle vult het voor),
+        # zodat we weten dat een scherm dat na de rekening vanzelf sluit
+        # een correcte distributie was.
+        bedrag_vooraf = self._lees(toewijzing["amount"])
+        bedrag_stond_goed = self._gelijk(bedrag_vooraf, str(bedrag))
+
+        uitkomst = vul_ctrl("distributie account", toewijzing["account"], account_waarde, keuzelijst=True)
+        if uitkomst == "gesloten":
+            # De tweede Enter heeft in dit geval als OK gewerkt: Eagle heeft de
+            # rekening geaccepteerd (bij een onbekende rekening blijft het
+            # scherm juist staan) en het scherm gesloten.
+            pad = schermafdruk("distributie-zelf-gesloten")
+            if not bedrag_stond_goed:
+                raise BridgeStop(
+                    "Het distributiescherm sloot vanzelf na het kiezen van de rekening, maar het bedrag "
+                    f"stond vooraf op '{bedrag_vooraf}' in plaats van '{bedrag}'. Controleer deze boeking in Eagle."
+                    + (f"\nSchermafdruk: {pad}" if pad else ""),
+                    na_add=True,
+                )
+            log(f"  distributie: Eagle sloot het scherm zelf na '{account_waarde}' (Enter = OK); bedrag {bedrag} stond al goed — geaccepteerd")
+            return
         # Job blijft bewust leeg.
-        huidig_bedrag = self._lees(toewijzing["amount"])
-        if self._gelijk(huidig_bedrag, str(bedrag)):
+        if bedrag_stond_goed:
             log(f"  {'distributie bedrag':18} = {bedrag}   (stond al ingevuld)")
         else:
             vul_ctrl("distributie bedrag", toewijzing["amount"], bedrag)
 
         # Laatste controle vóór OK: rekening en bedrag teruglezen.
         fout = []
-        if not self._gelijk(self._lees(toewijzing["account"]), account_waarde):
-            fout.append(f"rekening leest '{self._lees(toewijzing['account'])}', verwacht '{account_waarde}'")
+        rek_gelezen = self._lees(toewijzing["account"])
+        if not (self._gelijk(rek_gelezen, account_waarde) or
+                rek_gelezen.replace(" ", "").upper().startswith(account_waarde.replace(" ", "").upper())):
+            fout.append(f"rekening leest '{rek_gelezen}', verwacht '{account_waarde}'")
         if not self._gelijk(self._lees(toewijzing["amount"]), str(bedrag)):
             fout.append(f"bedrag leest '{self._lees(toewijzing['amount'])}', verwacht '{bedrag}'")
         if fout:
@@ -1543,6 +1732,69 @@ class Eagle:
         if not self._beantwoord(handle, {"antwoord": dcfg.get("ok_button", "OK"), "knop": "eerste", "enter": True}):
             raise BridgeStop("Kon OK niet aanklikken in het distributiescherm — controleer Eagle.", na_add=True)
         time.sleep(self.pace * 3)
+
+        # OK is pas geslaagd als het distributiescherm verdwenen is. Blijft
+        # het staan, dan heeft Eagle de invoer geweigerd (bijv. "Account not
+        # on file") en is er NIET geboekt.
+        einde = time.time() + 6
+        while time.time() < einde and self._distributie_venster():
+            time.sleep(0.3)
+        if self._distributie_venster():
+            pad = schermafdruk("distributie-geweigerd")
+            raise BridgeStop(
+                "Het distributiescherm bleef na OK staan — Eagle heeft de distributie niet geaccepteerd "
+                "(kijk naar de melding onderin het scherm, bijv. 'Account not on file').\n"
+                f"Ingevuld: rekening '{account_waarde}', bedrag '{bedrag}'."
+                + (f"\nSchermafdruk: {pad}" if pad else ""),
+                na_add=True,
+            )
+
+    # -- scherm leegmaken (Clear F12) --------------------------------------
+
+    def scherm_is_leeg(self):
+        """Waar als het Vendor-vak leeg is (het scherm staat klaar voor een nieuwe regel)."""
+        spec = (self.cfg.get("fields") or {}).get("vendor")
+        if not spec:
+            return True
+        try:
+            gelezen, _ = self._lees_veld("vendor", spec)
+            return not gelezen.strip()
+        except Exception:
+            return True
+
+    def maak_leeg(self, reden=""):
+        """
+        Clear F12: zet alle velden van het invoerscherm terug, zoals een
+        gebruiker na elke boeking doet. Wordt gedaan na elke geboekte regel
+        en, als vangnet, vóór een regel wanneer het scherm nog niet leeg is.
+        """
+        toets = self.cfg.get("clear_key", "{F12}")
+        if not toets:
+            return
+        log(f"  Clear F12{(' — ' + reden) if reden else ''}")
+        try:
+            self.win.set_focus()
+        except Exception:
+            pass
+        self.win.type_keys(toets, set_foreground=True)
+        time.sleep(self.pace * 4)
+        # Vraagt Eagle iets na F12, dan wordt dat als bekend/onbekend venster
+        # afgehandeld; onbekend = vastleggen en melden, niet raden.
+        try:
+            vensters = self._meldingsvensters()
+        except Exception:
+            vensters = []
+        if vensters:
+            regel, v = self._bekende_vraag(vensters)
+            if regel is not None:
+                self._beantwoord(v["handle"], regel)
+                time.sleep(self.pace * 2)
+            else:
+                paden = self._leg_onbekend_vast(vensters)
+                log("  na Clear F12 verscheen een venster dat ik niet ken — zie dialogen/ "
+                    + ", ".join(p.name for p in paden), "WARN")
+        if not self.scherm_is_leeg():
+            log("  het scherm is na Clear F12 nog niet leeg (Vendor staat nog gevuld)", "WARN")
 
     # -- vouchernummer ---------------------------------------------------
 
@@ -1590,6 +1842,14 @@ def voer_regel_in(eagle, regel, dry_run):
         return None
 
     eagle.verbind()
+
+    # Vangnet: staat er nog iets van een vorige regel, eerst Clear F12.
+    if not eagle.scherm_is_leeg():
+        eagle.maak_leeg("het scherm was nog niet leeg")
+        if not eagle.scherm_is_leeg():
+            raise BridgeStop("Het invoerscherm is niet leeg en Clear F12 maakt het niet leeg — "
+                             "maak het scherm in Eagle zelf leeg en start opnieuw. Er is niets geboekt.")
+
     for naam in INVOERVOLGORDE:
         eagle.vul(naam, velden[naam], waarden[naam])
 
@@ -1625,7 +1885,16 @@ def voer_regel_in(eagle, regel, dry_run):
     while time.time() < einde and eagle._distributie_venster():
         time.sleep(0.3)
 
-    return eagle.lees_vouchernummer()
+    voucher = eagle.lees_vouchernummer()
+
+    # Klaar: het scherm leegmaken voor de volgende regel (Clear F12), zoals
+    # een gebruiker dat na elke boeking doet.
+    try:
+        eagle.maak_leeg()
+    except Exception as e:
+        log(f"Clear F12 na de boeking mislukte: {e}", "WARN")
+
+    return voucher
 
 
 def cmd_run(args):

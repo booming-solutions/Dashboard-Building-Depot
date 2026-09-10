@@ -17,7 +17,9 @@
       "tol": 26,
       "_veld": "Trx Type",
       "verify": false,
-      "_waarom_geen_controle": "Eagle geeft de waarde van dit keuzeveld via geen enkele uitleesmethode terug (getest 9-9-2026: window_text, name, legacy value, value pattern - allemaal leeg). Het is een vaste waarde C, en Eagle blokkeert zelf bij Add F4 als hij leeg of fout is. Alleen dit veld; alle andere velden worden wel teruggelezen."
+      "_waarom_geen_controle": "Eagle geeft de waarde van dit keuzeveld via geen enkele uitleesmethode terug (getest 9-9-2026: window_text, name, legacy value, value pattern - allemaal leeg). Het is een vaste waarde C, en Eagle blokkeert zelf bij Add F4 als hij leeg of fout is. Alleen dit veld; alle andere velden worden wel teruggelezen.",
+      "strategie": "keuzelijst",
+      "soort": "keuzelijst"
     },
     "vendor": {
       "parent": "32768",
@@ -26,7 +28,18 @@
         47
       ],
       "_veld": "Vendor",
-      "strategie": "selectie"
+      "strategie": "keuzelijst",
+      "controle": {
+        "parent": "32768",
+        "rel": [
+          97,
+          82
+        ],
+        "verwacht": "zelfde",
+        "_veld": "Remit To"
+      },
+      "_uitleg": "Leverancier moet uit de lijst gekozen worden (pijltje, typen, Enter); pas dan koppelt Eagle hem. Bewijs: Remit To wordt gevuld met hetzelfde nummer.",
+      "soort": "keuzelijst"
     },
     "voucher_date": {
       "parent": "32768",
@@ -62,7 +75,8 @@
         40
       ],
       "_veld": "AP Account, linkervak",
-      "strategie": "cijfers_wis"
+      "strategie": "cijfers_wis",
+      "soort": "keuzelijst"
     },
     "ap_account_sub": {
       "parent": "32770",
@@ -71,7 +85,8 @@
         40
       ],
       "_veld": "AP Account, rechtervak (entiteit)",
-      "strategie": "selectie"
+      "strategie": "selectie",
+      "soort": "keuzelijst"
     },
     "terms_code": {
       "parent": "32770",
@@ -80,7 +95,8 @@
         73
       ],
       "_veld": "Terms Code",
-      "strategie": "selectie"
+      "strategie": "keuzelijst",
+      "soort": "keuzelijst"
     },
     "voucher_ref": {
       "parent": "32770",
@@ -107,7 +123,7 @@
         193
       ],
       "_veld": "Due Date",
-      "strategie": "selectie"
+      "strategie": "cijfers_wis"
     },
     "disc_date": {
       "parent": "32770",
@@ -116,7 +132,7 @@
         233
       ],
       "_veld": "Disc Date",
-      "strategie": "selectie"
+      "strategie": "cijfers_wis"
     }
   },
   "current_voucher": {
@@ -202,23 +218,13 @@
   },
   "distribution": {
     "window_title_re": ".*[Aa]dd distribution.*",
-    "gekalibreerd": false,
-    "account_main": {
-      "index": 0
-    },
-    "account_sub": {
-      "index": 1
-    },
-    "job": {
-      "index": 2
-    },
-    "amount": {
-      "index": 3
-    },
+    "gekalibreerd": true,
     "ok_button": "OK",
-    "verwacht_aantal": 4,
-    "bedrag_index": 3,
-    "_uitleg": "Eerste keer: indeling afgeleid van boven naar beneden (rekening, sub, job, bedrag), velden gevuld en gecontroleerd, daarna STOP vóór OK zodat een mens het scherm bekijkt. Zet gekalibreerd op true als het klopte; verwacht_aantal en bedrag_index worden dan bewaakt."
+    "verwacht_aantal": 3,
+    "bedrag_index": 2,
+    "_uitleg": "Drie vakken van boven naar beneden: Account Number, Job (blijft leeg), Distribution Amount (staat al ingevuld). Rekening en entiteit gaan samen in Account Number: bij 000 alleen '2099', anders volgens account_formaat (bijv. '2099-700'). Vóór OK worden rekening en bedrag teruggelezen. gekalibreerd=true: OK wordt automatisch gedrukt (bovenste knop, anders Enter).",
+    "account_formaat": "{main}-{sub}",
+    "sub_000_weglaten": true
   },
   "niet_aanraken": [
     "Check Date",
@@ -240,13 +246,16 @@
       "titel": "A/P Add New Transaction",
       "breedte": 529,
       "hoogte": 148,
-      "knoppen": 2,
+      "knoppen": null,
       "antwoord": "Yes",
       "knop": "links",
       "bestand": "apply-to-invoice-not-found.png",
       "uitleg": "Er is geen originele factuur om tegen af te boeken. Hoort erbij.",
-      "_herkomst": "Afmeting en knoppen uit controls-dialoog.txt van 10-9-2026 (handle 2688914: 529x148, twee Sheridan-knoppen onderin, Yes links / No rechts)."
+      "_herkomst": "Afmeting en knoppen uit controls-dialoog.txt van 10-9-2026 (handle 2688914: 529x148, twee Sheridan-knoppen onderin, Yes links / No rechts).",
+      "enter": false
     }
   ],
-  "beeld_drempel": 14
+  "beeld_drempel": 0.15,
+  "_soort_uitleg": "soort=keuzelijst: veld met uitklaplijst. Alleen daar mag de manier 'keuzelijst' (pijltje, typen, Enter, Tab) gebruikt worden; bij gewone vakken en datums opent die alleen maar een lijst of kalender.",
+  "_beeld_drempel_uitleg": "Aandeel afwijkende beeldpunten in het tekstmasker van de vraagregel. Zelfde venster op andere schaal ≈ 0,08; venster met andere tekst ≈ 0,3."
 }
