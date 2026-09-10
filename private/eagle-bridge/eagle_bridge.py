@@ -253,6 +253,23 @@ def dump_controls(win, pad, kop):
     return len(alles), idx
 
 
+def grijs_klein(afbeelding, breedte=128, hoogte=36):
+    return afbeelding.convert("L").resize((breedte, hoogte))
+
+
+def beeldverschil(a, b):
+    """Gemiddeld verschil per beeldpunt tussen twee even grote grijsplaatjes."""
+    pa, pb = list(a.getdata()), list(b.getdata())
+    if len(pa) != len(pb):
+        return 255.0
+    return sum(abs(x - y) for x, y in zip(pa, pb)) / len(pa)
+
+
+def schermuitsnede(bbox):
+    from PIL import ImageGrab
+    return ImageGrab.grab(bbox=bbox, all_screens=True)
+
+
 class BridgeStop(Exception):
     """
     Gecontroleerd stoppen.
@@ -280,6 +297,7 @@ class Eagle:
         self.win = None
         self._panes = {}
         self._win32 = None
+        self.schaal = float(cfg.get("schaal") or 1.0)
 
     # -- venster ---------------------------------------------------------
 
@@ -296,7 +314,56 @@ class Eagle:
         self.win.set_focus()
         time.sleep(self.pace)
         self._panes = {}
+        self._bepaal_schaal()
         return self.win
+
+    SCHALEN = [1.0, 1.25, 0.8, 1.5, 0.6667, 1.75, 0.5714, 2.0, 0.5, 1.2, 0.8333, 1.4, 0.7143, 1.6, 0.625]
+
+    def _bepaal_schaal(self):
+        """
+        Zoekt de schaalfactor waarbij ALLE velden uit config.json gevonden
+        worden. Meestal is dat de onthouden waarde; op een scherm met een
+        andere Windows-schaal wordt de nieuwe factor gevonden en bewaard.
+        """
+        velden = self.cfg.get("fields") or {}
+        specs = [v for v in velden.values() if isinstance(v, dict) and "rel" in v]
+        if not specs:
+            return
+
+        onthouden = self.cfg.get("schaal")
+        kandidaten = list(self.SCHALEN)
+        if onthouden:
+            kandidaten = [float(onthouden)] + [k for k in kandidaten if abs(k - float(onthouden)) > 0.01]
+
+        for k in kandidaten:
+            self.schaal = k
+            self._panes = {}
+            try:
+                ok = all(self.zoek_alle_op_plek(sp["parent"], sp["rel"], sp.get("tol")) for sp in specs)
+            except BridgeStop:
+                ok = False
+            except Exception:
+                ok = False
+            if ok:
+                if abs(k - float(onthouden or 0)) > 0.01:
+                    log(f"  schermschaal bepaald: {k:g}× ten opzichte van de calibratie — onthouden")
+                    self._onthoud_schaal(k)
+                return
+        self.schaal = float(onthouden or 1.0)
+        log("  schermschaal: geen factor gevonden waarbij alle velden kloppen; "
+            "de velden zelf melden straks wat er mist", "WARN")
+
+    def _onthoud_schaal(self, k):
+        try:
+            pad = config_pad()
+            cfg = json.loads(pad.read_text(encoding="utf-8"))
+            cfg["schaal"] = round(k, 4)
+            cfg["_schaal_uitleg"] = ("Verhouding tussen de Windows-schaal van het scherm waarop de Bridge draait "
+                                     "en die van de calibratie. Wordt automatisch bepaald en bijgewerkt.")
+            pad.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+            self.cfg["schaal"] = round(k, 4)
+        except Exception as e:
+            log(f"kon de schermschaal niet opslaan: {e}", "WARN")
 
     def deelvenster(self, auto_id):
         """Het deelvenster (Window) met dit auto_id, bijv. '32768' of '32770'."""
@@ -333,10 +400,13 @@ class Eagle:
         invoervak. Daarom geven we ze allemaal terug — typen doen we in de
         eerste, teruglezen over alle.
         """
-        tol = self.tol if tol is None else tol
+        # Alle afstanden zijn vastgelegd op de schaal van de calibratie. Op
+        # een scherm met een andere Windows-schaal (100% / 125% / 150%) is
+        # alles evenredig groter of kleiner; die factor is self.schaal.
+        tol = (self.tol if tol is None else tol) * self.schaal
         parent = self.deelvenster(parent_id)
         prect = parent.element_info.rectangle
-        doel_l, doel_t = rel
+        doel_l, doel_t = rel[0] * self.schaal, rel[1] * self.schaal
 
         soorten = {"edit": 0, "combobox": 1, "custom": 2, "pane": 3}
         treffers = []
@@ -366,15 +436,60 @@ class Eagle:
         alle = self.zoek_alle_op_plek(parent_id, rel, tol)
         return alle[0] if alle else None
 
+    def _omgeving_van_plek(self, parent_id, rel, n=6):
+        """Voor het logboek: waar staat het deelvenster, en wat staat er in de buurt."""
+        regels = []
+        try:
+            parent = self.deelvenster(parent_id)
+            pr = parent.element_info.rectangle
+            regels.append(f"deelvenster {parent_id}: pos=({pr.left},{pr.top})-({pr.right},{pr.bottom}) "
+                          f"breedte={pr.right-pr.left} hoogte={pr.bottom-pr.top}")
+            kandidaten = []
+            for c in parent.descendants():
+                try:
+                    info = c.element_info
+                    ct = str(getattr(info, "control_type", "") or info.class_name).lower()
+                    if ct not in ("edit", "combobox", "custom", "pane"):
+                        continue
+                    r = info.rectangle
+                    if r.right - r.left <= 2 or r.bottom - r.top <= 2:
+                        continue
+                    rl, rt = r.left - pr.left, r.top - pr.top
+                    afstand = ((rl - rel[0]*self.schaal) ** 2 + (rt - rel[1]*self.schaal) ** 2) ** 0.5
+                    kandidaten.append((afstand, ct, rl, rt, (c.window_text() or "")[:20]))
+                except Exception:
+                    continue
+            kandidaten.sort()
+            regels.append(f"gezocht op rel=({rel[0]},{rel[1]}) × schaal {self.schaal:g} = "
+                          f"({rel[0]*self.schaal:.0f},{rel[1]*self.schaal:.0f}); dichtstbijzijnde elementen:")
+            for afstand, ct, rl, rt, tekst in kandidaten[:n]:
+                regels.append(f"  [{ct}] rel=({rl},{rt}) afstand={afstand:.0f} tekst='{tekst}'")
+            if not kandidaten:
+                regels.append("  (geen invoerelementen gevonden in dit deelvenster)")
+        except Exception as e:
+            regels.append(f"(omgeving niet uit te lezen: {e})")
+        return regels
+
     def zoek_veld_alle(self, naam, spec):
         if not spec or "rel" not in spec:
             raise BridgeStop(f"Veld '{naam}' staat niet in config.json. Draai eerst 'calibrate'.")
         alle = self.zoek_alle_op_plek(spec["parent"], spec["rel"], spec.get("tol"))
         if not alle:
+            # Eén keer opnieuw, met een vers opgezocht deelvenster: het venster
+            # kan intussen zijn herschikt of opnieuw opgebouwd.
+            self._panes = {}
+            time.sleep(self.pace)
+            alle = self.zoek_alle_op_plek(spec["parent"], spec["rel"], spec.get("tol"))
+        if not alle:
+            for regel in self._omgeving_van_plek(spec["parent"], spec["rel"]):
+                log("    " + regel, "WARN")
+            pad = schermafdruk(f"veld-niet-gevonden-{naam}")
             raise BridgeStop(
                 f"Veld '{naam}' staat niet op de verwachte plek in het Eagle-scherm.\n"
-                "Waarschijnlijk is het scherm gewijzigd of staat Eagle op een andere weergave.\n"
-                "Draai 'py -3 eagle_bridge.py calibrate' en stuur de nieuwe controls.txt door."
+                "Hierboven staat waar het deelvenster nu staat en wat er in de buurt gevonden is.\n"
+                "Mogelijke oorzaken: ander scherm of andere schaal, venster anders van grootte, "
+                "of Eagle staat niet op tabblad '1. Main'."
+                + (f"\nSchermafdruk: {pad}" if pad else "")
             )
         return alle
 
@@ -669,15 +784,65 @@ class Eagle:
         stukken = self._alle_teksten(w32) + self._alle_teksten(uia)
         return " ".join(stukken).lower()
 
+    def _knoppen_in(self, handle, rect):
+        """Zichtbare knoppen binnen het venster, gesorteerd op rij en van links naar rechts."""
+        knoppen = []
+        uia, w32 = self._wrap_beide(handle)
+        for bron in (w32, uia):
+            if bron is None:
+                continue
+            try:
+                for c in bron.descendants():
+                    try:
+                        info = c.element_info
+                        cls = (info.class_name or "").lower()
+                        ct = str(getattr(info, "control_type", "") or "").lower()
+                        if "command" not in cls and "button" not in cls and ct != "button":
+                            continue
+                        r = info.rectangle
+                        if r.left < rect.left - 2 or r.right > rect.right + 2:
+                            continue
+                        if r.top < rect.top - 2 or r.bottom > rect.bottom + 2:
+                            continue
+                        if r.right - r.left < 20 or r.bottom - r.top < 12:
+                            continue
+                        if any(abs(r.left - k[1].left) < 4 and abs(r.top - k[1].top) < 4 for k in knoppen):
+                            continue
+                        knoppen.append((c, r))
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+            if knoppen:
+                break
+        knoppen.sort(key=lambda k: (k[1].top, k[1].left))
+        return knoppen
+
     def _meldingsvensters(self):
-        """Alle vensters die een melding van Eagle kunnen zijn, met hun tekst."""
+        """
+        Alle vensters die een melding van Eagle kunnen zijn.
+
+        Per venster: de leesbare tekst (als die er is), de afmeting, het
+        aantal zichtbare knoppen, en een klein grijsplaatje van het venster.
+        De vraagtekst in Eagle-meldingen is een VB6-label zonder eigen
+        venster en is dus door geen enkele laag uit te lezen; herkennen gaat
+        daarom op vorm en beeld.
+        """
         uit = []
         for handle, titel, klasse, rect in self._zichtbare_vensters():
             t = (titel or "").lower()
             if "add new transaction" not in t and "add distribution" not in t:
                 continue
+            knoppen = self._knoppen_in(handle, rect)
+            beeld = None
+            try:
+                beeld = schermuitsnede((rect.left, rect.top, rect.right, rect.bottom))
+            except Exception as e:
+                log(f"schermuitsnede van '{titel}' mislukt: {e}", "WARN")
             uit.append({
                 "handle": handle, "titel": titel, "klasse": klasse, "rect": rect,
+                "breedte": rect.right - rect.left, "hoogte": rect.bottom - rect.top,
+                "knoppen": knoppen, "beeld": beeld,
                 "tekst": self._tekst_van_venster(handle),
             })
         return uit
@@ -746,6 +911,38 @@ class Eagle:
             return False
 
         pogingen = []
+
+        # 0. knop op positie in het venster ("links" / "rechts" / volgnummer),
+        #    voor vensters waarvan de knoppen geen naam prijsgeven.
+        if regel.get("knop") is not None:
+            def p0():
+                rect = None
+                for h, titel, klasse, r in self._zichtbare_vensters():
+                    if h == handle:
+                        rect = r
+                        break
+                if rect is None:
+                    return False
+                knoppen = self._knoppen_in(handle, rect)
+                if not knoppen:
+                    return False
+                # alleen de onderste rij knoppen telt
+                onderste = max(k[1].top for k in knoppen)
+                rij = [k for k in knoppen if abs(k[1].top - onderste) < 6]
+                rij.sort(key=lambda k: k[1].left)
+                keuze = regel["knop"]
+                if keuze == "links":
+                    c = rij[0][0]
+                elif keuze == "rechts":
+                    c = rij[-1][0]
+                else:
+                    c = rij[int(keuze)][0]
+                r = c.element_info.rectangle
+                # klik in het midden van de knop, via absolute schermpositie
+                from pywinauto import mouse
+                mouse.click(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2))
+                return True
+            pogingen.append((f"knop '{regel['knop']}' op positie", p0))
 
         # 1. moderne laag: knop op naam
         def p1():
@@ -825,11 +1022,78 @@ class Eagle:
         return False
 
     def _bekende_vraag(self, vensters):
+        # 1. op tekst (werkt alleen als Eagle de tekst ooit prijsgeeft)
         for v in vensters:
             for regel in BEKENDE_DIALOGEN:
-                if regel["bevat"] and regel["bevat"] in v["tekst"]:
+                if regel.get("bevat") and regel["bevat"] in v["tekst"]:
                     return regel, v
+
+        # 2. op vorm en beeld, tegen de vastgelegde vensters in config.json
+        bekend = self.cfg.get("dialogen") or []
+        if not bekend:
+            return None, None
+        from PIL import Image
+        drempel = float(self.cfg.get("beeld_drempel", 14))
+        for v in vensters:
+            if v["beeld"] is None:
+                continue
+            huidig = grijs_klein(v["beeld"])
+            beste, beste_score = None, 999.0
+            for regel in bekend:
+                if regel.get("titel", "").lower() not in v["titel"].lower():
+                    continue
+                if regel.get("knoppen") is not None and regel["knoppen"] != len(v["knoppen"]):
+                    continue
+                # Vorm: verhouding breedte/hoogte (schaalonafhankelijk) en aantal knoppen.
+                b, h = regel.get("breedte"), regel.get("hoogte")
+                if b and h and v["hoogte"]:
+                    if abs((v["breedte"] / v["hoogte"]) - (b / h)) / (b / h) > 0.10:
+                        continue
+                pad = SCRIPT_DIR / "dialogen" / regel["bestand"]
+                if not pad.exists():
+                    # Eerste keer: de vorm klopt, er is nog geen referentiebeeld.
+                    # Dit beeld wordt de referentie; daarna moet ook het beeld kloppen.
+                    try:
+                        pad.parent.mkdir(parents=True, exist_ok=True)
+                        v["beeld"].save(pad)
+                        log(f"  venster op vorm herkend als '{regel['naam']}' — beeld vastgelegd als "
+                            f"referentie: {pad.name}")
+                    except Exception as e:
+                        log(f"kon referentiebeeld niet opslaan: {e}", "WARN")
+                    return regel, v
+                try:
+                    score = beeldverschil(huidig, grijs_klein(Image.open(pad)))
+                except Exception as e:
+                    log(f"vergelijken met {pad.name} mislukt: {e}", "WARN")
+                    continue
+                if score < beste_score:
+                    beste, beste_score = regel, score
+            if beste is not None and beste_score <= drempel:
+                log(f"  venster herkend op beeld: '{beste['naam']}' (afwijking {beste_score:.1f})")
+                return beste, v
+            if beste is not None:
+                log(f"  dichtstbijzijnde bekende venster '{beste['naam']}' wijkt te veel af "
+                    f"({beste_score:.1f} > {drempel})", "WARN")
         return None, None
+
+    def _leg_onbekend_vast(self, vensters):
+        """Bewaart het beeld en de vorm van elk onbekend meldingsvenster."""
+        map_ = SCRIPT_DIR / "dialogen"
+        map_.mkdir(parents=True, exist_ok=True)
+        paden = []
+        for v in vensters:
+            if v["beeld"] is None:
+                continue
+            stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+            pad = map_ / f"onbekend-{stamp}-{v['handle']}.png"
+            try:
+                v["beeld"].save(pad)
+                paden.append(pad)
+                log(f"  onbekend venster vastgelegd: {pad.name}  "
+                    f"(titel '{v['titel']}', {v['breedte']}x{v['hoogte']}, {len(v['knoppen'])} knop(pen))")
+            except Exception as e:
+                log(f"kon het venster niet vastleggen: {e}", "WARN")
+        return paden
 
     def verwerk_na_add(self, max_stappen=6):
         """
@@ -878,13 +1142,16 @@ class Eagle:
 
             pad = schermafdruk("onbekende-toestand")
             dump = self._dump_alles("geen bekende vraag en geen distributiescherm binnen de wachttijd")
+            beelden = self._leg_onbekend_vast(gezien)
             samenvatting = "; ".join(
-                f"'{v['titel']}' [{v['klasse']}] tekst='{v['tekst'][:160]}'" for v in gezien
+                f"'{v['titel']}' {v['breedte']}x{v['hoogte']} met {len(v['knoppen'])} knop(pen)"
+                for v in gezien
             ) or "geen vensters met een meldingstitel"
             raise BridgeStop(
-                "Na Add F4 verscheen geen herkenbare toestand — gestopt zonder te raden.\n"
+                "Na Add F4 verscheen een venster dat ik nog niet ken — gestopt zonder te raden.\n"
                 f"Gezien: {samenvatting}\n"
-                f"Volledige uitlezing: {dump}\n"
+                + (f"Beeld vastgelegd: {', '.join(p.name for p in beelden)}\n" if beelden else "")
+                + f"Volledige uitlezing: {dump}\n"
                 + (f"Schermafdruk: {pad}\n" if pad else ""),
                 na_add=True,
             )
@@ -1297,6 +1564,7 @@ def cmd_doctor(_args):
             eagle = Eagle(cfg)
             eagle.verbind()
             log("Eagle       : scherm New A/P Transactions gevonden")
+            log(f"schermschaal: {eagle.schaal:g}× ten opzichte van de calibratie")
             for naam in INVOERVOLGORDE:
                 c = None
                 try:
