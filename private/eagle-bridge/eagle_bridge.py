@@ -690,7 +690,7 @@ class Eagle:
             pad = config_pad()
             cfg = json.loads(pad.read_text(encoding="utf-8"))
             cfg["schaal"] = round(k, 4)
-            cfg["_schaal_uitleg"] = ("Verhouding tussen de Windows-schaal van het scherm waarop de Bridge draait "
+            cfg["_schaal_uitleg"] = ("Verhouding tussen de Windows-schaal van het scherm waarop Booming draait "
                                      "en die van de calibratie. Wordt automatisch bepaald en bijgewerkt.")
             pad.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
             self.cfg["schaal"] = round(k, 4)
@@ -2253,9 +2253,9 @@ def cmd_run(args):
         if len(te_doen) < len(regels):
             print(f"  {len(regels) - len(te_doen)} regel(s) zijn al eerder geboekt en worden overgeslagen.")
         print()
-        print("  Raak muis en toetsenbord NIET aan zolang de Bridge bezig is.")
+        print("  Raak muis en toetsenbord NIET aan zolang Booming bezig is.")
         print("  Noodstop: duw de muis in de linkerbovenhoek van het scherm en houd hem daar;")
-        print("  de Bridge stopt dan vóór de volgende stap (nooit midden in een boeking).")
+        print("  Booming stopt dan vóór de volgende stap (nooit midden in een boeking).")
         print()
         try:
             antwoord = input("  Druk op Enter om te beginnen, of typ N en Enter om te stoppen: ").strip().lower()
@@ -2287,7 +2287,7 @@ def cmd_run(args):
         if sleutel in al_geboekt:
             eerder = al_geboekt[sleutel]
             if eerder.get("status") == "bezig_add":
-                log(f"  overgeslagen: bij een eerdere poging ({eerder.get('tijd')}) is de Bridge tijdens Add F4 "
+                log(f"  overgeslagen: bij een eerdere poging ({eerder.get('tijd')}) is Booming tijdens Add F4 "
                     "afgebroken — CONTROLEER IN EAGLE of deze regel er staat (Viewer F9, op factuurnummer).", "WARN")
                 reden = f"Onzeker: eerdere poging op {eerder.get('tijd')} afgebroken tijdens Add F4 — controleer in Eagle."
             elif eerder.get("status") == "geboekt_handmatig":
@@ -2357,7 +2357,7 @@ def cmd_run(args):
             if p:
                 log(f"Schermafdruk: {p}", "ERROR")
             if RAPPORTEUR:
-                RAPPORTEUR.regel(regel["rij"], status="gestopt", reden="Onverwachte fout in de Bridge — zie logboek op de PC.", stap="fout")
+                RAPPORTEUR.regel(regel["rij"], status="gestopt", reden="Onverwachte fout in Booming — zie logboek op de PC.", stap="fout")
                 RAPPORTEUR.einde_regel()
                 RAPPORTEUR.batch(status="gestopt", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=1,
                                  laatste_bericht=f"Onverwachte fout bij rij {regel['rij']} — zie logboek op de PC.")
@@ -2495,14 +2495,14 @@ def cmd_register(_args):
             winreg.SetValueEx(k, naam, 0, winreg.REG_SZ, waarde)
 
     zet(r"Software\Classes\.eaglebatch", "EagleBridge.Batch")
-    zet(r"Software\Classes\EagleBridge.Batch", "Eagle vooruitbetalingen-batch")
+    zet(r"Software\Classes\EagleBridge.Batch", "Booming — vooruitbetalingen voor Eagle")
     zet(r"Software\Classes\EagleBridge.Batch\shell\open\command", commando)
-    zet(r"Software\Classes\eagleprepay", "URL:Eagle Bridge")
+    zet(r"Software\Classes\eagleprepay", "URL:Booming (Eagle)")
     zet(r"Software\Classes\eagleprepay", "", "URL Protocol")
     zet(r"Software\Classes\eagleprepay\shell\open\command", commando)
 
     log("Geregistreerd:")
-    log("  .eaglebatch-bestanden openen nu de Eagle Bridge")
+    log("  .eaglebatch-bestanden openen nu Booming")
     log("  eagleprepay:// is beschikbaar voor het dashboard")
     log(f"  commando: {commando}")
     return 0
@@ -2562,8 +2562,14 @@ def cmd_testbatch(args):
 def main():
     global log
     log = Log()
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleTitleW(f"Booming — vooruitbetalingen Eagle  (v{BRIDGE_VERSIE})")
+        except Exception:
+            pass
 
-    p = argparse.ArgumentParser(description="Eagle Bridge — vooruitbetalingen Keukendepot")
+    p = argparse.ArgumentParser(description="Booming — vooruitbetalingen Keukendepot in Eagle")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor", help="controleer installatie, config en veldkoppeling")
     sub.add_parser("calibrate", help="lees het Eagle-scherm uit en schrijf controls.txt")
@@ -2600,7 +2606,7 @@ def main():
 
     if args.cmd == "run" and sys.stdin.isatty():
         try:
-            input("\nDruk op Enter om te sluiten...")
+            input("\nDruk op Enter om Booming te sluiten...")
         except EOFError:
             pass
     log.close()

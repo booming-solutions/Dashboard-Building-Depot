@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Werkinstructie Booming</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+:root{
+  --paper:#EEF3F8; --surface:#FFFFFF; --surface-2:#E7EEF5; --surface-3:#F5F8FB;
+  --line:#CEDCE8; --line-soft:#DFE8F0; --line-strong:#A6BDD1;
+  --ink:#0F2032; --ink-2:#39506A; --muted:#6B7F92;
+  --accent:#1B3A5C; --accent-soft:#DCE6F1;
+  --ok:#1A6547; --ok-soft:#DFEFE7;
+  --warn:#8A5606; --warn-soft:#FAEBD3;
+  --err:#96282A; --err-soft:#F8E4E4;
+  --mono:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans:"IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --shadow:0 1px 2px rgba(16,40,63,.06), 0 8px 24px -18px rgba(16,40,63,.3);
+  --win-bar:#F3F3F3; --win-ink:#1F1F1F; --win-line:#D6D6D6; --win-btn:#0067C0; --con:#0C0C0C; --con-ink:#CCCCCC;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0B141D; --surface:#121F2C; --surface-2:#1A2B3B; --surface-3:#16242F;
+    --line:#263D50; --line-soft:#1E3244; --line-strong:#3C5B76;
+    --ink:#E2EBF3; --ink-2:#B3C6D6; --muted:#7F95A8;
+    --accent:#7FB2DE; --accent-soft:#1B3550;
+    --ok:#6ECBA0; --ok-soft:#123528;
+    --warn:#E5B662; --warn-soft:#3A2C0E;
+    --err:#EC8C8C; --err-soft:#3B1A1B;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0B141D; --surface:#121F2C; --surface-2:#1A2B3B; --surface-3:#16242F;
+  --line:#263D50; --line-soft:#1E3244; --line-strong:#3C5B76;
+  --ink:#E2EBF3; --ink-2:#B3C6D6; --muted:#7F95A8;
+  --accent:#7FB2DE; --accent-soft:#1B3550;
+  --ok:#6ECBA0; --ok-soft:#123528;
+  --warn:#E5B662; --warn-soft:#3A2C0E;
+  --err:#EC8C8C; --err-soft:#3B1A1B;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:15.5px; line-height:1.6}
+.sheet{max-width:860px; margin:0 auto; padding:0 24px 80px}
+
+header.doc{border-bottom:1px solid var(--line); background:linear-gradient(180deg,var(--surface-2),var(--surface))}
+header.doc .inner{max-width:860px; margin:0 auto; padding:30px 24px 26px}
+.eyebrow{font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-weight:600; margin:0}
+h1{font-size:30px; line-height:1.12; margin:8px 0 0; font-weight:600; letter-spacing:-.02em; text-wrap:balance}
+.sub{margin:10px 0 0; color:var(--ink-2); font-size:15px; max-width:62ch}
+.meta{margin-top:16px; display:flex; gap:10px; flex-wrap:wrap; font-size:12px}
+.tag{background:var(--surface); border:1px solid var(--line); border-radius:999px; padding:3px 11px; color:var(--ink-2)}
+.tag.prev{background:var(--warn-soft); border-color:color-mix(in srgb,var(--warn) 30%,transparent); color:var(--warn); font-weight:600}
+
+nav.toc{margin-top:26px; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px}
+nav.toc a{display:block; background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:11px 14px; text-decoration:none; color:var(--ink); box-shadow:var(--shadow)}
+nav.toc a small{display:block; color:var(--muted); font-size:12px; margin-top:2px}
+nav.toc a b{font-family:var(--mono); color:var(--accent); font-size:12px; margin-right:8px}
+
+section{margin-top:44px}
+.phase{display:flex; align-items:baseline; gap:14px; padding-bottom:10px; border-bottom:2px solid var(--accent)}
+.phase .letter{font-family:var(--mono); font-size:13px; font-weight:600; color:var(--accent); background:var(--accent-soft); border-radius:6px; padding:3px 10px; flex:none}
+.phase h2{margin:0; font-size:19px; font-weight:600; letter-spacing:-.015em}
+.phase .when{margin-left:auto; font-size:12.5px; color:var(--muted); text-align:right}
+.lead{color:var(--ink-2); max-width:66ch; margin:14px 0 0}
+
+ol.steps{list-style:none; margin:18px 0 0; padding:0; counter-reset:step}
+ol.steps > li{counter-increment:step; position:relative; padding:0 0 24px 46px; margin:0; border-left:1px solid var(--line)}
+ol.steps > li:last-child{border-left-color:transparent; padding-bottom:4px}
+ol.steps > li::before{
+  content:counter(step); position:absolute; left:-14px; top:0; width:28px; height:28px; border-radius:50%;
+  background:var(--surface); border:1px solid var(--line-strong); color:var(--accent);
+  font-family:var(--mono); font-size:12.5px; font-weight:600; display:flex; align-items:center; justify-content:center;
+}
+ol.steps h3{margin:2px 0 5px; font-size:15.5px; font-weight:600}
+ol.steps p{margin:0 0 8px; color:var(--ink-2); font-size:14.5px; max-width:64ch}
+ol.steps p:last-child{margin-bottom:0}
+
+.callout{border-radius:9px; padding:13px 16px; margin:12px 0 0; font-size:14px; border:1px solid var(--line); background:var(--surface-3); color:var(--ink-2)}
+.callout strong{color:var(--ink); display:block; margin-bottom:3px; font-size:14px}
+.callout.warn{background:var(--warn-soft); border-color:color-mix(in srgb,var(--warn) 30%,transparent); color:var(--warn)}
+.callout.warn strong{color:var(--warn)}
+.callout.stop{background:var(--err-soft); border-color:color-mix(in srgb,var(--err) 30%,transparent); color:var(--err)}
+.callout.stop strong{color:var(--err)}
+.callout.ok{background:var(--ok-soft); border-color:color-mix(in srgb,var(--ok) 30%,transparent); color:var(--ok)}
+.callout.ok strong{color:var(--ok)}
+
+code, .path{font-family:var(--mono); font-size:13px; background:var(--surface-2); border:1px solid var(--line-soft); border-radius:4px; padding:1px 6px; color:var(--ink)}
+kbd{font-family:var(--mono); font-size:12px; background:var(--surface); border:1px solid var(--line-strong); border-bottom-width:2px; border-radius:5px; padding:1px 7px; color:var(--ink)}
+
+.card{background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); overflow:hidden; margin-top:18px}
+.card h4{margin:0; padding:11px 16px; font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); font-weight:600; background:var(--surface-2); border-bottom:1px solid var(--line)}
+.kv{display:grid; grid-template-columns:230px 1fr}
+.kv > div{padding:7px 16px; border-bottom:1px solid var(--line-soft); font-size:14px}
+.kv > div:nth-child(2n+1){color:var(--muted)}
+.kv > div:nth-child(2n){font-family:var(--mono); font-size:13px; font-weight:500}
+.kv > div:nth-last-child(-n+2){border-bottom:none}
+
+table{border-collapse:collapse; width:100%; font-size:14px}
+.tablewrap{overflow-x:auto}
+th{text-align:left; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:600; padding:10px 16px; background:var(--surface-2); border-bottom:1px solid var(--line); white-space:nowrap}
+td{padding:9px 16px; border-bottom:1px solid var(--line-soft); vertical-align:top; color:var(--ink-2)}
+tr:last-child td{border-bottom:none}
+td.mono{font-family:var(--mono); font-size:13px; color:var(--ink); white-space:nowrap}
+
+ul.plain{margin:10px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:9px}
+ul.plain li{display:flex; gap:11px; align-items:baseline; font-size:14.5px; color:var(--ink-2)}
+ul.plain li .mark{flex:none; font-family:var(--mono); font-size:11px; font-weight:600; border-radius:4px; padding:2px 8px}
+.mark.yes{background:var(--ok-soft); color:var(--ok)}
+.mark.no{background:var(--err-soft); color:var(--err)}
+.mark.num{background:var(--accent-soft); color:var(--accent)}
+
+/* ---- schermvoorbeelden (nagetekend, geen echte schermafdrukken) ---- */
+.shot{margin:12px 0 4px; max-width:560px; border:1px solid var(--line-strong); border-radius:8px; overflow:hidden; box-shadow:var(--shadow); background:#FFFFFF; color:#1F1F1F; font-family:"Segoe UI", var(--sans); font-size:13px; line-height:1.45}
+.shot .bar{display:flex; align-items:center; gap:8px; padding:7px 10px; background:var(--win-bar); border-bottom:1px solid var(--win-line); font-size:12.5px; color:#333}
+.shot .bar .dots{margin-left:auto; display:flex; gap:12px; color:#555; font-size:11px}
+.shot .body{padding:14px 16px}
+.shot .btn{display:inline-block; border:1px solid #BDBDBD; border-radius:4px; padding:4px 14px; background:#FDFDFD; margin:2px 6px 2px 0; font-size:12.5px}
+.shot .btn.primary{background:var(--win-btn); border-color:var(--win-btn); color:#fff}
+.shot .btn.py{background:#FFD343; border-color:#E5B800; color:#1F1F1F; font-weight:600; padding:8px 18px}
+.shot .field{border:1px solid #BDBDBD; border-radius:3px; padding:4px 8px; background:#fff; font-family:var(--mono); font-size:12px; margin:6px 0}
+.shot .check{display:inline-block; width:13px; height:13px; border:1px solid #555; border-radius:2px; vertical-align:-2px; margin-right:6px; background:#fff}
+.shot .check.on{background:var(--win-btn); border-color:var(--win-btn); position:relative}
+.shot .check.on::after{content:""; position:absolute; left:4px; top:1px; width:3px; height:7px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg)}
+.shot .menu{background:#fff; border:1px solid #C8C8C8; border-radius:6px; box-shadow:0 8px 20px -10px rgba(0,0,0,.4); padding:6px 0; width:230px; font-size:12.5px}
+.shot .menu div{padding:5px 14px}
+.shot .menu div.hl{background:#E5F1FB}
+.shot .dl{display:flex; align-items:center; gap:10px; padding:8px 12px; background:#F1F3F4; border-top:1px solid #DADCE0; font-size:12.5px}
+.shot .dl .file{border:1px solid #DADCE0; background:#fff; border-radius:6px; padding:5px 10px; display:flex; gap:8px; align-items:center}
+.shot .dl .ico{width:14px; height:18px; border:1.5px solid #5F6368; border-radius:2px; position:relative}
+.shot .dl .ico::after{content:""; position:absolute; left:3px; right:3px; top:8px; height:0; border-top:1.5px solid #5F6368; box-shadow:0 3px 0 #5F6368}
+.shot.console{background:var(--con); color:var(--con-ink); font-family:var(--mono); font-size:12px; border-color:#333}
+.shot.console .bar{background:#2B2B2B; color:#ddd; border-bottom-color:#3a3a3a}
+.shot.console .body{padding:12px 14px; white-space:pre; overflow-x:auto; line-height:1.5}
+.shot.console .g{color:#7EE787}
+.shot.console .y{color:#E3B341}
+.shot.console .r{color:#FF7B72}
+.shot .explorer{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding:4px 0}
+.shot .explorer div{text-align:center; font-size:11.5px; color:#333}
+.shot .explorer .icon{width:36px; height:44px; margin:0 auto 4px; border:1.5px solid #666; border-radius:3px; background:#FAFAFA; position:relative}
+.shot .explorer .icon.bat{background:#EEE; border-color:#444}
+.shot .explorer .icon.bat::after{content:"BAT"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:#444}
+.shot .explorer .icon.zip{border-style:dashed}
+.shot .explorer .icon.zip::after{content:"ZIP"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:#666}
+.shot .explorer .icon.folder{background:#F7D774; border-color:#D9B44A; height:34px; margin-top:10px}
+.shot .explorer div.sel{background:#CCE4F7; border-radius:4px; padding:4px 0}
+.shot .explorer .icon.py{background:#3776AB; border-color:#2B5B87}
+.shot .explorer .icon.py::after{content:"PY"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:#FFD343}
+.shot .smart{text-align:center; padding:8px 0 4px}
+.shot .smart h5{margin:0 0 6px; font-size:16px; font-weight:600; color:#1F1F1F}
+.shot .smart p{margin:0 0 8px; color:#444; font-size:12.5px}
+.shot .smart a{color:#0067C0; text-decoration:underline; font-size:12.5px}
+.shot .store{display:flex; align-items:center; gap:14px; padding:4px 0}
+.shot .store .box{border:1px solid #444; padding:4px 8px; font-family:var(--mono); font-size:12px; background:#fff}
+.shot .dash{background:#F3F6FA; border-radius:8px; padding:12px; display:flex; gap:12px; align-items:center}
+.shot .dash .big{width:44px; height:44px; border-radius:8px; background:#1B3A5C; color:#fff; font-family:var(--mono); font-size:22px; font-weight:700; display:flex; align-items:center; justify-content:center; flex:none}
+.shot .dash .txt{font-size:12.5px; color:#1B3A5C}
+.shot .dash .txt b{display:block; font-size:13px}
+.shot .dashbtn{display:inline-block; background:#1B3A5C; color:#fff; border-radius:6px; padding:6px 14px; font-size:12.5px; font-weight:600; margin-top:8px}
+.shot .bar2{height:8px; background:#E5E7EB; border-radius:99px; overflow:hidden; margin:6px 0 10px}
+.shot .bar2 i{display:block; height:100%; width:60%; background:#22A06B}
+.shot .pill{display:inline-block; border-radius:99px; padding:1px 8px; font-size:10.5px; font-weight:600}
+.shot .pill.ok{background:#D1FAE5; color:#065F46}
+.shot .pill.busy{background:#DBEAFE; color:#1E40AF}
+.shot .pill.wait{background:#F3F4F6; color:#4B5563}
+.shot table{font-size:11.5px}
+.shot th{background:#F9FAFB; color:#6B7280; padding:5px 8px; font-size:9.5px; border-bottom:1px solid #E5E7EB}
+.shot td{padding:5px 8px; border-bottom:1px solid #F3F4F6; color:#1F1F1F}
+.caption{font-size:12px; color:var(--muted); margin:0 0 6px}
+.caption::before{content:"Voorbeeld — "; font-weight:600}
+
+.foot{margin-top:44px; padding-top:18px; border-top:1px solid var(--line); font-size:13px; color:var(--muted)}
+@media (max-width:600px){
+  .kv{grid-template-columns:1fr}
+  .kv > div:nth-child(2n+1){padding-bottom:0; border-bottom:none}
+  h1{font-size:24px}
+  ol.steps > li{padding-left:34px}
+  .shot .explorer{grid-template-columns:repeat(2,1fr)}
+}
+@media print{
+  body{background:#fff}
+  .card,.callout,.shot{break-inside:avoid}
+  ol.steps > li{break-inside:avoid}
+  nav.toc{display:none}
+}
+</style>
+
+</head>
+<body>
+<header class="doc">
+  <div class="inner">
+    <p class="eyebrow">Booming Solutions · Finance · Keukendepot</p>
+    <h1>Booming — vooruitbetalingen boeken in Eagle</h1>
+    <p class="sub">Werkinstructie in twee delen: Booming één keer op je computer zetten, en daarna elke keer boeken vanuit het dashboard.</p>
+    <div class="meta">
+      <span class="tag prev">Preview</span>
+      <span class="tag">Leverancier 4741 — Keukendepot</span>
+      <span class="tag">Curaçao = Store 1 · Bonaire = Store B</span>
+    </div>
+    <nav class="toc">
+      <a href="#deel1"><b>Deel 1</b>Booming installeren<small>Eén keer per computer, ± 10 minuten</small></a>
+      <a href="#deel2"><b>Deel 2</b>Boeken vanuit het dashboard<small>Elke keer dat er een lijst is</small></a>
+      <a href="#hulp"><b>Hulp</b>Als er iets misgaat<small>Meldingen en wat je dan doet</small></a>
+    </nav>
+  </div>
+</header>
+
+<div class="sheet">
+
+  <!-- IN HET KORT -->
+  <section>
+    <div class="phase">
+      <span class="letter">In het kort</span>
+      <h2>Wat Booming doet</h2>
+    </div>
+    <p class="lead">
+      Je krijgt een Excel met aanbetalingen. Die zet je in het dashboard, dat controleert op koers, dubbele regels en
+      eerder geboekte facturen. Daarna klik je op <strong>Boeken in Eagle</strong>. Booming — een klein programma op je
+      eigen computer — typt de regels dan één voor één in Eagle in, precies zoals je het met de hand zou doen, en het
+      dashboard laat per regel zien hoe ver het is en welk vouchernummer Eagle heeft gegeven.
+    </p>
+    <div class="callout ok">
+      <strong>Wat je zelf doet</strong>
+      Beslissen over de regels die het dashboard aanmerkt, Eagle op de juiste store en het juiste scherm zetten,
+      en tijdens het boeken van muis en toetsenbord afblijven. De rest gaat vanzelf.
+    </div>
+  </section>
+
+  <!-- DEEL 1 -->
+  <section id="deel1">
+    <div class="phase">
+      <span class="letter">Deel 1</span>
+      <h2>Booming installeren op je computer</h2>
+      <span class="when">Eén keer per computer</span>
+    </div>
+    <p class="lead">
+      Dit hoeft één keer. Je hebt geen beheerdersrechten nodig en je hoeft niets in te typen; je klikt en wacht.
+      Reken op tien minuten. De plaatjes hieronder zijn nagetekend — het echte scherm kan er iets anders uitzien,
+      de knoppen heten hetzelfde.
+    </p>
+    <ol class="steps">
+      <li>
+        <h3>Download het installatiepakket vanuit het dashboard</h3>
+        <p>Ga in het dashboard naar <span class="path">Finance → Vooruitbetalingen</span> en klik bovenaan op
+          <strong>Booming installeren op deze PC</strong>. Er komt een bestand <code>booming-installatie.zip</code> in je
+          map Downloads. Klik <em>niet</em> direct op het gedownloade bestand; ga naar stap 2.</p>
+        <p class="caption">de download onderin Chrome</p>
+        <div class="shot">
+          <div class="bar">boomingsolutions.ai/dashboard/finance/vooruitbetalingen <span class="dots">— ▢ ✕</span></div>
+          <div class="body" style="padding:10px 16px;color:#555">… Vooruitbetalingen boeken in Eagle …</div>
+          <div class="dl"><div class="file"><span class="ico"></span> booming-installatie.zip</div><span style="color:#5F6368">214 kB · Gereed</span></div>
+        </div>
+      </li>
+      <li>
+        <h3>Pak het zip-bestand uit</h3>
+        <p>Open je map <strong>Downloads</strong> in de Verkenner. Klik met de <strong>rechtermuisknop</strong> op
+          <code>booming-installatie.zip</code> en kies <strong>Alles uitpakken…</strong>. In het venster dat opent klik je op
+          <strong>Uitpakken</strong> (het voorgestelde pad is goed). Er verschijnt een nieuwe map
+          <code>booming-installatie</code>, die opent vanzelf.</p>
+        <p class="caption">rechtermuisknop op het zip-bestand</p>
+        <div class="shot">
+          <div class="bar">Downloads <span class="dots">— ▢ ✕</span></div>
+          <div class="body">
+            <div class="explorer">
+              <div class="sel"><div class="icon zip"></div>booming-installatie.zip</div>
+              <div><div class="icon"></div>aanbetalingen-sept.xlsx</div>
+              <div><div class="icon"></div>overzicht.pdf</div>
+              <div></div>
+            </div>
+            <div class="menu" style="margin:-30px 0 0 120px">
+              <div>Openen</div>
+              <div class="hl">Alles uitpakken…</div>
+              <div>Kopiëren</div>
+              <div>Verwijderen</div>
+            </div>
+          </div>
+        </div>
+      </li>
+      <li>
+        <h3>Dubbelklik op installeer-booming.bat</h3>
+        <p>In de uitgepakte map (open eventueel de submap <code>Booming-installatie</code>) staat
+          <code>installeer-booming.bat</code>. Dubbelklik erop. Er opent een zwart venster dat zichzelf stap voor stap
+          doorloopt.</p>
+        <p class="caption">de uitgepakte map</p>
+        <div class="shot">
+          <div class="bar">Booming-installatie <span class="dots">— ▢ ✕</span></div>
+          <div class="body">
+            <div class="explorer">
+              <div><div class="icon folder"></div>dialogen</div>
+              <div><div class="icon"></div>config.json</div>
+              <div><div class="icon py"></div>eagle_bridge.py</div>
+              <div class="sel"><div class="icon bat"></div>installeer-booming.bat</div>
+            </div>
+          </div>
+        </div>
+        <div class="callout warn">
+          <strong>Ziet Windows het als "onbekende app"?</strong>
+          Dan verschijnt een blauw venster <em>"Windows heeft uw pc beschermd"</em>. Klik daarin op
+          <strong>Meer informatie</strong> en daarna op <strong>Toch uitvoeren</strong>. Dit is een standaardwaarschuwing
+          voor programma's die niet uit de Store komen; Booming is door Booming Solutions gemaakt.
+        </div>
+        <p class="caption">de Windows-waarschuwing, als die verschijnt</p>
+        <div class="shot" style="max-width:420px">
+          <div class="body smart" style="background:#0078D4;color:#fff;border-radius:0">
+            <h5 style="color:#fff">Windows heeft uw pc beschermd</h5>
+            <p style="color:#E8F1FA">Microsoft Defender SmartScreen heeft voorkomen dat een onbekende app werd gestart.</p>
+            <a style="color:#fff">Meer informatie</a>
+            <div style="margin-top:12px"><span class="btn" style="background:#fff;color:#1F1F1F">Toch uitvoeren</span><span class="btn" style="background:#fff;color:#1F1F1F">Niet uitvoeren</span></div>
+          </div>
+        </div>
+      </li>
+      <li>
+        <h3>Heeft de computer Python nodig? Volg dan het zwarte venster</h3>
+        <p>Booming heeft het gratis programma Python nodig. Staat dat nog niet op je computer, dan zegt het zwarte
+          venster dat, en opent het vanzelf de downloadpagina van python.org. Doe dan dit:</p>
+        <p>a. Klik op de gele knop <strong>Download Python 3.x</strong>.<br>
+           b. Open het gedownloade bestand (onderin de browser) en klik op <strong>Install Now</strong>.<br>
+           c. Wacht op <em>"Setup was successful"</em> en sluit dat venster met <strong>Close</strong>.<br>
+           d. Dubbelklik <code>installeer-booming.bat</code> <strong>opnieuw</strong>.</p>
+        <p class="caption">python.org en de installer</p>
+        <div class="shot" style="max-width:520px">
+          <div class="bar">python.org/downloads <span class="dots">— ▢ ✕</span></div>
+          <div class="body" style="text-align:center">
+            <div style="font-size:15px;font-weight:600;margin-bottom:8px">Download the latest version for Windows</div>
+            <span class="btn py">Download Python 3.x.x</span>
+          </div>
+          <div class="bar" style="border-top:1px solid var(--win-line)">Python 3.x Setup <span class="dots">— ✕</span></div>
+          <div class="body">
+            <div style="font-weight:600;font-size:14px;margin-bottom:4px">Install Python 3.x</div>
+            <div style="color:#555;margin-bottom:10px">Select Install Now to install Python with default settings.</div>
+            <div style="border:1px solid #BDBDBD;border-radius:4px;padding:8px 12px;margin-bottom:10px;background:#F7FAFF"><b>→ Install Now</b><br><span style="color:#666;font-size:12px">C:\Users\…\AppData\Local\Programs\Python</span></div>
+            <div><span class="check on"></span>Use admin privileges when installing py.exe &nbsp; <span class="check"></span>Add python.exe to PATH</div>
+          </div>
+        </div>
+        <div class="callout warn">
+          <strong>Alleen van python.org</strong>
+          Niet uit de Microsoft Store halen. Die versie draait afgeschermd en mag Eagle niet aansturen. Het zwarte
+          venster van Booming merkt dat en vraagt dan alsnog om de versie van python.org.
+        </div>
+      </li>
+      <li>
+        <h3>Laat het zwarte venster zijn werk doen</h3>
+        <p>Het venster loopt vijf stappen door: bestanden op de vaste plek zetten (<code>C:\BoomingSolutions\EagleBridge</code>),
+          Python controleren, onderdelen installeren (dit kan een minuut duren, het venster lijkt dan stil te staan — dat is
+          normaal), Booming koppelen aan het dashboard, en een controle.</p>
+        <p>Bij stap 5 vraagt het venster je om <strong>Eagle te openen</strong> op
+          <span class="path">Accounts Payable → Daily Procedures → New A/P Transactions</span>. Doe dat, laat het scherm
+          leeg, klik terug in het zwarte venster en druk op een toets. Booming kijkt dan of hij alle vakken in het
+          Eagle-scherm kan vinden.</p>
+        <p class="caption">het installatievenster aan het eind</p>
+        <div class="shot console">
+          <div class="bar">Booming installeren</div>
+          <div class="body">STAP 1  Bestanden kopieren naar C:\BoomingSolutions\EagleBridge ...
+        <span class="g">gereed.</span>
+STAP 2  Python controleren ...
+        gevonden: Python 3.14.0
+STAP 3  Onderdelen installeren (kan een minuut duren) ...
+        <span class="g">gereed.</span>
+STAP 4  Booming koppelen aan het dashboard ...
+        .eaglebatch-bestanden openen nu Booming
+        eagleprepay:// is beschikbaar voor het dashboard
+STAP 5  Controle.
+        Open nu Eagle en ga naar New A/P Transactions ...
+Druk op een toets om door te gaan. . .
+        <span class="g">alle velden gevonden</span>
+==========================================================
+  <span class="g">Klaar. Booming is geinstalleerd.</span>
+==========================================================
+Druk op een toets om door te gaan. . .</div>
+        </div>
+        <div class="callout ok">
+          <strong>Staat er "Klaar. Booming is geïnstalleerd"?</strong>
+          Dan ben je klaar met deel 1. Staat er ergens <span style="color:var(--err)">FOUT</span> of "niet gevonden":
+          maak een schermafdruk (of foto) van het venster en stuur die naar Jeroen. Sluit het venster pas daarna.
+        </div>
+      </li>
+      <li>
+        <h3>De eerste keer boeken: Chrome vraagt één keer toestemming</h3>
+        <p>De eerste keer dat je in het dashboard op <strong>Boeken in Eagle</strong> klikt, vraagt Chrome of hij
+          Booming mag openen. Zet het vinkje bij <strong>Altijd toestaan</strong> en klik op <strong>Openen</strong>.
+          Daarna vraagt hij het niet meer.</p>
+        <p class="caption">de vraag van Chrome</p>
+        <div class="shot" style="max-width:440px">
+          <div class="body">
+            <div style="font-weight:600;font-size:14px;margin-bottom:6px">Booming (Eagle) openen?</div>
+            <div style="color:#555;margin-bottom:10px">https://boomingsolutions.ai wil deze app openen.</div>
+            <div style="margin-bottom:12px"><span class="check on"></span>boomingsolutions.ai altijd toestaan om links van dit type te openen</div>
+            <div style="text-align:right"><span class="btn primary">Booming (Eagle) openen</span><span class="btn">Annuleren</span></div>
+          </div>
+        </div>
+      </li>
+    </ol>
+
+    <div class="card">
+      <h4>Waar Booming zijn spullen bewaart</h4>
+      <div class="kv">
+        <div>Programma en instellingen</div><div>C:\BoomingSolutions\EagleBridge\</div>
+        <div>Logboek per keer boeken</div><div>%APPDATA%\EagleBridge\logs\</div>
+        <div>Wat op deze PC al geboekt is</div><div>%APPDATA%\EagleBridge\ledger.jsonl</div>
+        <div>Schermafdruk als hij stopt</div><div>C:\BoomingSolutions\EagleBridge\screenshots\</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEEL 2 -->
+  <section id="deel2">
+    <div class="phase">
+      <span class="letter">Deel 2</span>
+      <h2>Boeken vanuit het dashboard</h2>
+      <span class="when">Finance → Vooruitbetalingen</span>
+    </div>
+    <ol class="steps">
+      <li>
+        <h3>Kies de entiteit</h3>
+        <p>Curaçao of Bonaire. Deze keuze bepaalt de rekeningen (<code>2000-000</code> en <code>2099-000</code> voor
+          Curaçao, <code>2000-700</code> en <code>2099-700</code> voor Bonaire) én op welke store Eagle moet staan.</p>
+        <div class="callout warn">
+          <strong>Dit is de fout die het meeste kost</strong>
+          Een lijst in de verkeerde entiteit boeken betekent alles terugdraaien. Kijk hier één keer goed.
+        </div>
+      </li>
+      <li>
+        <h3>Controleer de boekdatum</h3>
+        <p>Staat automatisch op de laatste dag van de vorige maand — boek je in september, dan is het 31 augustus.
+          Dit wordt zowel de voucher date als de invoice date; de betaaldatum uit de Excel wordt niet gebruikt.
+          Aanpassen kan, maar niet verder dan 50 dagen terug — daarboven blokkeert Eagle.</p>
+      </li>
+      <li>
+        <h3>Sleep de Excel erin</h3>
+        <p>Alleen .xlsx, met tabblad <code>Lijst</code> en de gewone koprij. Klopt de indeling niet, dan zegt het
+          dashboard welke kolom afwijkt en wordt er niets ingelezen. Verkeerd bestand? <strong>Leegmaken</strong> of
+          het goede bestand erin slepen.</p>
+      </li>
+      <li>
+        <h3>Loop de regels langs die om bevestiging vragen</h3>
+        <p>Die staan geel. Per regel kies je <strong>Bevestigen en meenemen</strong> of <strong>Uit batch halen</strong>.
+          Met het filter <em>Te bevestigen</em> zie je wat er nog openstaat.</p>
+        <ul class="plain">
+          <li><span class="mark num">KOERS</span><span>De koers wijkt af van de koers die in dit bestand het vaakst voorkomt. Bedrag laten staan, of zelf een XCG-bedrag invullen.</span></li>
+          <li><span class="mark num">DUBBEL FACTUUR</span><span>Hetzelfde factuurnummer staat meer dan één keer in het bestand.</span></li>
+          <li><span class="mark num">DUBBEL BEDRAG</span><span>Hetzelfde bedrag komt vaker voor. Kan kloppen bij identieke keukens.</span></li>
+        </ul>
+      </li>
+      <li>
+        <h3>Kijk de lijst "Handmatig boeken" na</h3>
+        <p>Onderaan staat alles wat niet meegaat naar Eagle, met de reden: regels met een echte fout, regels die je
+          eruit hebt gehaald, en regels met <span class="mark num" style="font-size:11px">EERDER GEBOEKT</span> — dat
+          factuurnummer is al eens via het dashboard geboekt (je ziet wanneer, door wie en met welk vouchernummer).
+          Die laatste komen er bewust niet in: beoordeel zelf of het een nieuwe aanbetaling is, en boek hem dan met de hand.</p>
+        <p>Kopieer de lijst met <strong>Lijst kopiëren</strong> als je hem wilt bewaren.</p>
+      </li>
+      <li>
+        <h3>Controleer het totaal</h3>
+        <p>Bovenaan staat <strong>Te boeken XCG</strong> — het bedrag dat daadwerkelijk in Eagle komt. Vergelijk dat
+          met wat je verwacht.</p>
+      </li>
+      <li>
+        <h3>Zet Eagle op de juiste store en het juiste scherm</h3>
+        <p>In stap 4 van het dashboard staat groot welke store het moet zijn: <strong>Store 1</strong> voor Curaçao,
+          <strong>Store B</strong> voor Bonaire. Kijk bovenin het Eagle-venster: daar staat "Store: 1" of "Store: B".
+          Ga dan naar <span class="path">Accounts Payable → Daily Procedures → New A/P Transactions</span> en laat het
+          scherm leeg.</p>
+        <p class="caption">de titelbalk van Eagle en de store-kaart in het dashboard</p>
+        <div class="shot">
+          <div class="bar">New A/P Transactions &nbsp;-&nbsp; <b>Store: 1</b> &nbsp; BUILDING DEPOT B.V. &nbsp; Terminal: 331 &nbsp; Signed On User: … <span class="dots">— ▢ ✕</span></div>
+          <div class="body">
+            <div class="dash">
+              <div class="big">1</div>
+              <div class="txt"><b>Zet Eagle op Store 1 — Curaçao, en open New A/P Transactions.</b>Booming controleert dit zelf en weigert te boeken als het niet klopt.</div>
+            </div>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>Booming controleert de store zelf</strong>
+          Staat Eagle op de verkeerde store, dan stopt Booming vóór hij iets typt en zegt hij welke store het moet zijn.
+          Er is dan niets geboekt; zet Eagle goed en klik opnieuw op Boeken in Eagle.
+        </div>
+      </li>
+      <li>
+        <h3>Klik op "Boeken in Eagle" en druk op Enter in het Booming-venster</h3>
+        <p>Er opent een zwart venster van Booming met de samenvatting: welke store, hoeveel regels, welke datum.
+          Klopt het, druk dan op <kbd>Enter</kbd>. Wil je toch niet: typ <kbd>N</kbd> en Enter.</p>
+        <p class="caption">het Booming-venster</p>
+        <div class="shot console">
+          <div class="bar">Booming — vooruitbetalingen Eagle</div>
+          <div class="body">Batch ophalen bij boomingsolutions.ai ...
+Eagle gevonden op New A/P Transactions.
+Store-controle: Eagle staat op Store 1 = Curaçao (entiteit 000) — klopt.
+
+  Eagle staat op Store 1 (Curaçao), gebruiker JBOOM.
+  Er worden 23 regel(s) geboekt op 08/31/26, rekening 2000-000 / 2099-000.
+
+  Raak muis en toetsenbord NIET aan zolang Booming bezig is.
+  Noodstop: duw de muis in de linkerbovenhoek van het scherm en houd hem daar.
+
+  Druk op Enter om te beginnen, of typ N en Enter om te stoppen: _</div>
+        </div>
+        <div class="callout stop">
+          <strong>Vanaf nu: handen af</strong>
+          Booming stuurt toetsaanslagen naar Eagle. Niet typen, niet klikken, geen ander venster naar voren halen —
+          anders komt er tekst in het verkeerde vak. Reken op ongeveer een halve minuut per regel; bij 25 regels ben je
+          een kwartier bezig. Start het niet vlak voor een afspraak.
+        </div>
+        <div class="callout warn">
+          <strong>Noodstop</strong>
+          Moet je tóch stoppen: duw de muis helemaal in de <strong>linkerbovenhoek</strong> van je hoofdscherm en houd
+          hem daar. Booming kijkt daar vóór elke stap naar en stopt dan netjes, nooit midden in een boeking. De regel
+          waar hij mee bezig was is dan niet geboekt; druk daarna in Eagle op <kbd>Clear F12</kbd>.
+        </div>
+      </li>
+      <li>
+        <h3>Kijk mee in het dashboard</h3>
+        <p>Onder stap 5 <strong>Voortgang in Eagle</strong> zie je live: de status van de batch, een voortgangsbalk, per
+          regel of hij wacht, bezig is of geboekt, de laatste stap ("vendor = 4741", "Add F4", "distributie…"), het
+          vouchernummer van Eagle, en onderaan het logboek van Booming regel voor regel. Dit ververst elke twee seconden.</p>
+        <p class="caption">de voortgang in het dashboard</p>
+        <div class="shot">
+          <div class="body">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="pill busy">● Bezig in Eagle</span><span style="color:#555;font-size:12px">Regel 3/5 — factuur 52731302</span><span style="margin-left:auto;font-family:var(--mono);font-size:11px;color:#555">Store 1 · JBOOM</span></div>
+            <div style="font-size:11px;color:#555">2 van 5 regel(s) klaar</div>
+            <div class="bar2"><i style="width:40%"></i></div>
+            <table>
+              <tr><th>Rij</th><th>Fact.nummer</th><th>XCG</th><th>Status</th><th>Stap</th><th>Voucher</th></tr>
+              <tr><td>1</td><td>52641371</td><td>1.234,00</td><td><span class="pill ok">Geboekt</span></td><td>geboekt</td><td>300312</td></tr>
+              <tr><td>2</td><td>52553780</td><td>988,24</td><td><span class="pill ok">Geboekt</span></td><td>geboekt</td><td>300313</td></tr>
+              <tr style="background:#EFF6FF"><td>3</td><td>52731302</td><td>1.098,45</td><td><span class="pill busy">Bezig</span></td><td>terms_code = 5</td><td></td></tr>
+              <tr><td>4</td><td>52745176</td><td>65.122,99</td><td><span class="pill wait">Wacht</span></td><td></td><td></td></tr>
+              <tr><td>5</td><td>52750001</td><td>1.000,00</td><td><span class="pill wait">Wacht</span></td><td></td><td></td></tr>
+            </table>
+          </div>
+        </div>
+      </li>
+      <li>
+        <h3>Klaar? Controleer in Eagle</h3>
+        <p>Als de batch op <strong>Afgerond</strong> staat: open de Viewer in Eagle (<kbd>F9</kbd>), kies vendor
+          <code>4741</code>, en vergelijk aantal en totaal met <strong>Te boeken XCG</strong> in het dashboard. Boek daarna
+          de regels van de lijst Handmatig boeken zelf, als die er zijn. Sluit het Booming-venster met <kbd>Enter</kbd>.</p>
+      </li>
+    </ol>
+
+    <div class="card">
+      <h4>Wat Booming per regel invult</h4>
+      <div class="kv">
+        <div>Trx Type</div><div>C</div>
+        <div>Vendor</div><div>4741</div>
+        <div>Voucher Date / Invoice Date</div><div>laatste dag vorige maand</div>
+        <div>Vendor Ref No</div><div>factuurnummer uit de Excel</div>
+        <div>AP Account</div><div>2000-000 of 2000-700</div>
+        <div>Terms Code</div><div>5 (PREPAY 30%)</div>
+        <div>Voucher Ref</div><div>VOORUITBET NOBILIA EUR 16.4</div>
+        <div>Invoice Amount</div><div>het XCG-bedrag</div>
+        <div>Due Date / Disc Date</div><div>gelijk aan de factuurdatum</div>
+        <div>Add</div><div>F4, daarna "Apply to invoice not found" → Yes</div>
+        <div>Add distribution — account</div><div>2099-000 of 2099-700</div>
+        <div>Add distribution — bedrag</div><div>zelfde XCG-bedrag, Job leeg</div>
+        <div>Daarna</div><div>Clear F12, volgende regel</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HULP -->
+  <section id="hulp">
+    <div class="phase">
+      <span class="letter">Hulp</span>
+      <h2>Als er iets misgaat</h2>
+    </div>
+
+    <div class="card">
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Wat je ziet</th><th>Wat er aan de hand is</th><th>Wat jij doet</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">Er gebeurt niets na<br>"Boeken in Eagle"</td>
+              <td>Booming staat niet op deze PC, of Chrome heeft de link geblokkeerd.</td>
+              <td>Klik op <em>opnieuw starten</em> in het dashboard. Helpt dat niet: Deel 1 doorlopen. Of klik op <em>batchbestand downloaden</em> en dubbelklik het bestand — dat doet hetzelfde.</td>
+            </tr>
+            <tr>
+              <td class="mono">STOP — VERKEERDE STORE</td>
+              <td>Eagle staat op de andere store dan de entiteit van de batch.</td>
+              <td>Zet Eagle op de juiste store (staat in de melding) en klik opnieuw op Boeken in Eagle. Er is niets geboekt.</td>
+            </tr>
+            <tr>
+              <td class="mono">Het scherm 'New A/P<br>Transactions' is niet gevonden</td>
+              <td>Eagle is dicht of staat op een ander scherm.</td>
+              <td>Eagle openen op New A/P Transactions en opnieuw starten.</td>
+            </tr>
+            <tr>
+              <td class="mono">Apply to invoice<br>not found</td>
+              <td>Hoort erbij — er is geen originele factuur om tegen af te boeken. Booming antwoordt zelf Yes.</td>
+              <td>Niets.</td>
+            </tr>
+            <tr>
+              <td class="mono">Een venster dat ik<br>nog niet ken</td>
+              <td>Eagle vroeg iets onverwachts. Booming stopt meteen, maakt een schermafdruk en zet de regel in het dashboard op <em>Afmaken in Eagle</em>.</td>
+              <td>Kijk in Eagle wat er gevraagd wordt, maak die boeking zelf af of verwijder hem, en stuur de schermafdruk naar Jeroen. Daarna kun je de batch opnieuw starten: de rest gaat gewoon door.</td>
+            </tr>
+            <tr>
+              <td class="mono">Een veld klopt niet<br>na het typen</td>
+              <td>Booming leest elk vak terug en stopt vóór Add F4 als het niet klopt. Niets geboekt.</td>
+              <td>Clear F12 in Eagle, opnieuw starten. Blijft het gebeuren: melden.</td>
+            </tr>
+            <tr>
+              <td class="mono">Al geboekt /<br>Afmaken in Eagle</td>
+              <td>Deze regel is eerder al (deels) geboekt. Booming slaat hem over; dubbel boeken kan niet.</td>
+              <td>Bij "Afmaken in Eagle": zoek de regel op in de Viewer (F9) en maak hem af of verwijder hem.</td>
+            </tr>
+            <tr>
+              <td class="mono">Batch blijft op<br>"Bezig" staan</td>
+              <td>Booming is gestopt zonder het te melden (PC uit, venster dichtgeklikt), of er is geen internet op de PC.</td>
+              <td>Kijk in het Booming-venster wat er staat. Lees de Excel opnieuw in: regels die al geboekt zijn komen vanzelf op de lijst Handmatig boeken met wat ermee is.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout stop">
+      <strong>De grondregel</strong>
+      Bij twijfel stopt Booming, hij gokt nooit. Een gestopte batch is altijd veiliger dan een batch die doorgaat op een
+      scherm dat hij niet herkent. Een batch opnieuw starten is altijd veilig: wat al geboekt is, wordt overgeslagen.
+    </div>
+  </section>
+
+  <!-- SPELREGELS -->
+  <section>
+    <div class="phase">
+      <span class="letter">Naslag</span>
+      <h2>De vaste spelregels</h2>
+    </div>
+    <ul class="plain">
+      <li><span class="mark yes">ALTIJD</span><span>Het XCG-bedrag wordt geboekt, nooit het Euro-bedrag. Euro dient alleen voor de omschrijving en de koerscontrole.</span></li>
+      <li><span class="mark yes">ALTIJD</span><span>Voucher date en invoice date zijn de laatste dag van de vorige maand.</span></li>
+      <li><span class="mark yes">ALTIJD</span><span>Trx Type <code>C</code>, Terms Code <code>5</code> (PREPAY 30%), AP-rekening <code>2000</code>, distributie <code>2099</code>.</span></li>
+      <li><span class="mark yes">ALTIJD</span><span>Het achtervoegsel is de entiteit: <code>000</code> Curaçao (Store 1), <code>700</code> Bonaire (Store B).</span></li>
+      <li><span class="mark yes">ALTIJD</span><span>Een factuurnummer dat al via het dashboard geboekt is, gaat niet nog een keer mee — hij komt op de lijst Handmatig boeken.</span></li>
+      <li><span class="mark no">NOOIT</span><span>Een regel die om bevestiging vraagt stilzwijgend doorlaten. Zonder keuze gaat de batch niet weg.</span></li>
+      <li><span class="mark no">NOOIT</span><span>Tijdens het boeken in Eagle klikken of typen. Stoppen doe je met de noodstop (muis in de linkerbovenhoek).</span></li>
+    </ul>
+
+    <div class="callout">
+      <strong>Voucher Ref is maximaal 30 tekens</strong>
+      Boven EUR 9.999 rondt het dashboard de omschrijving af op hele euro's, anders past de tekst niet. Is een
+      leveranciersnaam zó lang dat het alsnog niet past, dan wordt de regel afgekeurd met de vraag de naam in het
+      bronbestand in te korten.
+    </div>
+  </section>
+
+  <p class="foot">
+    Deze instructie hoort bij de preview-versie. Zolang het label Preview op de pagina staat, controleer je de eerste
+    batches van een nieuwe maand extra na in de Eagle Viewer. Vragen of een schermafdruk van een melding: naar Jeroen.
+  </p>
+
+</div>
+
+</body>
+</html>

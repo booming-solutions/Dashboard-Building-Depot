@@ -252,12 +252,17 @@
       "bestand": "apply-to-invoice-not-found.png",
       "uitleg": "Er is geen originele factuur om tegen af te boeken. Hoort erbij.",
       "_herkomst": "Afmeting en knoppen uit controls-dialoog.txt van 10-9-2026 (handle 2688914: 529x148, twee Sheridan-knoppen onderin, Yes links / No rechts).",
-      "enter": false
+      "enter": false,
+      "bestanden": [
+        "apply-to-invoice-not-found.png",
+        "apply-to-invoice-not-found-groot.png"
+      ],
+      "_bestanden_uitleg": "Referentiebeelden op twee schermschalen (529x148 en 635x177); de best passende telt."
     }
   ],
   "beeld_drempel": 0.15,
   "_soort_uitleg": "soort=keuzelijst: veld met uitklaplijst. Alleen daar mag de manier 'keuzelijst' (pijltje, typen, Enter, Tab) gebruikt worden; bij gewone vakken en datums opent die alleen maar een lijst of kalender.",
-  "_beeld_drempel_uitleg": "Aandeel afwijkende beeldpunten in het tekstmasker van de vraagregel. Zelfde venster op andere schaal ≈ 0,08; venster met andere tekst ≈ 0,3.",
+  "_beeld_drempel_uitleg": "Aandeel afwijkende beeldpunten in het tekstmasker van de vraagregel, verschuivingstolerant. Zelfde venster op andere schaal ≈ 0,07; venster met andere tekst ≥ 0,25.",
   "clear_key": "{F12}",
   "_clear_uitleg": "Toets waarmee het invoerscherm na elke geboekte regel wordt leeggemaakt (Clear F12). Ook vóór een regel als het scherm nog niet leeg blijkt.",
   "stores": {

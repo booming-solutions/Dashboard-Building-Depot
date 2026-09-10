@@ -11,6 +11,11 @@
    ROUTING:
    /api/private/salary-dashboard  → check 'hr_payroll'      → private/salary-dashboard.html
    /api/private/uren-dashboard    → check 'hr_urentarget'   → private/uren-dashboard.html
+   /api/private/booming-installatie        → 'finance_prepay' → private/booming-installatie.zip (download)
+   /api/private/werkinstructie-vooruitbetalingen → 'finance_prepay' → private/werkinstructie-vooruitbetalingen.html
+
+   Een bestand mag als string (html, oude vorm) of als object
+   { report, file, type, download } in FILE_PERMISSIONS staan.
 
    Niet-ingelogd          → 401
    Ingelogd zonder rechten → 403
@@ -28,6 +33,9 @@ export const runtime = 'nodejs';
 const FILE_PERMISSIONS = {
   'salary-dashboard': 'hr_payroll',
   'uren-dashboard': 'hr_urentarget',
+  // Booming (Eagle-koppeling vooruitbetalingen): installatiepakket + werkinstructie
+  'booming-installatie': { report: 'finance_prepay', file: 'booming-installatie.zip', type: 'application/zip', download: 'booming-installatie.zip' },
+  'werkinstructie-vooruitbetalingen': { report: 'finance_prepay', file: 'werkinstructie-vooruitbetalingen.html', type: 'text/html; charset=utf-8' },
 };
 
 export async function GET(request, { params }) {
@@ -38,7 +46,11 @@ export async function GET(request, { params }) {
     if (!Object.prototype.hasOwnProperty.call(FILE_PERMISSIONS, fileKey)) {
       return new NextResponse('Not Found', { status: 404 });
     }
-    const requiredReport = FILE_PERMISSIONS[fileKey];
+    const entry = FILE_PERMISSIONS[fileKey];
+    const spec = typeof entry === 'string'
+      ? { report: entry, file: `${fileKey}.html`, type: 'text/html; charset=utf-8' }
+      : entry;
+    const requiredReport = spec.report;
 
     // 2) Sessie-check
     const supabase = createServerSupabaseClient();
@@ -67,14 +79,15 @@ export async function GET(request, { params }) {
     }
 
     // 4) Lees bestand uit private/ map (buiten public/)
-    const filePath = path.join(process.cwd(), 'private', `${fileKey}.html`);
-    const html = await readFile(filePath, 'utf-8');
+    const filePath = path.join(process.cwd(), 'private', spec.file);
+    const inhoud = await readFile(filePath);
 
-    // 5) Stuur HTML met beveiligings-headers
-    return new NextResponse(html, {
+    // 5) Stuur met beveiligings-headers (html inline, andere types als download)
+    return new NextResponse(inhoud, {
       status: 200,
       headers: {
-        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Type': spec.type,
+        ...(spec.download ? { 'Content-Disposition': `attachment; filename="${spec.download}"` } : {}),
         'Cache-Control': 'private, no-store, no-cache, must-revalidate, max-age=0',
         'Pragma': 'no-cache',
         'X-Content-Type-Options': 'nosniff',

@@ -1,5 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Bestanden in private/ (beveiligde downloads via /api/private/[file])
+  // expliciet meenemen in de serverless-bundle op Vercel. Zonder dit
+  // worden alleen bestanden meegenomen die Next zelf kan afleiden.
+  experimental: {
+    outputFileTracingIncludes: {
+      '/api/private/[file]': ['./private/*.html', './private/*.zip'],
+    },
+  },
+
   // PWA headers
   async headers() {
     return [

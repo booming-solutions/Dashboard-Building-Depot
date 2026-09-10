@@ -65,7 +65,7 @@ function RowPill({ status }) {
 
 function BatchPill({ status }) {
   const map = {
-    klaar:    ['Klaargezet — wacht op de Bridge', 'bg-gray-100 text-gray-700'],
+    klaar:    ['Klaargezet — wacht op Booming', 'bg-gray-100 text-gray-700'],
     bezig:    ['Bezig in Eagle', 'bg-blue-100 text-blue-800'],
     afgerond: ['Afgerond', 'bg-emerald-100 text-emerald-800'],
     gestopt:  ['Gestopt', 'bg-red-100 text-red-800'],
@@ -382,13 +382,24 @@ export default function VooruitbetalingenPage() {
           <p className="text-[11px] uppercase tracking-wider font-semibold text-gray-400">Finance · Keukendepot</p>
           <h1 className="text-[24px] font-bold text-[#1B3A5C] mt-1">Vooruitbetalingen boeken in Eagle</h1>
           <p className="text-[13px] text-gray-500 mt-1 max-w-[62ch]">
-            Upload de aanbetalingslijst, bevestig wat opvalt, en zet de batch klaar voor Eagle.
+            Upload de aanbetalingslijst, bevestig wat opvalt, en laat Booming de regels in Eagle boeken.
             Er wordt altijd het XCG-bedrag geboekt.
           </p>
         </div>
-        <span className="ml-auto inline-flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 px-3 py-1 text-[11px] font-bold uppercase tracking-wider">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />Preview
-        </span>
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <a href="/api/private/werkinstructie-vooruitbetalingen" target="_blank" rel="noopener"
+            className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12.5px] font-semibold text-[#1B3A5C] hover:bg-gray-50">
+            Werkinstructie
+          </a>
+          <a href="/api/private/booming-installatie"
+            className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12.5px] font-semibold text-[#1B3A5C] hover:bg-gray-50"
+            title="Eenmalig per computer: zip downloaden, uitpakken, installeer-booming.bat dubbelklikken">
+            Booming installeren op deze PC
+          </a>
+          <span className="inline-flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 px-3 py-1 text-[11px] font-bold uppercase tracking-wider">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />Preview
+          </span>
+        </div>
       </div>
 
       {/* STAP 1 — entiteit en datum */}
@@ -675,7 +686,7 @@ export default function VooruitbetalingenPage() {
                         <td colSpan={10} className="px-5 py-4">
                           <div className="max-w-[760px] rounded-lg border border-gray-200 bg-white overflow-hidden">
                             <div className="px-3.5 py-2 bg-gray-100 border-b border-gray-200 text-[11px] uppercase tracking-wider font-semibold text-gray-500">
-                              Wat de Bridge in Eagle invult · rij {row.excelRow}
+                              Wat Booming in Eagle invult · rij {row.excelRow}
                             </div>
                             <dl className="grid grid-cols-[220px_1fr]">
                               {[
@@ -771,7 +782,7 @@ export default function VooruitbetalingenPage() {
       <div className="flex items-baseline gap-3 mb-3">
         <span className="text-[12px] font-bold text-[#1B3A5C] bg-[#1B3A5C]/10 rounded px-2 py-0.5">4</span>
         <h2 className="text-[15px] font-semibold text-[#1B3A5C]">Naar Eagle</h2>
-        <span className="ml-auto text-[12px] text-gray-400">De Eagle Bridge op deze PC typt de regels in New A/P Transactions</span>
+        <span className="ml-auto text-[12px] text-gray-400">Booming op deze PC typt de regels in New A/P Transactions</span>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-7">
@@ -788,7 +799,7 @@ export default function VooruitbetalingenPage() {
                 : <>Kies eerst een entiteit in stap 1. Curaçao = Store 1, Bonaire = Store B.</>}
             </div>
             <p className="text-[12.5px] text-gray-500 mt-1">
-              De store staat bovenin het Eagle-venster ("Store: 1" of "Store: B"). De Bridge controleert dit
+              De store staat bovenin het Eagle-venster ("Store: 1" of "Store: B"). Booming controleert dit
               zelf en weigert te boeken als het niet klopt — maar dan moet je opnieuw beginnen.
             </p>
           </div>
@@ -802,13 +813,13 @@ export default function VooruitbetalingenPage() {
               : actionRows.length ? <><strong className="text-[#1B3A5C]">{actionRows.length} regel(s) wachten op bevestiging.</strong> Bevestig ze of haal ze uit de batch.</>
               : !batchRows.length ? <><strong className="text-[#1B3A5C]">Geen boekbare regels.</strong> Alles staat op de lijst handmatig boeken.</>
               : batchRec ? <>
-                  <strong className="text-emerald-700">Batch {batchRec.batchId} is klaargezet en de Eagle Bridge is gestart.</strong>{' '}
+                  <strong className="text-emerald-700">Batch {batchRec.batchId} is klaargezet en Booming is gestart.</strong>{' '}
                   <span className="text-gray-500">
-                    Op deze PC opent een venster van de Bridge; druk daar op Enter en raak muis en toetsenbord niet aan. De voortgang zie je hieronder.
+                    Op deze PC opent het venster van Booming; druk daar op Enter en raak muis en toetsenbord niet aan. De voortgang zie je hieronder.
                   </span>
                   <br />
                   <span className="text-gray-500">
-                    Gebeurt er niets? Dan is de Bridge op deze PC nog niet geïnstalleerd, of blokkeert de browser de link:{' '}
+                    Gebeurt er niets? Dan is Booming op deze PC nog niet geïnstalleerd (zie de werkinstructie bovenaan), of blokkeert de browser de link:{' '}
                     <button type="button" onClick={() => startBridge(batchRec.launch)} className="text-[#1B3A5C] underline underline-offset-2">opnieuw starten</button>
                     {' '}of{' '}
                     <button type="button" onClick={downloadBatch} className="text-[#1B3A5C] underline underline-offset-2">batchbestand downloaden</button>
@@ -842,7 +853,7 @@ export default function VooruitbetalingenPage() {
           )}
           <button type="button" onClick={() => setShowPayload(v => !v)}
             className="px-4 py-2 rounded-lg border border-gray-300 text-[13px] font-semibold text-[#1B3A5C] hover:bg-gray-50">
-            {showPayload ? 'Verberg' : 'Toon wat de Bridge ontvangt'}
+            {showPayload ? 'Verberg' : 'Toon wat Booming ontvangt'}
           </button>
         </div>
         {showPayload && (
@@ -879,8 +890,8 @@ export default function VooruitbetalingenPage() {
                   <div className="px-5 py-4 border-b border-gray-200 flex items-center gap-4 flex-wrap">
                     <BatchPill status={status} />
                     <div className="text-[13px] text-gray-600">
-                      {status === 'klaar' && !launched && 'De Bridge is nog niet gestart.'}
-                      {status === 'klaar' && launched && 'Wacht tot je in het Bridge-venster op Enter drukt…'}
+                      {status === 'klaar' && !launched && 'Booming is nog niet gestart.'}
+                      {status === 'klaar' && launched && 'Wacht tot je in het Booming-venster op Enter drukt…'}
                       {status === 'bezig' && (b?.laatste_bericht || 'Bezig…')}
                       {status === 'afgerond' && <span className="text-emerald-700 font-medium">{b?.geboekt ?? geboekt} geboekt{(b?.overgeslagen ?? overgeslagen) ? `, ${b?.overgeslagen ?? overgeslagen} al eerder gedaan` : ''}.</span>}
                       {status === 'gestopt' && <span className="text-red-700 font-medium">{b?.laatste_bericht || 'Gestopt.'}</span>}
@@ -935,7 +946,7 @@ export default function VooruitbetalingenPage() {
 
                   <div className="border-t border-gray-200">
                     <div className="px-5 py-2 bg-gray-50 border-b border-gray-200 text-[11px] uppercase tracking-wider font-semibold text-gray-500 flex items-center">
-                      Logboek van de Bridge
+                      Logboek van Booming
                       <span className="ml-auto normal-case tracking-normal font-normal text-gray-400">laatste {Math.min(60, (live?.events || []).length)} regels</span>
                     </div>
                     <div className="px-5 py-3 max-h-[260px] overflow-y-auto font-mono text-[12px] leading-relaxed bg-white">
