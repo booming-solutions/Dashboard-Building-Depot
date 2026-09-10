@@ -61,6 +61,7 @@ import re
 import sys
 import time
 import traceback
+import faulthandler
 import threading
 import queue
 import socket
@@ -164,6 +165,13 @@ class Log:
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         self.path = LOG_DIR / f"bridge-{stamp}.log"
         self.fh = open(self.path, "a", encoding="utf-8")
+        # Harde crashes (toegangsfout in een Windows-onderdeel) laten geen
+        # Python-foutmelding achter; faulthandler schrijft dan alsnog de
+        # plek in de code naar dit logboek.
+        try:
+            faulthandler.enable(file=self.fh, all_threads=True)
+        except Exception:
+            pass
 
     def __call__(self, msg, level="INFO"):
         line = f"{dt.datetime.now().strftime('%H:%M:%S')} {level:5} {msg}"
@@ -985,7 +993,7 @@ class Eagle:
             time.sleep(pauze)
         raise BridgeStop(f"Kreeg '{waarde}' niet in het keuzevak (laatst gelezen: '{self._lees(doel)}').")
 
-    def _voer_in(self, doel, waarde, strategie, kandidaten=None, enter_aantal=1, plakken=False):
+    def _voer_in(self, doel, waarde, strategie, kandidaten=None, enter_aantal=1, plakken=False, toets_pauze=0.05):
         cijfers = re.sub(r"\D", "", waarde)
         pauze = self.pace / 2
 
@@ -1020,13 +1028,19 @@ class Eagle:
                 # Klopt het niet, dan wissen en langzamer opnieuw typen.
                 # Is het vak niet uit te lezen (Trx Type), dan gebeurt er
                 # niets extra's.
+                # Typen zoals een mens: toets voor toets met een pauze
+                # ertussen (toets_pauze, per veld in config.json). Eagle vult
+                # het keuzevak tijdens het typen automatisch aan; komt de
+                # volgende toets te snel, dan raakt die aanvulling ertussen
+                # ('4741' werd '44474'). Per poging iets langzamer.
                 for poging in range(3):
-                    keyboard.send_keys(waarde, with_spaces=True, pause=0.05 * (poging + 1))
-                    time.sleep(pauze)
+                    p = max(0.02, float(toets_pauze)) * (1 + poging)
+                    keyboard.send_keys(waarde, with_spaces=True, pause=p)
+                    time.sleep(max(pauze, p))
                     getypt = self._lees(doel)
                     if not getypt or self._tekst_klopt(getypt, waarde):
                         break
-                    log(f"  keuzelijst: getypt '{getypt}' in plaats van '{waarde}' — wissen en opnieuw", "WARN")
+                    log(f"  keuzelijst: getypt '{getypt}' in plaats van '{waarde}' — wissen en langzamer opnieuw", "WARN")
                     keyboard.send_keys("^a{DEL}")
                     time.sleep(pauze)
             for _ in range(max(1, int(enter_aantal or 1))):
@@ -1091,8 +1105,15 @@ class Eagle:
                 if strategie != "keuzelijst":
                     self._klik_in_veld(doel)
                     time.sleep(self.pace / 2)
+                # plakken=True (config: "plakken": true bij het veld): de waarde
+                # gaat via het klembord in het keuzevak i.p.v. toets voor toets.
+                # Nodig bij Vendor in productie: de lange leverancierslijst
+                # vult automatisch aan terwijl er getypt wordt, waardoor
+                # '4741' als '44474' aankomt.
                 self._voer_in(doel, waarde, strategie, kandidaten,
-                              enter_aantal=spec.get("enter_aantal", 1))
+                              enter_aantal=spec.get("enter_aantal", 1),
+                              plakken=bool(spec.get("plakken")),
+                              toets_pauze=spec.get("toets_pauze", self.cfg.get("toets_pauze", 0.05)))
                 time.sleep(self.pace)
 
                 # Bevestigen. Eagle valideert keuzevelden pas bij het verlaten
@@ -2488,7 +2509,9 @@ def cmd_register(_args):
 
     exe = sys.executable
     script = str(Path(__file__).resolve())
-    commando = f'"{exe}" "{script}" run "%1" --interactief'
+    # Via cmd /c ... || pause: stopt Python onverwacht (foutcode), dan
+    # blijft het venster staan met de melding in beeld.
+    commando = f'cmd.exe /c ""{exe}" "{script}" run "%1" --interactief" || pause'
 
     def zet(pad, waarde, naam=None):
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, pad) as k:

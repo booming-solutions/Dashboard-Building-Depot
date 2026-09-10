@@ -39,7 +39,10 @@
         "_veld": "Remit To"
       },
       "_uitleg": "Leverancier moet uit de lijst gekozen worden (pijltje, typen, Enter); pas dan koppelt Eagle hem. Bewijs: Remit To wordt gevuld met hetzelfde nummer.",
-      "soort": "keuzelijst"
+      "soort": "keuzelijst",
+      "plakken": false,
+      "_plakken_uitleg": "Plakken via het klembord staat uit (gaf op 10-9-2026 in productie een harde stop). Vendor wordt getypt zoals een mens: pijltje, toets voor toets met toets_pauze seconden ertussen, Enter, Tab. Daarna leest Booming het vak terug; klopt het niet, dan wist hij het en typt hij langzamer opnieuw. Remit To bewijst de koppeling.",
+      "toets_pauze": 0.3
     },
     "voucher_date": {
       "parent": "32768",
@@ -66,7 +69,7 @@
         82
       ],
       "_veld": "Vendor Ref No",
-      "strategie": "cijfers_home"
+      "strategie": "selectie"
     },
     "ap_account_main": {
       "parent": "32770",
@@ -85,7 +88,7 @@
         40
       ],
       "_veld": "AP Account, rechtervak (entiteit)",
-      "strategie": "selectie",
+      "strategie": "keuzelijst",
       "soort": "keuzelijst"
     },
     "terms_code": {
@@ -238,8 +241,8 @@
   "_commit_uitleg": "Toets waarmee een veld wordt afgesloten. Eagle valideert keuzevelden (Vendor, Terms Code, Trx Type, AP Account) pas bij het verlaten van het veld; zonder deze toets blijft 'not on file' staan en rekent Eagle niets uit. Per veld te overschrijven met \"commit\".",
   "_strategie_uitleg": "Per veld kan 'strategie' staan: de manier waarop de waarde erin komt. Staat hij er niet, dan probeert de Bridge ze op volgorde (selectie, cijfers_wis, cijfers_home, settext, settext_cijfers), controleert het resultaat, en schrijft de manier die werkte hier weg. Verwijder de regel om opnieuw te laten zoeken.",
   "_dialogen_uitleg": "De vraagtekst in Eagle-meldingen is een VB6-label zonder eigen venster en is door geen enkele laag uit te lezen. Herkennen gaat daarom op vorm (titel, verhouding breedte/hoogte, aantal knoppen) en beeld (grijsplaatje in dialogen/). Ontbreekt het referentiebeeld nog, dan wordt het bij de eerste herkenning op vorm vastgelegd. 'knop': links/rechts/volgnummer in de onderste knoppenrij. Onbekend venster = stoppen, beeld en structuur vastleggen.",
-  "schaal": 1.0,
-  "_schaal_uitleg": "Verhouding tussen de Windows-schaal van het scherm waarop de Bridge draait en die van de calibratie. Wordt automatisch bepaald en bijgewerkt.",
+  "schaal": 1.2,
+  "_schaal_uitleg": "Verhouding tussen de Windows-schaal van het scherm waarop Booming draait en die van de calibratie. Wordt automatisch bepaald en bijgewerkt.",
   "dialogen": [
     {
       "naam": "apply-to-invoice-not-found",
@@ -269,5 +272,7 @@
     "000": "1",
     "700": "B"
   },
-  "_stores_uitleg": "Welke Eagle-store bij welke entiteit hoort. Wordt vóór het boeken hard gecontroleerd tegen 'Store: X' in de titelbalk van New A/P Transactions; klopt het niet, dan wordt er niets geboekt."
+  "_stores_uitleg": "Welke Eagle-store bij welke entiteit hoort. Wordt vóór het boeken hard gecontroleerd tegen 'Store: X' in de titelbalk van New A/P Transactions; klopt het niet, dan wordt er niets geboekt.",
+  "toets_pauze": 0.05,
+  "_toets_pauze_uitleg": "Pauze in seconden tussen twee toetsaanslagen in keuzevakken. Standaard 0,05; bij Vendor 0,3 omdat de leverancierslijst in productie automatisch aanvult tijdens het typen."
 }
