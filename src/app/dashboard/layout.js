@@ -2,6 +2,24 @@
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
+   WIJZIGINGEN V27.23:
+   - Finance-menu opnieuw ingedeeld en hernoemd:
+       Accounts Payable      (was AP Dashboard)
+       Accounts Receivable   (was AR-ontwikkeling)
+       Automatisering        (nieuw, uitklapbaar; hier komen alle
+                              Eagle-automatiseringen onder)
+         · Keukendepot       (was Vooruitbetalingen; zelfde URL,
+                              badge preview, recht finance_prepay)
+       Factuur status
+       Maandrapportage       (was Rapportages)
+   - AP Sandbox uit het menu gehaald (pagina's blijven bestaan onder
+     /dashboard/finance/sandbox-ap, alleen niet meer in de navigatie;
+     finance_sandbox_ap uit REPORT_MAP).
+   - Finance-items met children worden per child op rapporttoegang
+     gefilterd; een ouder zonder zichtbare kinderen verdwijnt.
+   - NavDropdown opent nu ook automatisch als een child-pagina actief
+     is; children kunnen een badge tonen.
+   - Versie naar V27.23
    WIJZIGINGEN V27.22:
    - Finance: 'Vooruitbetalingen' toegevoegd
      (/dashboard/finance/vooruitbetalingen), badge (preview).
@@ -100,7 +118,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
-const APP_VERSION = 'V27.22';
+const APP_VERSION = 'V27.23';
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
   const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
@@ -131,7 +149,8 @@ function NavSubItem({ item, pathname, sidebarOpen }) {
           {item.children.map(child => (
             <Link key={child.href} href={child.href}
               className={`flex items-center gap-2 px-2 py-1.5 rounded text-[12px] transition-all ${pathname === child.href ? 'text-[#1B3A5C] font-semibold bg-[#1B3A5C]/5' : 'text-[#1B3A5C]/40 hover:text-[#1B3A5C] hover:bg-white/30'}`}>
-              {child.label}
+              <span className="flex-1">{child.label}</span>
+              {child.badge && <span className="text-[9px] italic text-[#1B3A5C]/40 font-normal">{child.badge}</span>}
             </Link>
           ))}
         </div>
@@ -140,7 +159,10 @@ function NavSubItem({ item, pathname, sidebarOpen }) {
   );
 }
 function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
-  const isAnyActive = items.some(item => pathname === item.href || pathname.startsWith(item.href + '/'));
+  const isAnyActive = items.some(item =>
+    pathname === item.href || pathname.startsWith(item.href + '/') ||
+    (item.children || []).some(c => pathname === c.href || pathname.startsWith(c.href + '/'))
+  );
   const [open, setOpen] = useState(isAnyActive);
   useEffect(() => { if (isAnyActive) setOpen(true); }, [isAnyActive]);
   if (!sidebarOpen) {
@@ -157,7 +179,7 @@ function NavDropdown({ icon, label, items, pathname, sidebarOpen }) {
                 <div key={item.href}>
                   <p className="px-3 pt-2 pb-1 text-[9px] font-bold text-[#1B3A5C]/30 uppercase">{item.label}</p>
                   {item.children.map(child => (
-                    <Link key={child.href} href={child.href} className={`block px-4 py-1.5 text-[13px] transition-all ${pathname === child.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-500 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{child.label}</Link>
+                    <Link key={child.href} href={child.href} className={`block px-4 py-1.5 text-[13px] transition-all ${pathname === child.href ? 'bg-[#1B3A5C]/10 text-[#1B3A5C] font-semibold' : 'text-gray-500 hover:bg-gray-50 hover:text-[#1B3A5C]'}`}>{child.label}{child.badge ? <span className="text-[9px] italic text-gray-400 ml-2">{child.badge}</span> : ''}</Link>
                   ))}
                 </div>
               );
@@ -301,7 +323,6 @@ export default function DashboardLayout({ children }) {
     '/dashboard/logistics/order-flow': 'logistics_order_flow',
     '/dashboard/logistics/vessel-map': 'logistics_vessel_map',
     '/dashboard/finance/ap': 'finance_ap',
-    '/dashboard/finance/sandbox-ap': 'finance_sandbox_ap',
     '/dashboard/finance/reports': 'finance_reports',
     '/dashboard/finance/ar': 'finance_ar',
     '/dashboard/finance/vooruitbetalingen': 'finance_prepay',
@@ -341,17 +362,20 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/hr/urentarget', label: 'Urentarget', badge: '(concept)' },
     { href: '/dashboard/hr/urenplanning-overview', label: 'Urenplanning Overzicht', badge: '(concept)', visible: isAdmin },
   ];
-  // Finance menu — Accounts Payable suite.
+  // Finance menu.
   // Zichtbaarheid via rapporttoegang (niet meer via rol). Admin ziet alles;
   // andere gebruikers zien alleen de finance-rapporten die in hun
   // allowed_reports staan. 'Factuur status' blijft voor iedereen zichtbaar.
+  // 'Automatisering' is een uitklapbare groep zonder eigen pagina: hier
+  // komen alle Eagle-automatiseringen onder (nu alleen Keukendepot).
   const financeItemsAll = [
-    { href: '/dashboard/finance/ap', label: 'AP Dashboard' },
-    { href: '/dashboard/finance/sandbox-ap', label: 'AP Sandbox', badge: '(test)' },
-    { href: '/dashboard/finance/reports', label: 'Rapportages' },
-    { href: '/dashboard/finance/ar', label: 'AR-ontwikkeling' },
-    { href: '/dashboard/finance/vooruitbetalingen', label: 'Vooruitbetalingen', badge: '(preview)' },
+    { href: '/dashboard/finance/ap', label: 'Accounts Payable' },
+    { href: '/dashboard/finance/ar', label: 'Accounts Receivable' },
+    { href: '/dashboard/finance/automatisering', label: 'Automatisering', children: [
+      { href: '/dashboard/finance/vooruitbetalingen', label: 'Keukendepot', badge: '(preview)' },
+    ]},
     { href: '/dashboard/finance/factuurstatus', label: 'Factuur status', everyone: true },
+    { href: '/dashboard/finance/reports', label: 'Maandrapportage' },
   ];
   // Logistiek menu — zichtbaarheid via rapporttoegang (niet meer via rol).
   // Admin ziet alles; andere gebruikers zien alleen de logistics-rapporten
@@ -373,7 +397,13 @@ export default function DashboardLayout({ children }) {
     return hasReport(REPORT_MAP[item.href]);
   });
   const logisticsItems = logisticsItemsAll.filter(item => hasReport(REPORT_MAP[item.href]));
-  const visibleFinanceItems = financeItemsAll.filter(item => item.everyone || hasReport(REPORT_MAP[item.href]));
+  const visibleFinanceItems = financeItemsAll
+    .map(item => {
+      if (!item.children) return item;
+      const children = item.children.filter(c => c.everyone || hasReport(REPORT_MAP[c.href]));
+      return children.length ? { ...item, children } : null;
+    })
+    .filter(item => item && (item.children || item.everyone || hasReport(REPORT_MAP[item.href])));
   const adminItems = [
     { href: '/dashboard/admin', label: 'Data Upload', icon: '⬆️' },
     { href: '/dashboard/admin/data-status', label: 'Data Status', icon: '🩺' },

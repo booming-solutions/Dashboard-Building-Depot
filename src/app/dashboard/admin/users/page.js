@@ -1,7 +1,16 @@
 /* ============================================================
-   BESTAND: page_admin_v14.js
+   BESTAND: page_admin_v15.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
+
+   WIJZIGING t.o.v. v14:
+   - Finance-rapporten hernoemd conform layout.js V27.23:
+       finance_ap      → Accounts Payable
+       finance_ar      → Accounts Receivable
+       finance_reports → Maandrapportage
+   - finance_prepay (Automatisering › Keukendepot) toegevoegd, zodat
+     medewerkers dit recht kunnen krijgen (stond er nog niet in).
+   - finance_sandbox_ap verwijderd (AP Sandbox is uit het menu).
 
    WIJZIGING t.o.v. v13:
    - AR-ontwikkeling (finance_ar) toegevoegd onder Finance.
@@ -36,10 +45,10 @@ var REPORTS = [
   { id: 'hr_urenplanning', label: 'Uren Planning', group: 'HR', icon: '🗓️' },
   { id: 'hr_urenplanning_overview', label: 'Uren Planning Overzicht', group: 'HR', icon: '📋' },
   { id: 'hr_urentarget', label: 'Uren Target', group: 'HR', icon: '🎯' },
-  { id: 'finance_ap', label: 'AP Dashboard', group: 'Finance', icon: '💼' },
-  { id: 'finance_sandbox_ap', label: 'AP Sandbox', group: 'Finance', icon: '🧪' },
-  { id: 'finance_reports', label: 'Finance Rapportages', group: 'Finance', icon: '📑' },
-  { id: 'finance_ar', label: 'AR-ontwikkeling', group: 'Finance', icon: '💹' },
+  { id: 'finance_ap', label: 'Accounts Payable', group: 'Finance', icon: '💼' },
+  { id: 'finance_ar', label: 'Accounts Receivable', group: 'Finance', icon: '💹' },
+  { id: 'finance_prepay', label: 'Automatisering › Keukendepot', group: 'Finance', icon: '🤖' },
+  { id: 'finance_reports', label: 'Maandrapportage', group: 'Finance', icon: '📑' },
   { id: 'logistics_order_flow', label: 'Order Flow', group: 'Logistiek', icon: '🚢' },
   { id: 'logistics_vessel_map', label: 'Schepen (wereldkaart)', group: 'Logistiek', icon: '🗺️' },
   { id: 'reports', label: 'Rapportages', group: 'Algemeen', icon: '📄' },
