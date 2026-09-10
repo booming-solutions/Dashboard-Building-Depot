@@ -62,7 +62,31 @@ export async function POST(req) {
     }
   }
 
-  // 3. Opslaan
+  // 3. Dubbelboeking over alle PC's heen: een factuurnummer dat al via
+  //    het dashboard geboekt is (of nu bezig is), mag alleen mee als de
+  //    gebruiker dat in het dashboard uitdrukkelijk bevestigd heeft.
+  const db = admin();
+  const keys = batch.regels.map((r) => r.dedupeKey).filter(Boolean);
+  if (keys.length) {
+    const { data: eerder, error: eErr } = await db
+      .from('eagle_prepay_rows')
+      .select('dedupe_key,status,voucher')
+      .in('dedupe_key', keys)
+      .in('status', ['geboekt', 'geboekt_handmatig', 'bezig']);
+    if (eErr) return NextResponse.json({ ok: false, error: eErr.message }, { status: 500 });
+    const al = new Map((eerder || []).map((r) => [r.dedupe_key, r]));
+    const geweigerd = batch.regels
+      .filter((r) => al.has(r.dedupeKey) && !(Array.isArray(r.bevestigingen) && r.bevestigingen.includes('EERDER GEBOEKT')))
+      .map((r) => `rij ${r.rij} (factuur ${r.vendorRefNo}${al.get(r.dedupeKey).voucher ? `, voucher ${al.get(r.dedupeKey).voucher}` : ''})`);
+    if (geweigerd.length) {
+      return NextResponse.json({
+        ok: false,
+        error: 'Al eerder geboekt en niet bevestigd: ' + geweigerd.join('; ') + '. Lees het bestand opnieuw in en bevestig of verwijder deze regels.',
+      }, { status: 409 });
+    }
+  }
+
+  // 4. Opslaan
   const token = randomBytes(24).toString('base64url');
   const batchId = batch.batchId || `${String(batch.voucherDate).replace(/\//g, '')}-${batch.entiteit}-${Date.now().toString().slice(-6)}`;
   const totaal = batch.regels.reduce((s, r) => s + Number(r.invoiceAmount || 0), 0);
@@ -71,7 +95,6 @@ export async function POST(req) {
   const [mm, dd, jj] = String(batch.voucherDate).split('/');
   const boekdatum = `20${jj}-${mm}-${dd}`;
 
-  const db = admin();
   const payload = { ...batch, batchId, store };
 
   const { data: ins, error: e1 } = await db
@@ -118,7 +141,7 @@ export async function POST(req) {
     bericht: `Batch klaargezet door ${user.email || user.id}: ${batch.regels.length} regel(s), ${batch.entiteitNaam || batch.entiteit}, Store ${store}, datum ${batch.voucherDate}.`,
   });
 
-  // 4. Startlink voor de Bridge. De host gaat mee zodat de Bridge weet
+  // 5. Startlink voor de Bridge. De host gaat mee zodat de Bridge weet
   //    waar hij moet terugmelden (productie én preview-deploys).
   const host = req.headers.get('host') || 'boomingsolutions.ai';
   const launch = `eagleprepay://batch/${ins.id}?t=${token}&h=${encodeURIComponent(host)}`;

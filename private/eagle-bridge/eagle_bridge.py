@@ -382,8 +382,14 @@ def geboekte_sleutels():
             continue
         try:
             rec = json.loads(regel)
-            if rec.get("status") in ("geboekt", "geboekt_handmatig"):
+            # De laatste vermelding van een sleutel telt. 'bezig_add' zonder
+            # vervolg betekent: de Bridge is tijdens Add F4 afgebroken — dan
+            # is onbekend of de kopregel in Eagle staat. Zo'n regel wordt
+            # nooit stilzwijgend opnieuw geboekt.
+            if rec.get("status") in ("geboekt", "geboekt_handmatig", "bezig_add"):
                 uit[rec["dedupeKey"]] = rec
+            elif rec.get("status") == "gestopt":
+                uit.pop(rec.get("dedupeKey"), None)
         except Exception:
             continue
     return uit
@@ -2040,7 +2046,7 @@ class Eagle:
 
 # ------------------------------------------------------------------ run
 
-def voer_regel_in(eagle, regel, dry_run):
+def voer_regel_in(eagle, regel, dry_run, batch_id=None):
     velden = eagle.cfg["fields"]
     ap_main, ap_sub = regel["apAccount"]
     dist_main, dist_sub = regel["distribution"]["account"]
@@ -2101,6 +2107,14 @@ def voer_regel_in(eagle, regel, dry_run):
         )
     log("  eindcontrole: alle velden kloppen")
 
+    # Vanaf hier kan er iets in Eagle staan. Dat wordt eerst vastgelegd,
+    # zodat een afgebroken Bridge (stroom uit, venster gesloten) bij een
+    # herstart deze regel niet nog een keer boekt.
+    schrijf_ledger({
+        "tijd": dt.datetime.now().isoformat(timespec="seconds"),
+        "batchId": batch_id, "rij": regel["rij"],
+        "dedupeKey": regel["dedupeKey"], "status": "bezig_add",
+    })
     log("  Add F4")
     eagle.win.type_keys("{F4}")
     time.sleep(eagle.pace * 3)
@@ -2239,11 +2253,21 @@ def cmd_run(args):
 
         if sleutel in al_geboekt:
             eerder = al_geboekt[sleutel]
-            log(f"  overgeslagen: al geboekt op {eerder.get('tijd')} (voucher {eerder.get('voucher')})")
+            if eerder.get("status") == "bezig_add":
+                log(f"  overgeslagen: bij een eerdere poging ({eerder.get('tijd')}) is de Bridge tijdens Add F4 "
+                    "afgebroken — CONTROLEER IN EAGLE of deze regel er staat (Viewer F9, op factuurnummer).", "WARN")
+                reden = f"Onzeker: eerdere poging op {eerder.get('tijd')} afgebroken tijdens Add F4 — controleer in Eagle."
+            elif eerder.get("status") == "geboekt_handmatig":
+                log(f"  overgeslagen: op {eerder.get('tijd')} in Eagle blijven staan om af te maken — controleer in Eagle.", "WARN")
+                reden = f"Eerder ({eerder.get('tijd')}) gestopt ná Add F4 — in Eagle afmaken of verwijderen."
+            else:
+                log(f"  overgeslagen: al geboekt op {eerder.get('tijd')} (voucher {eerder.get('voucher')})")
+                reden = f"Al geboekt op {eerder.get('tijd')}"
             overgeslagen += 1
             if RAPPORTEUR:
                 RAPPORTEUR.regel(regel["rij"], status="overgeslagen", voucher=eerder.get("voucher"),
-                                 stap="al eerder geboekt", reden=f"Al geboekt op {eerder.get('tijd')}")
+                                 stap="al eerder geboekt" if eerder.get("status") == "geboekt" else "controleren in Eagle",
+                                 reden=reden)
             continue
 
         if RAPPORTEUR:
@@ -2252,7 +2276,7 @@ def cmd_run(args):
                              geboekt=gedaan, overgeslagen=overgeslagen)
 
         try:
-            voucher = voer_regel_in(eagle, regel, args.dry_run)
+            voucher = voer_regel_in(eagle, regel, args.dry_run, batch.get("batchId"))
         except BridgeStop as e:
             log(str(e), "ERROR")
             if e.na_add and not args.dry_run:

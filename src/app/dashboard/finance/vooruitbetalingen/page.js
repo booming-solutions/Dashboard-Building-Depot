@@ -130,7 +130,59 @@ export default function VooruitbetalingenPage() {
   );
   const datumFout = checkBoekdatum(boekdatum, vandaag);
 
-  const { rows, modal } = useMemo(() => analyseRows(rawRows), [rawRows]);
+  // Eerder geboekt (centraal, over alle PC's heen): per dedupeKey de
+  // laatste boeking uit eagle_prepay_rows. Zo'n regel moet expliciet
+  // bevestigd worden voordat hij nog een keer mee mag.
+  const [eerder, setEerder] = useState({});
+
+  const { rows, modal } = useMemo(() => {
+    const res = analyseRows(rawRows);
+    res.rows.forEach(row => {
+      const e = eerder[row.dedupeKey];
+      if (!e) return;
+      const wanneer = e.tijd ? new Date(e.tijd).toLocaleDateString('nl-NL') : 'eerder';
+      const wat = e.status === 'geboekt'
+        ? `is op ${wanneer} al via het dashboard in Eagle geboekt${e.voucher ? ` (voucher ${e.voucher})` : ''}`
+        : e.status === 'bezig'
+          ? `wordt op dit moment door een andere batch geboekt`
+          : `is op ${wanneer} in Eagle blijven staan om handmatig af te maken`;
+      row.flags.push({
+        code: 'EERDER GEBOEKT',
+        text: `Fact.nummer ${row.factuurnummer} ${wat} — batch ${e.batch_id || '?'}${e.door ? `, door ${e.door}` : ''}, ` +
+              `XCG ${nlAmount(e.bedrag || 0)}. Alleen bevestigen als dit echt een nieuwe aanbetaling is; anders uit de batch halen.`,
+      });
+    });
+    return res;
+  }, [rawRows, eerder]);
+
+  useEffect(() => {
+    if (!rawRows.length) { setEerder({}); return undefined; }
+    let stop = false;
+    const keys = Array.from(new Set(rawRows.map(r => `${r.leverancierNr}|${r.factuurnummer}`).filter(k => !k.endsWith('|'))));
+    if (!keys.length) return undefined;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('eagle_prepay_rows')
+          .select('dedupe_key,status,voucher,invoice_amount,updated_at,eagle_prepay_batches(batch_id,created_by,entiteit_naam)')
+          .in('dedupe_key', keys)
+          .in('status', ['geboekt', 'geboekt_handmatig', 'bezig'])
+          .order('updated_at', { ascending: false });
+        if (stop || error || !data) return;
+        const map = {};
+        data.forEach(r => {
+          if (map[r.dedupe_key]) return; // nieuwste eerst
+          map[r.dedupe_key] = {
+            status: r.status, voucher: r.voucher, bedrag: r.invoice_amount, tijd: r.updated_at,
+            batch_id: r.eagle_prepay_batches?.batch_id, door: r.eagle_prepay_batches?.created_by,
+          };
+        });
+        setEerder(map);
+      } catch { /* geen centrale controle mogelijk; de Bridge heeft nog zijn eigen ledger */ }
+    })();
+    return () => { stop = true; };
+  }, [rawRows]);
 
   const st = useCallback((n) => rowState[n] || { status: 'pending', mode: 'keep', xcg: 0 }, [rowState]);
   const setSt = useCallback((n, patch) => {
