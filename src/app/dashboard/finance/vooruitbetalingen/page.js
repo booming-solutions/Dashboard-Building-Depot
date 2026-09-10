@@ -131,8 +131,9 @@ export default function VooruitbetalingenPage() {
   const datumFout = checkBoekdatum(boekdatum, vandaag);
 
   // Eerder geboekt (centraal, over alle PC's heen): per dedupeKey de
-  // laatste boeking uit eagle_prepay_rows. Zo'n regel moet expliciet
-  // bevestigd worden voordat hij nog een keer mee mag.
+  // laatste boeking uit eagle_prepay_rows. Zo'n regel gaat NOOIT mee in
+  // de batch: hij komt op de lijst handmatig boeken, zodat een mens
+  // beoordeelt wat ermee moet gebeuren (afspraak Jeroen, 10-9-2026).
   const [eerder, setEerder] = useState({});
 
   const { rows, modal } = useMemo(() => {
@@ -144,13 +145,14 @@ export default function VooruitbetalingenPage() {
       const wat = e.status === 'geboekt'
         ? `is op ${wanneer} al via het dashboard in Eagle geboekt${e.voucher ? ` (voucher ${e.voucher})` : ''}`
         : e.status === 'bezig'
-          ? `wordt op dit moment door een andere batch geboekt`
+          ? (e.tijd && Date.now() - new Date(e.tijd).getTime() > 15 * 60 * 1000
+              ? `is bij een eerdere poging (${wanneer}) afgebroken tijdens het boeken — controleer in Eagle (Viewer F9) of hij er staat`
+              : `wordt op dit moment door een andere batch geboekt`)
           : `is op ${wanneer} in Eagle blijven staan om handmatig af te maken`;
-      row.flags.push({
-        code: 'EERDER GEBOEKT',
-        text: `Fact.nummer ${row.factuurnummer} ${wat} — batch ${e.batch_id || '?'}${e.door ? `, door ${e.door}` : ''}, ` +
-              `XCG ${nlAmount(e.bedrag || 0)}. Alleen bevestigen als dit echt een nieuwe aanbetaling is; anders uit de batch halen.`,
-      });
+      row.errors.push(
+        `EERDER GEBOEKT: Fact.nummer ${row.factuurnummer} ${wat} — batch ${e.batch_id || '?'}${e.door ? `, door ${e.door}` : ''}, ` +
+        `XCG ${nlAmount(e.bedrag || 0)}. Beoordeel zelf of dit een nieuwe aanbetaling is en boek hem dan handmatig.`
+      );
     });
     return res;
   }, [rawRows, eerder]);

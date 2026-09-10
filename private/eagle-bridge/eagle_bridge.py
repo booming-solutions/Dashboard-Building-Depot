@@ -526,6 +526,35 @@ def schermuitsnede(bbox):
     return ImageGrab.grab(bbox=bbox, all_screens=True)
 
 
+class Noodstop(Exception):
+    """De gebruiker heeft de muis in de linkerbovenhoek geduwd."""
+
+
+def noodstop_actief():
+    """
+    Noodstop: de Bridge neemt muis en toetsenbord over, dus een venster
+    sluiten lukt niet. Duw de muis in de linkerbovenhoek van het
+    hoofdscherm (x en y op 0) en houd hem daar; vóór elke volgende stap
+    kijkt de Bridge daarnaar en stopt dan netjes — nooit midden in Add F4.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        pt = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        return pt.x <= 0 and pt.y <= 0
+    except Exception:
+        return False
+
+
+def controleer_noodstop(waar):
+    if noodstop_actief():
+        log(f"NOODSTOP: muis in de linkerbovenhoek — gestopt vóór {waar}.", "ERROR")
+        raise Noodstop(waar)
+
+
 class BridgeStop(Exception):
     """
     Gecontroleerd stoppen.
@@ -1044,6 +1073,7 @@ class Eagle:
 
     def vul(self, naam, spec, waarde):
         waarde = "" if waarde is None else str(waarde)
+        controleer_noodstop(f"veld '{naam}'")
 
         # De onthouden manier eerst; werkt die een keer niet (bijvoorbeeld
         # omdat het veld nu wél al een waarde bevat), dan alsnog de rest.
@@ -2115,6 +2145,7 @@ def voer_regel_in(eagle, regel, dry_run, batch_id=None):
         "batchId": batch_id, "rij": regel["rij"],
         "dedupeKey": regel["dedupeKey"], "status": "bezig_add",
     })
+    controleer_noodstop("Add F4")
     log("  Add F4")
     eagle.win.type_keys("{F4}")
     time.sleep(eagle.pace * 3)
@@ -2223,6 +2254,8 @@ def cmd_run(args):
             print(f"  {len(regels) - len(te_doen)} regel(s) zijn al eerder geboekt en worden overgeslagen.")
         print()
         print("  Raak muis en toetsenbord NIET aan zolang de Bridge bezig is.")
+        print("  Noodstop: duw de muis in de linkerbovenhoek van het scherm en houd hem daar;")
+        print("  de Bridge stopt dan vóór de volgende stap (nooit midden in een boeking).")
         print()
         try:
             antwoord = input("  Druk op Enter om te beginnen, of typ N en Enter om te stoppen: ").strip().lower()
@@ -2277,6 +2310,21 @@ def cmd_run(args):
 
         try:
             voucher = voer_regel_in(eagle, regel, args.dry_run, batch.get("batchId"))
+        except Noodstop as e:
+            schrijf_ledger({
+                "tijd": dt.datetime.now().isoformat(timespec="seconds"),
+                "batchId": batch.get("batchId"), "rij": regel["rij"],
+                "dedupeKey": sleutel, "status": "gestopt", "reden": f"Noodstop vóór {e}",
+            })
+            log(f"Noodstop door de gebruiker bij rij {regel['rij']}, vóór {e}. Deze regel is niet geboekt; "
+                f"maak het Eagle-scherm leeg (Clear F12). {gedaan} regel(s) waren al geboekt.", "ERROR")
+            if RAPPORTEUR:
+                RAPPORTEUR.regel(regel["rij"], status="gestopt", stap="noodstop", reden=f"Noodstop door de gebruiker vóór {e} — niet geboekt.")
+                RAPPORTEUR.einde_regel()
+                RAPPORTEUR.batch(status="gestopt", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=0,
+                                 laatste_bericht=f"Noodstop door de gebruiker bij rij {regel['rij']} (niets half geboekt).")
+                RAPPORTEUR.sluit()
+            return 8
         except BridgeStop as e:
             log(str(e), "ERROR")
             if e.na_add and not args.dry_run:

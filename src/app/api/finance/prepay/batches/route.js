@@ -63,8 +63,9 @@ export async function POST(req) {
   }
 
   // 3. Dubbelboeking over alle PC's heen: een factuurnummer dat al via
-  //    het dashboard geboekt is (of nu bezig is), mag alleen mee als de
-  //    gebruiker dat in het dashboard uitdrukkelijk bevestigd heeft.
+  //    het dashboard geboekt is (of nu bezig is), gaat nooit mee. Het
+  //    dashboard zet zo'n regel op de lijst handmatig boeken; dit is het
+  //    slot op de deur voor het geval dat toch omzeild wordt.
   const db = admin();
   const keys = batch.regels.map((r) => r.dedupeKey).filter(Boolean);
   if (keys.length) {
@@ -76,12 +77,12 @@ export async function POST(req) {
     if (eErr) return NextResponse.json({ ok: false, error: eErr.message }, { status: 500 });
     const al = new Map((eerder || []).map((r) => [r.dedupe_key, r]));
     const geweigerd = batch.regels
-      .filter((r) => al.has(r.dedupeKey) && !(Array.isArray(r.bevestigingen) && r.bevestigingen.includes('EERDER GEBOEKT')))
+      .filter((r) => al.has(r.dedupeKey))
       .map((r) => `rij ${r.rij} (factuur ${r.vendorRefNo}${al.get(r.dedupeKey).voucher ? `, voucher ${al.get(r.dedupeKey).voucher}` : ''})`);
     if (geweigerd.length) {
       return NextResponse.json({
         ok: false,
-        error: 'Al eerder geboekt en niet bevestigd: ' + geweigerd.join('; ') + '. Lees het bestand opnieuw in en bevestig of verwijder deze regels.',
+        error: 'Al eerder geboekt en niet bevestigd: ' + geweigerd.join('; ') + '. Lees het bestand opnieuw in; deze regels horen op de lijst handmatig boeken.',
       }, { status: 409 });
     }
   }
