@@ -1,56 +1,235 @@
 {
   "_uitleg": "Velden worden gezocht op hun plek binnen het deelvenster. rel = [afstand vanaf links, afstand vanaf boven] in pixels, gemeten vanaf de linkerbovenhoek van het deelvenster (parent). tol = hoeveel pixels het mag afwijken. Draai 'calibrate' opnieuw als Eagle is gewijzigd.",
   "_herkomst": "Afgeleid uit controls.txt van bd-laptop-72, 9 september 2026. Deelvenster 32768 = kopblok, 32770 = tab 1. Main.",
-
   "window_title_re": ".*New A/P Transactions.*",
   "backend": "uia",
-
   "pace_seconds": 0.25,
-  "dialog_wait_seconds": 8.0,
+  "dialog_wait_seconds": 12.0,
   "field_retries": 2,
   "tolerantie": 20,
-
   "fields": {
-    "trx_type":        { "parent": "32768", "rel": [97, 11],  "tol": 26, "_veld": "Trx Type" },
-    "vendor":          { "parent": "32768", "rel": [97, 47],  "_veld": "Vendor" },
-    "voucher_date":    { "parent": "32768", "rel": [830, 12], "_veld": "Voucher Date" },
-    "invoice_date":    { "parent": "32768", "rel": [830, 50], "_veld": "Invoice Date" },
-    "vendor_ref_no":   { "parent": "32768", "rel": [575, 82], "_veld": "Vendor Ref No" },
-
-    "ap_account_main": { "parent": "32770", "rel": [143, 40], "_veld": "AP Account, linkervak" },
-    "ap_account_sub":  { "parent": "32770", "rel": [243, 40], "_veld": "AP Account, rechtervak (entiteit)" },
-    "terms_code":      { "parent": "32770", "rel": [143, 73], "_veld": "Terms Code" },
-    "voucher_ref":     { "parent": "32770", "rel": [140, 137], "_veld": "Voucher Ref" },
-    "invoice_amount":  { "parent": "32770", "rel": [790, 6],  "_veld": "Invoice Amount" }
+    "trx_type": {
+      "parent": "32768",
+      "rel": [
+        97,
+        11
+      ],
+      "tol": 26,
+      "_veld": "Trx Type",
+      "verify": false,
+      "_waarom_geen_controle": "Eagle geeft de waarde van dit keuzeveld via geen enkele uitleesmethode terug (getest 9-9-2026: window_text, name, legacy value, value pattern - allemaal leeg). Het is een vaste waarde C, en Eagle blokkeert zelf bij Add F4 als hij leeg of fout is. Alleen dit veld; alle andere velden worden wel teruggelezen."
+    },
+    "vendor": {
+      "parent": "32768",
+      "rel": [
+        97,
+        47
+      ],
+      "_veld": "Vendor",
+      "strategie": "selectie"
+    },
+    "voucher_date": {
+      "parent": "32768",
+      "rel": [
+        830,
+        12
+      ],
+      "_veld": "Voucher Date",
+      "strategie": "selectie"
+    },
+    "invoice_date": {
+      "parent": "32768",
+      "rel": [
+        830,
+        50
+      ],
+      "_veld": "Invoice Date",
+      "strategie": "cijfers_wis"
+    },
+    "vendor_ref_no": {
+      "parent": "32768",
+      "rel": [
+        575,
+        82
+      ],
+      "_veld": "Vendor Ref No",
+      "strategie": "selectie"
+    },
+    "ap_account_main": {
+      "parent": "32770",
+      "rel": [
+        143,
+        40
+      ],
+      "_veld": "AP Account, linkervak",
+      "strategie": "cijfers_wis"
+    },
+    "ap_account_sub": {
+      "parent": "32770",
+      "rel": [
+        243,
+        40
+      ],
+      "_veld": "AP Account, rechtervak (entiteit)",
+      "strategie": "selectie"
+    },
+    "terms_code": {
+      "parent": "32770",
+      "rel": [
+        143,
+        73
+      ],
+      "_veld": "Terms Code",
+      "strategie": "selectie"
+    },
+    "voucher_ref": {
+      "parent": "32770",
+      "rel": [
+        140,
+        137
+      ],
+      "_veld": "Voucher Ref",
+      "strategie": "selectie"
+    },
+    "invoice_amount": {
+      "parent": "32770",
+      "rel": [
+        790,
+        6
+      ],
+      "_veld": "Invoice Amount",
+      "strategie": "settext"
+    },
+    "due_date": {
+      "parent": "32770",
+      "rel": [
+        143,
+        193
+      ],
+      "_veld": "Due Date",
+      "strategie": "selectie"
+    },
+    "disc_date": {
+      "parent": "32770",
+      "rel": [
+        143,
+        233
+      ],
+      "_veld": "Disc Date",
+      "strategie": "selectie"
+    }
   },
-
-  "current_voucher":   { "parent": "32768", "rel": [575, 11], "_veld": "Current Voucher (alleen uitlezen)" },
-
+  "current_voucher": {
+    "parent": "32768",
+    "rel": [
+      575,
+      11
+    ],
+    "_veld": "Current Voucher (alleen uitlezen)"
+  },
   "_niet_gebruikt": {
     "_uitleg": "Deze velden zijn wel herkend maar worden bewust niet aangeraakt.",
-    "remit_to":        { "parent": "32768", "rel": [97, 82] },
-    "po_number":       { "parent": "32768", "rel": [575, 47] },
-    "applies_to":      { "parent": "32770", "rel": [143, 7] },
-    "bank_code":       { "parent": "32770", "rel": [143, 107] },
-    "due_date":        { "parent": "32770", "rel": [143, 193] },
-    "disc_date":       { "parent": "32770", "rel": [143, 233] },
-    "check_date":      { "parent": "32770", "rel": [143, 273] },
-    "check_no":        { "parent": "32770", "rel": [140, 310] },
-    "non_discount_amt":{ "parent": "32770", "rel": [790, 40] },
-    "misc_charges":    { "parent": "32770", "rel": [790, 73] },
-    "sales_tax":       { "parent": "32770", "rel": [790, 140] },
-    "freight":         { "parent": "32770", "rel": [790, 208] }
+    "remit_to": {
+      "parent": "32768",
+      "rel": [
+        97,
+        82
+      ]
+    },
+    "po_number": {
+      "parent": "32768",
+      "rel": [
+        575,
+        47
+      ]
+    },
+    "applies_to": {
+      "parent": "32770",
+      "rel": [
+        143,
+        7
+      ]
+    },
+    "bank_code": {
+      "parent": "32770",
+      "rel": [
+        143,
+        107
+      ]
+    },
+    "check_date": {
+      "parent": "32770",
+      "rel": [
+        143,
+        273
+      ]
+    },
+    "check_no": {
+      "parent": "32770",
+      "rel": [
+        140,
+        310
+      ]
+    },
+    "non_discount_amt": {
+      "parent": "32770",
+      "rel": [
+        790,
+        40
+      ]
+    },
+    "misc_charges": {
+      "parent": "32770",
+      "rel": [
+        790,
+        73
+      ]
+    },
+    "sales_tax": {
+      "parent": "32770",
+      "rel": [
+        790,
+        140
+      ]
+    },
+    "freight": {
+      "parent": "32770",
+      "rel": [
+        790,
+        208
+      ]
+    }
   },
-
   "distribution": {
     "window_title_re": ".*[Aa]dd distribution.*",
     "gekalibreerd": false,
-    "account_main": { "index": 0 },
-    "account_sub": { "index": 1 },
-    "job": { "index": 2 },
-    "amount": { "index": 3 },
-    "ok_button": "OK"
+    "account_main": {
+      "index": 0
+    },
+    "account_sub": {
+      "index": 1
+    },
+    "job": {
+      "index": 2
+    },
+    "amount": {
+      "index": 3
+    },
+    "ok_button": "OK",
+    "verwacht_aantal": 4,
+    "bedrag_index": 3,
+    "_uitleg": "Eerste keer: indeling afgeleid van boven naar beneden (rekening, sub, job, bedrag), velden gevuld en gecontroleerd, daarna STOP vóór OK zodat een mens het scherm bekijkt. Zet gekalibreerd op true als het klopte; verwacht_aantal en bedrag_index worden dan bewaakt."
   },
-
-  "niet_aanraken": ["Due Date", "Disc Date", "Check Date", "Check No"]
+  "niet_aanraken": [
+    "Check Date",
+    "Check No",
+    "Bank Code",
+    "Applies To",
+    "PO Number",
+    "Remit To"
+  ],
+  "commit_key": "{TAB}",
+  "_commit_uitleg": "Toets waarmee een veld wordt afgesloten. Eagle valideert keuzevelden (Vendor, Terms Code, Trx Type, AP Account) pas bij het verlaten van het veld; zonder deze toets blijft 'not on file' staan en rekent Eagle niets uit. Per veld te overschrijven met \"commit\".",
+  "_strategie_uitleg": "Per veld kan 'strategie' staan: de manier waarop de waarde erin komt. Staat hij er niet, dan probeert de Bridge ze op volgorde (selectie, cijfers_wis, cijfers_home, settext, settext_cijfers), controleert het resultaat, en schrijft de manier die werkte hier weg. Verwijder de regel om opnieuw te laten zoeken.",
+  "_dialogen_uitleg": "Meldingsvensters worden herkend op hun tekst, gelezen via de klassieke én de moderne Windows-laag (ook tekst in een ingebed browservak). Alle vensters met een meldingstitel worden bekeken, want Eagle heeft twee vensters met de titel 'A/P Add New Transaction'. Onbekend venster = stoppen + volledige uitlezing naar controls-dialoog.txt."
 }

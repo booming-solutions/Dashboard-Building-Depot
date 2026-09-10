@@ -47,6 +47,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -88,6 +89,10 @@ STANDAARD_CONFIG = {
     "field_retries": 2,
     "tolerantie": 20,
 
+    # Eagle valideert een keuzeveld pas als je het verlaat. Zonder deze toets
+    # blijft de waarde "not on file" en rekent Eagle niets uit.
+    "commit_key": "{TAB}",
+
     # parent = auto_id van het deelvenster (Window) waarin het veld zit.
     "fields": {},
 
@@ -102,7 +107,7 @@ STANDAARD_CONFIG = {
     },
 
     "current_voucher": {},
-    "niet_aanraken": ["Due Date", "Disc Date", "Check Date", "Check No"],
+    "niet_aanraken": ["Check Date", "Check No", "Bank Code", "Applies To", "PO Number", "Remit To"],
 }
 
 BEKENDE_DIALOGEN = [
@@ -124,9 +129,12 @@ BEKENDE_DIALOGEN = [
 ]
 
 # Volgorde waarin de velden worden ingevuld.
+# Due Date en Disc Date staan bewust ACHTERAAN: Eagle herrekent ze soms
+# zelf op basis van de terms code, dus wij zetten ze als laatste vast.
 INVOERVOLGORDE = [
     "trx_type", "voucher_date", "invoice_date", "vendor", "vendor_ref_no",
     "ap_account_main", "ap_account_sub", "terms_code", "voucher_ref", "invoice_amount",
+    "due_date", "disc_date",
 ]
 
 
@@ -192,7 +200,7 @@ def geboekte_sleutels():
             continue
         try:
             rec = json.loads(regel)
-            if rec.get("status") == "geboekt":
+            if rec.get("status") in ("geboekt", "geboekt_handmatig"):
                 uit[rec["dedupeKey"]] = rec
         except Exception:
             continue
@@ -246,7 +254,18 @@ def dump_controls(win, pad, kop):
 
 
 class BridgeStop(Exception):
-    """Gecontroleerd stoppen: er is niets half geboekt."""
+    """
+    Gecontroleerd stoppen.
+
+    na_add=False: gestopt vóór Add F4 — er staat niets in Eagle.
+    na_add=True : gestopt ná Add F4 — de kopregel bestaat al in Eagle en
+                  moet door een mens afgemaakt of verwijderd worden. Zo'n
+                  regel wordt in het ledger als 'geboekt_handmatig' gezet,
+                  zodat een herstart hem nooit nog een keer toevoegt.
+    """
+    def __init__(self, bericht, na_add=False):
+        super().__init__(bericht)
+        self.na_add = na_add
 
 
 # ------------------------------------------------------------------ Eagle
@@ -260,6 +279,7 @@ class Eagle:
         self.desktop = Desktop(backend=cfg.get("backend", "uia"))
         self.win = None
         self._panes = {}
+        self._win32 = None
 
     # -- venster ---------------------------------------------------------
 
@@ -373,6 +393,23 @@ class Eagle:
     # -- invoeren --------------------------------------------------------
 
     @staticmethod
+    def _klik_in_veld(c):
+        """Klikt links in het veld, ruim weg van een eventueel uitklappijltje."""
+        try:
+            r = c.rectangle()
+            hoogte = max(1, r.bottom - r.top)
+            c.click_input(coords=(6, hoogte // 2))
+            return
+        except Exception:
+            pass
+        try:
+            c.click_input()
+            return
+        except Exception:
+            pass
+        c.set_focus()
+
+    @staticmethod
     def _lees(c):
         """
         Leest de waarde van een element.
@@ -410,50 +447,115 @@ class Eagle:
                 return v
         return ""
 
+    # Manieren om een waarde in een veld te krijgen. Eagle gebruikt per veld
+    # een ander soort invoervak: gewone tekstvakken, keuzevelden, en
+    # datumvelden met een vast invulmasker. Wat bij het ene werkt, maakt bij
+    # het andere rommel. De Bridge probeert ze daarom op volgorde en
+    # controleert na elke poging; de manier die werkt wordt onthouden in
+    # config.json, zodat het de volgende keer meteen goed gaat.
+    STRATEGIEEN = ["selectie", "cijfers_wis", "cijfers_home", "settext", "settext_cijfers"]
+
+    def _voer_in(self, doel, waarde, strategie):
+        cijfers = re.sub(r"\D", "", waarde)
+        pauze = self.pace / 2
+
+        if strategie == "selectie":
+            doel.type_keys("^a{DEL}", set_foreground=False)
+            time.sleep(pauze)
+            doel.type_keys(waarde, with_spaces=True, set_foreground=False)
+
+        elif strategie == "cijfers_wis":
+            doel.type_keys("{END}" + "{BACKSPACE 14}", set_foreground=False)
+            time.sleep(pauze)
+            doel.type_keys(cijfers, set_foreground=False)
+
+        elif strategie == "cijfers_home":
+            doel.type_keys("{HOME}", set_foreground=False)
+            time.sleep(pauze)
+            doel.type_keys(cijfers, set_foreground=False)
+
+        elif strategie == "settext":
+            doel.set_edit_text(waarde)
+
+        elif strategie == "settext_cijfers":
+            doel.set_edit_text(cijfers)
+
+        else:
+            raise BridgeStop(f"Onbekende invoermanier '{strategie}' in config.json.")
+
+    def _lees_veld(self, naam, spec):
+        """Leest alle elementen op de plek van dit veld; eerste niet-lege telt."""
+        gelezen, gezien = "", []
+        for c in self.zoek_veld_alle(naam, spec):
+            v = self._lees(c)
+            gezien.append(v)
+            if v and not gelezen:
+                gelezen = v
+        return gelezen, gezien
+
     def vul(self, naam, spec, waarde):
         waarde = "" if waarde is None else str(waarde)
-        pogingen = int(self.cfg.get("field_retries", 2))
 
-        for poging in range(1, pogingen + 1):
+        # De onthouden manier eerst; werkt die een keer niet (bijvoorbeeld
+        # omdat het veld nu wél al een waarde bevat), dan alsnog de rest.
+        vast = spec.get("strategie")
+        volgorde = ([vast] + [x for x in self.STRATEGIEEN if x != vast]) if vast else list(self.STRATEGIEEN)
+
+        laatste = ""
+        for strategie in volgorde:
             kandidaten = self.zoek_veld_alle(naam, spec)
             doel = kandidaten[0]
             try:
-                try:
-                    doel.set_focus()
-                except Exception:
-                    doel.click_input()
+                self._klik_in_veld(doel)
                 time.sleep(self.pace / 2)
-                doel.type_keys("^a{DEL}", set_foreground=False)
-                time.sleep(self.pace / 2)
-                doel.type_keys(waarde, with_spaces=True, set_foreground=False)
+                self._voer_in(doel, waarde, strategie)
                 time.sleep(self.pace)
+
+                # Bevestigen. Eagle valideert keuzevelden pas bij het verlaten
+                # van het veld: zonder dit blijft er "not on file" staan.
+                commit = spec.get("commit", self.cfg.get("commit_key", "{TAB}"))
+                if commit:
+                    doel.type_keys(commit, set_foreground=False)
+                    time.sleep(self.pace)
             except Exception as e:
-                log(f"veld '{naam}' poging {poging} mislukt: {e}", "WARN")
-                time.sleep(self.pace)
+                log(f"veld '{naam}' via '{strategie}' mislukt: {e}", "WARN")
                 continue
 
-            # Opnieuw opzoeken en ALLE elementen op die plek uitlezen: bij
-            # keuzevelden zit de waarde in een ander omhulsel dan waar we in
-            # typen. De eerste niet-lege waarde telt.
-            gelezen, gezien = "", []
-            for c in self.zoek_veld_alle(naam, spec):
-                v = self._lees(c)
-                gezien.append(v)
-                if v and not gelezen:
-                    gelezen = v
-
-            if self._gelijk(gelezen, waarde):
-                log(f"  {naam:18} = {waarde}")
+            if spec.get("verify") is False:
+                log(f"  {naam:18} = {waarde}   (waarde niet uit te lezen; Eagle controleert bij Add)")
                 return True
 
-            log(f"veld '{naam}' poging {poging}: gelezen '{gelezen}', verwacht '{waarde}' "
+            gelezen, gezien = self._lees_veld(naam, spec)
+            laatste = gelezen
+            if self._gelijk(gelezen, waarde):
+                log(f"  {naam:18} = {waarde}" + ("" if strategie == vast else f"   (manier: {strategie})"))
+                if strategie != vast:
+                    self._onthoud_strategie(naam, strategie)
+                return True
+
+            log(f"veld '{naam}': manier '{strategie}' gaf '{gelezen}', verwacht '{waarde}' "
                 f"(alles op die plek: {gezien})", "WARN")
-            time.sleep(self.pace)
 
         raise BridgeStop(
-            f"Veld '{naam}' bleef afwijken: verwacht '{waarde}'.\n"
-            "Er is niets geboekt. Controleer of iemand in Eagle heeft geklikt tijdens het draaien."
+            f"Veld '{naam}' laat zich niet invullen: verwacht '{waarde}', "
+            f"laatst gelezen '{laatste}'.\n"
+            f"Alle invoermanieren geprobeerd: {', '.join(volgorde)}.\n"
+            "Er is niets geboekt."
         )
+
+    def _onthoud_strategie(self, naam, strategie):
+        """Bewaart de manier die werkte, zodat de volgende run niet zoekt."""
+        try:
+            pad = config_pad()
+            cfg = json.loads(pad.read_text(encoding="utf-8"))
+            if cfg.get("fields", {}).get(naam, {}).get("strategie") == strategie:
+                return
+            cfg["fields"][naam]["strategie"] = strategie
+            pad.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+            self.cfg["fields"][naam]["strategie"] = strategie
+            log(f"    onthouden: '{naam}' vullen via '{strategie}'")
+        except Exception as e:
+            log(f"kon invoermanier voor '{naam}' niet opslaan: {e}", "WARN")
 
     @staticmethod
     def _gelijk(gelezen, verwacht):
@@ -468,162 +570,488 @@ class Eagle:
         return g.lstrip("0").upper() == v.lstrip("0").upper() and bool(v.strip("0"))
 
     # -- dialogen --------------------------------------------------------
+    #
+    # WAT HIER SPEELT
+    #   Na "Add F4" toont Eagle een meldingsvenster met de titel
+    #   "A/P Add New Transaction". Er blijkt óók een ander venster met
+    #   precies die titel te bestaan (het onderliggende Visual Basic-
+    #   formulier van het invoerscherm). De eerdere versie pakte het eerste
+    #   venster met die titel, las daar geen tekst in, en stopte als
+    #   "onbekend" — terwijl het echte meldingsvenster ernaast stond.
+    #
+    #   Daarom nu:
+    #   1. Alle vensters met een meldingstitel worden bekeken, niet het eerste.
+    #   2. Tekst wordt via twee lagen gelezen (klassiek én modern), want de
+    #      vraag kan als gewone tekst staan óf als HTML in een ingebed
+    #      browservak ("Shell Embedding") — dat laatste is alleen via de
+    #      moderne laag leesbaar.
+    #   3. Er wordt gewacht op een POSITIEF herkende toestand: een bekende
+    #      vraag, of het distributiescherm. Komt geen van beide, dan stoppen
+    #      we en schrijven we álle vensters weg, zodat er niets te raden valt.
 
-    def open_dialoog(self):
-        try:
-            for w in self.desktop.windows():
-                try:
-                    titel = (w.window_text() or "")
-                except Exception:
-                    continue
-                if "A/P Add New Transaction" in titel or "dd distribution" in titel:
-                    return w
-        except Exception:
-            pass
-        return None
+    def _win32_desktop(self):
+        from pywinauto import Desktop
+        if self._win32 is None:
+            self._win32 = Desktop(backend="win32")
+        return self._win32
 
     @staticmethod
-    def dialoogtekst(w):
-        stukken = []
-        try:
-            stukken.append(w.window_text() or "")
-        except Exception:
-            pass
-        try:
-            for c in w.descendants():
-                try:
-                    t = c.window_text()
-                    if t:
-                        stukken.append(t)
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return " ".join(stukken).lower()
-
-    def handel_dialogen_af(self, max_rondes=8):
-        wacht = float(self.cfg.get("dialog_wait_seconds", 8.0))
-        for _ in range(max_rondes):
-            einde = time.time() + wacht
-            dlg = None
-            while time.time() < einde:
-                dlg = self.open_dialoog()
-                if dlg is not None:
-                    break
-                time.sleep(0.2)
-            if dlg is None:
-                return
-
-            tekst = self.dialoogtekst(dlg)
-            if "distribution" in tekst:
-                return  # apart afgehandeld
-
-            geraakt = None
-            for regel in BEKENDE_DIALOGEN:
-                if regel["bevat"] in tekst:
-                    geraakt = regel
-                    break
-
-            if geraakt is None:
-                pad = schermafdruk("onbekend-dialoog")
-                raise BridgeStop(
-                    "Onbekend venster in Eagle — gestopt zonder te raden.\n"
-                    f"Tekst: {tekst[:300]}\n" + (f"Schermafdruk: {pad}\n" if pad else "")
-                )
-            if geraakt["antwoord"] == "STOP":
-                pad = schermafdruk("blokkade")
-                raise BridgeStop(geraakt["uitleg"] + (f"\nSchermafdruk: {pad}" if pad else ""))
-
-            log(f"  dialoog: {geraakt['antwoord']} — {geraakt['uitleg']}")
+    def _handle_van(w):
+        for haal in (lambda: w.handle, lambda: w.element_info.handle):
             try:
-                dlg.child_window(title=geraakt["antwoord"], control_type="Button").click_input()
+                h = haal()
+                if h:
+                    return int(h)
             except Exception:
-                dlg.type_keys("%y" if geraakt["antwoord"].lower() == "yes" else "{ENTER}")
-            time.sleep(self.pace * 2)
-
-    # -- distributie -----------------------------------------------------
-
-    def wacht_op_distributie(self):
-        dcfg = self.cfg["distribution"]
-        einde = time.time() + float(self.cfg.get("dialog_wait_seconds", 8.0))
-        while time.time() < einde:
-            try:
-                kandidaat = self.desktop.window(title_re=dcfg["window_title_re"])
-                if kandidaat.exists():
-                    return kandidaat
-            except Exception:
-                pass
-            time.sleep(0.2)
+                continue
         return None
 
-    def vul_distributie(self, account_main, account_sub, bedrag):
-        dcfg = self.cfg["distribution"]
-        dlg = self.wacht_op_distributie()
-        if dlg is None:
-            pad = schermafdruk("geen-distributie")
+    def _wrap_beide(self, handle):
+        """Hetzelfde venster in beide lagen: (modern, klassiek)."""
+        uia = w32 = None
+        try:
+            uia = self.desktop.window(handle=handle)
+        except Exception:
+            pass
+        try:
+            w32 = self._win32_desktop().window(handle=handle)
+        except Exception:
+            pass
+        return uia, w32
+
+    def _zichtbare_vensters(self):
+        """Alle zichtbare hoofdvensters: (handle, titel, klasse, rechthoek)."""
+        from pywinauto import findwindows
+        uit = []
+        try:
+            for e in findwindows.find_elements(backend="win32", top_level_only=True, visible_only=True):
+                try:
+                    uit.append((int(e.handle), e.name or "", e.class_name or "", e.rectangle))
+                except Exception:
+                    continue
+        except Exception as ex:
+            log(f"vensters opsommen mislukt: {ex}", "WARN")
+        return uit
+
+    @staticmethod
+    def _alle_teksten(wrapper):
+        """Alle leesbare tekst in een venster, langs elke beschikbare weg."""
+        stukken = []
+        if wrapper is None:
+            return stukken
+        try:
+            stukken.append(wrapper.window_text() or "")
+        except Exception:
+            pass
+        try:
+            elementen = wrapper.descendants()
+        except Exception:
+            elementen = []
+        for c in elementen:
+            lezers = (
+                lambda: c.window_text(),
+                lambda: c.element_info.name,
+                lambda: (c.legacy_properties() or {}).get("Value"),
+                lambda: (c.legacy_properties() or {}).get("Name"),
+                lambda: c.iface_value.CurrentValue,
+            )
+            for lees in lezers:
+                try:
+                    t = lees()
+                    if t:
+                        stukken.append(str(t))
+                except Exception:
+                    continue
+        return stukken
+
+    def _tekst_van_venster(self, handle):
+        uia, w32 = self._wrap_beide(handle)
+        stukken = self._alle_teksten(w32) + self._alle_teksten(uia)
+        return " ".join(stukken).lower()
+
+    def _meldingsvensters(self):
+        """Alle vensters die een melding van Eagle kunnen zijn, met hun tekst."""
+        uit = []
+        for handle, titel, klasse, rect in self._zichtbare_vensters():
+            t = (titel or "").lower()
+            if "add new transaction" not in t and "add distribution" not in t:
+                continue
+            uit.append({
+                "handle": handle, "titel": titel, "klasse": klasse, "rect": rect,
+                "tekst": self._tekst_van_venster(handle),
+            })
+        return uit
+
+    def _distributie_venster(self):
+        for handle, titel, klasse, rect in self._zichtbare_vensters():
+            if "add distribution" in (titel or "").lower():
+                return handle
+        return None
+
+    def _venster_bestaat(self, handle):
+        try:
+            w = self._win32_desktop().window(handle=handle)
+            return bool(w.exists()) and bool(w.is_visible())
+        except Exception:
+            return False
+
+    def _dump_alles(self, reden):
+        """Schrijft alle zichtbare vensters en de bomen van de kandidaten weg."""
+        pad = SCRIPT_DIR / "controls-dialoog.txt"
+        regels = [f"Vensteroverzicht — {reden}", "=" * 78, "ZICHTBARE HOOFDVENSTERS:"]
+        kandidaten = []
+        for handle, titel, klasse, rect in self._zichtbare_vensters():
+            regels.append(f"  handle={handle}  klasse='{klasse}'  titel='{titel}'  pos={rect}")
+            t = (titel or "").lower()
+            if "transaction" in t or "distribution" in t:
+                kandidaten.append((handle, titel))
+        for handle, titel in kandidaten:
+            uia, w32 = self._wrap_beide(handle)
+            for laag, wr in (("KLASSIEK", w32), ("MODERN", uia)):
+                regels += ["", "=" * 78, f"[{laag}] handle={handle} titel='{titel}'", "-" * 78]
+                if wr is None:
+                    regels.append("(niet beschikbaar)")
+                    continue
+                try:
+                    for c in wr.descendants():
+                        try:
+                            info = c.element_info
+                            ct = getattr(info, "control_type", "") or info.class_name
+                            regels.append(
+                                f"[{ct}]  klasse='{info.class_name}'  naam='{(info.name or '').strip()}'  "
+                                f"tekst='{(c.window_text() or '').strip()}'  pos={info.rectangle}"
+                            )
+                        except Exception:
+                            continue
+                except Exception as e:
+                    regels.append(f"(uitlezen mislukt: {e})")
+        pad.write_text("\n".join(regels), encoding="utf-8")
+        return pad
+
+    def _beantwoord(self, handle, regel):
+        """Klikt het gevraagde antwoord aan, en controleert dat het venster weggaat."""
+        knop = regel["antwoord"]
+        doel = knop.lower()
+        uia, w32 = self._wrap_beide(handle)
+
+        def naam_klopt(t):
+            return (t or "").replace("&", "").strip().lower() == doel
+
+        def wacht_tot_weg():
+            einde = time.time() + 2.5
+            while time.time() < einde:
+                if not self._venster_bestaat(handle):
+                    return True
+                time.sleep(0.15)
+            return False
+
+        pogingen = []
+
+        # 1. moderne laag: knop op naam
+        def p1():
+            for c in uia.descendants(control_type="Button"):
+                if naam_klopt(c.element_info.name):
+                    c.click_input()
+                    return True
+            return False
+        if uia is not None:
+            pogingen.append(("knop op naam (modern)", p1))
+
+        # 2. klassieke laag: gewone Windows-knop op tekst
+        def p2():
+            for c in w32.children():
+                try:
+                    if "button" in (c.class_name() or "").lower() and naam_klopt(c.window_text()):
+                        c.click()
+                        return True
+                except Exception:
+                    continue
+            return False
+        if w32 is not None:
+            pogingen.append(("knop op tekst (klassiek)", p2))
+
+        # 3. moderne laag: willekeurig element met die naam (Sheridan-knoppen)
+        def p3():
+            for c in uia.descendants():
+                try:
+                    if naam_klopt(c.element_info.name):
+                        c.click_input()
+                        return True
+                except Exception:
+                    continue
+            return False
+        if uia is not None:
+            pogingen.append(("element op naam (modern)", p3))
+
+        # 4. toetsenbord: sneltoets van de knop, daarna Enter (standaardknop)
+        def p4():
+            w = w32 or uia
+            w.set_focus()
+            time.sleep(0.2)
+            w.type_keys("%" + doel[0], set_foreground=True)
+            return True
+        def p5():
+            w = w32 or uia
+            w.set_focus()
+            time.sleep(0.2)
+            w.type_keys("{ENTER}", set_foreground=True)
+            return True
+        pogingen.append(("sneltoets Alt+" + doel[0].upper(), p4))
+        if doel in ("yes", "ok"):
+            pogingen.append(("Enter op standaardknop", p5))
+
+        # 5. vaste plek in het venster, als die in config staat
+        if regel.get("klik") and (w32 or uia) is not None:
+            def p6():
+                w = w32 or uia
+                r = w.rectangle()
+                x = int((r.right - r.left) * float(regel["klik"][0]))
+                y = int((r.bottom - r.top) * float(regel["klik"][1]))
+                w.click_input(coords=(x, y))
+                return True
+            pogingen.append(("vaste plek", p6))
+
+        for omschrijving, poging in pogingen:
+            try:
+                if not poging():
+                    continue
+            except Exception as e:
+                log(f"    {omschrijving}: {e}", "WARN")
+                continue
+            if wacht_tot_weg():
+                log(f"    beantwoord met '{knop}' via {omschrijving}")
+                return True
+            log(f"    {omschrijving}: venster bleef staan", "WARN")
+        return False
+
+    def _bekende_vraag(self, vensters):
+        for v in vensters:
+            for regel in BEKENDE_DIALOGEN:
+                if regel["bevat"] and regel["bevat"] in v["tekst"]:
+                    return regel, v
+        return None, None
+
+    def verwerk_na_add(self, max_stappen=6):
+        """
+        Wacht na Add F4 op een positief herkende toestand en handelt die af.
+
+        Geeft het vensternummer van het distributiescherm terug. Stopt met
+        een volledige uitlezing als er binnen de wachttijd niets herkenbaars
+        verschijnt — er wordt nooit op een onbekend venster geklikt.
+        """
+        wacht = float(self.cfg.get("dialog_wait_seconds", 8.0))
+
+        for _ in range(max_stappen):
+            einde = time.time() + wacht
+            beantwoord = False
+            gezien = []
+
+            while time.time() < einde:
+                h = self._distributie_venster()
+                if h:
+                    return h
+
+                gezien = self._meldingsvensters()
+                regel, v = self._bekende_vraag(gezien)
+                if regel is None:
+                    time.sleep(0.4)
+                    continue
+
+                if regel["antwoord"] == "STOP":
+                    pad = schermafdruk("blokkade")
+                    raise BridgeStop(regel["uitleg"] + (f"\nSchermafdruk: {pad}" if pad else ""), na_add=True)
+
+                log(f"  dialoog: {regel['uitleg']}")
+                if not self._beantwoord(v["handle"], regel):
+                    pad = schermafdruk("knop-niet-klikbaar")
+                    raise BridgeStop(
+                        f"Kon '{regel['antwoord']}' niet aanklikken in het meldingsvenster."
+                        + (f"\nSchermafdruk: {pad}" if pad else ""),
+                        na_add=True,
+                    )
+                time.sleep(self.pace * 2)
+                beantwoord = True
+                break
+
+            if beantwoord:
+                continue  # opnieuw kijken wat er nu op het scherm staat
+
+            pad = schermafdruk("onbekende-toestand")
+            dump = self._dump_alles("geen bekende vraag en geen distributiescherm binnen de wachttijd")
+            samenvatting = "; ".join(
+                f"'{v['titel']}' [{v['klasse']}] tekst='{v['tekst'][:160]}'" for v in gezien
+            ) or "geen vensters met een meldingstitel"
             raise BridgeStop(
-                "Het scherm 'Add distribution' verscheen niet na Add F4.\n"
-                "De kopregel kan al aangemaakt zijn — controleer dit in Eagle vóór je opnieuw start."
-                + (f"\nSchermafdruk: {pad}" if pad else "")
+                "Na Add F4 verscheen geen herkenbare toestand — gestopt zonder te raden.\n"
+                f"Gezien: {samenvatting}\n"
+                f"Volledige uitlezing: {dump}\n"
+                + (f"Schermafdruk: {pad}\n" if pad else ""),
+                na_add=True,
             )
 
-        dlg.set_focus()
+        raise BridgeStop("Te veel meldingsvensters achter elkaar na Add F4 — gestopt.", na_add=True)
+
+    # -- distributie -----------------------------------------------------
+    #
+    #   Het scherm 'Add distribution' is nog niet met vaste posities
+    #   gekoppeld. De eerste keer leidt de Bridge de indeling af uit de
+    #   volgorde van boven naar beneden (rekening, sub, job, bedrag), vult
+    #   de velden, controleert elk veld door terug te lezen, en STOPT dan
+    #   vóór OK: de gebruiker ziet op het scherm of alles in het juiste vak
+    #   staat en drukt zelf OK of Cancel. Tegelijk wordt de volledige
+    #   structuur weggeschreven, zodat de posities daarna vast komen te staan.
+
+    def vul_distributie(self, handle, account_main, account_sub, bedrag):
+        dcfg = self.cfg["distribution"]
+        uia, w32 = self._wrap_beide(handle)
+        if uia is None and w32 is None:
+            raise BridgeStop("Het distributiescherm is gevonden maar niet te benaderen.", na_add=True)
+
+        try:
+            (w32 or uia).set_focus()
+        except Exception:
+            pass
         time.sleep(self.pace)
 
-        # Eerste keer: alleen uitlezen en stoppen. Zo wordt er nooit
-        # geraden in een scherm dat nog niet gekoppeld is.
-        if not dcfg.get("gekalibreerd"):
-            pad = SCRIPT_DIR / "controls-distribution.txt"
-            n, e = dump_controls(dlg, pad, "Alle bedieningselementen in 'Add distribution'.")
-            schermafdruk("distributie-eerste-keer")
+        pad = SCRIPT_DIR / "controls-distribution.txt"
+        try:
+            self._dump_alles("distributiescherm")
+            (SCRIPT_DIR / "controls-dialoog.txt").replace(pad)
+        except Exception as e:
+            log(f"uitlezing van het distributiescherm mislukt: {e}", "WARN")
+
+        # invoervakken verzamelen (moderne laag), van boven naar beneden
+        velden = []
+        if uia is not None:
+            try:
+                for c in uia.descendants():
+                    try:
+                        info = c.element_info
+                        ct = str(getattr(info, "control_type", "") or "").lower()
+                        if ct not in ("edit", "combobox"):
+                            continue
+                        r = info.rectangle
+                        if r.right - r.left <= 2 or r.bottom - r.top <= 2:
+                            continue
+                        velden.append((r.top, r.left, c))
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        velden.sort(key=lambda t: (t[0], t[1]))
+
+        # Een keuzelijst en het invoervak erin staan op dezelfde plek;
+        # die tellen als één veld (het binnenste vak heeft voorrang).
+        uniek = []
+        for top, left, c in velden:
+            dubbel = False
+            for i, (t2, l2, c2) in enumerate(uniek):
+                if abs(top - t2) <= 4 and abs(left - l2) <= 4:
+                    ct_nieuw = str(getattr(c.element_info, "control_type", "")).lower()
+                    if ct_nieuw == "edit":
+                        uniek[i] = (top, left, c)
+                    dubbel = True
+                    break
+            if not dubbel:
+                uniek.append((top, left, c))
+        velden = uniek
+
+        if len(velden) < 3:
             raise BridgeStop(
-                "Het distributiescherm is nog niet gekoppeld — gestopt vóór er iets is ingevuld.\n"
-                f"{n} elementen ({e} invoervelden) weggeschreven naar:\n  {pad}\n\n"
-                "Deze ene boeking maak je zelf af in Eagle:\n"
-                f"  Account Number {account_main}, Sub {account_sub}, Job leeg, bedrag {bedrag}\n\n"
-                "Stuur daarna controls-distribution.txt door; daarna gaat dit vanzelf."
-            )
+                f"Distributiescherm: {len(velden)} invoervak(ken) gevonden, minimaal 3 verwacht.\n"
+                f"Structuur weggeschreven naar {pad}. Maak deze ene boeking zelf af:\n"
+                f"  Account {account_main}, Sub {account_sub}, Job leeg, bedrag {bedrag}"
+            , na_add=True)
 
-        try:
-            edits = [c for c in dlg.descendants()
-                     if str(getattr(c.element_info, "control_type", "")).lower().startswith("edit")]
-        except Exception:
-            edits = []
+        # bedragveld: het vak dat het bedrag al bevat, anders het onderste
+        bedrag_idx = None
+        for i, (_, _, c) in enumerate(velden):
+            if self._gelijk(self._lees(c), str(bedrag)):
+                bedrag_idx = i
+        if bedrag_idx is None:
+            bedrag_idx = len(velden) - 1
+        overig = [v for i, v in enumerate(velden) if i != bedrag_idx]
+        volgorde = ["account_main", "account_sub", "job"][: len(overig)]
+        toewijzing = dict(zip(volgorde, [v[2] for v in overig]))
+        toewijzing["amount"] = velden[bedrag_idx][2]
 
-        def pak(spec, naam):
-            i = spec.get("index")
-            if i is None or i >= len(edits):
+        log("  distributiescherm: indeling afgeleid van boven naar beneden "
+            f"({len(velden)} vakken; bedragvak = nr {bedrag_idx + 1})")
+
+        # Zodra de indeling één keer is goedgekeurd, moet hij daarna precies
+        # zo blijven. Wijkt het aantal vakken of de plek van het bedrag af,
+        # dan is het scherm veranderd en stoppen we.
+        verwacht_aantal = dcfg.get("verwacht_aantal")
+        verwacht_bedrag = dcfg.get("bedrag_index")
+        if dcfg.get("gekalibreerd") and verwacht_aantal is not None:
+            if verwacht_aantal != len(velden) or verwacht_bedrag != bedrag_idx:
                 raise BridgeStop(
-                    f"Distributieveld '{naam}' niet gevonden (index {i}, {len(edits)} velden aanwezig).\n"
-                    "Draai het opnieuw met gekalibreerd=false in config.json om het scherm uit te lezen."
+                    "Het distributiescherm ziet er anders uit dan bij de goedkeuring "
+                    f"({len(velden)} vakken, bedrag op nr {bedrag_idx + 1}; verwacht "
+                    f"{verwacht_aantal} vakken, bedrag op nr {(verwacht_bedrag or 0) + 1}). "
+                    "Gestopt vóór er iets is ingevuld.\n"
+                    "Zet 'gekalibreerd' in config.json op false om opnieuw te laten kijken.",
+                    na_add=True,
                 )
-            return edits[i]
+        else:
+            try:
+                cfgpad = config_pad()
+                cfg = json.loads(cfgpad.read_text(encoding="utf-8"))
+                cfg.setdefault("distribution", {})
+                cfg["distribution"]["verwacht_aantal"] = len(velden)
+                cfg["distribution"]["bedrag_index"] = bedrag_idx
+                cfgpad.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:
+                log(f"kon de indeling van het distributiescherm niet opslaan: {e}", "WARN")
 
-        for naam, spec, waarde in [
-            ("distributie account", dcfg["account_main"], account_main),
-            ("distributie sub", dcfg["account_sub"], account_sub),
-            ("distributie bedrag", dcfg["amount"], bedrag),
-        ]:
-            veld = pak(spec, naam)
-            veld.set_focus()
-            time.sleep(self.pace / 2)
-            veld.type_keys("^a{DEL}", set_foreground=False)
-            veld.type_keys(str(waarde), with_spaces=True, set_foreground=False)
-            time.sleep(self.pace)
-            gelezen = self._lees(veld)
-            if not self._gelijk(gelezen, str(waarde)):
-                pad = schermafdruk("distributie-afwijking")
-                raise BridgeStop(
-                    f"{naam}: gelezen '{gelezen}', verwacht '{waarde}'. Gestopt.\n"
-                    "De kopregel staat al in Eagle — maak deze boeking handmatig af."
-                    + (f"\nSchermafdruk: {pad}" if pad else "")
-                )
-            log(f"  {naam:18} = {waarde}")
+        def vul_ctrl(naam, ctrl, waarde):
+            waarde = str(waarde)
+            for strategie in self.STRATEGIEEN:
+                try:
+                    self._klik_in_veld(ctrl)
+                    time.sleep(self.pace / 2)
+                    self._voer_in(ctrl, waarde, strategie)
+                    time.sleep(self.pace)
+                    commit = self.cfg.get("commit_key", "{TAB}")
+                    if commit:
+                        ctrl.type_keys(commit, set_foreground=False)
+                        time.sleep(self.pace)
+                except Exception as e:
+                    log(f"  {naam}: manier '{strategie}' mislukt: {e}", "WARN")
+                    continue
+                gelezen = self._lees(ctrl)
+                if self._gelijk(gelezen, waarde):
+                    log(f"  {naam:18} = {waarde}   (manier: {strategie})")
+                    return
+                log(f"  {naam}: manier '{strategie}' gaf '{gelezen}', verwacht '{waarde}'", "WARN")
+            raise BridgeStop(
+                f"Distributieveld '{naam}' laat zich niet vullen met '{waarde}'. Gestopt vóór OK.\n"
+                "De kopregel staat al in Eagle — maak deze boeking zelf af of annuleer het scherm."
+            , na_add=True)
 
-        try:
-            dlg.child_window(title=dcfg.get("ok_button", "OK"), control_type="Button").click_input()
-        except Exception:
-            dlg.type_keys("{ENTER}")
+        vul_ctrl("distributie account", toewijzing["account_main"], account_main)
+        if "account_sub" in toewijzing:
+            vul_ctrl("distributie sub", toewijzing["account_sub"], account_sub)
+        # Job blijft bewust leeg.
+        huidig_bedrag = self._lees(toewijzing["amount"])
+        if self._gelijk(huidig_bedrag, str(bedrag)):
+            log(f"  {'distributie bedrag':18} = {bedrag}   (stond al ingevuld)")
+        else:
+            vul_ctrl("distributie bedrag", toewijzing["amount"], bedrag)
+
+        if not dcfg.get("gekalibreerd"):
+            schermafdruk("distributie-ingevuld")
+            raise BridgeStop(
+                "Distributiescherm ingevuld, maar nog niet bevestigd — dit is de eerste keer.\n"
+                "KIJK OP HET SCHERM: staat Account op "
+                f"{account_main}, Sub op {account_sub}, Job leeg en het bedrag op {bedrag}?\n"
+                "  Klopt het  -> druk zelf op OK in Eagle en meld het; daarna gaat dit vanzelf.\n"
+                "  Klopt het niet -> druk Cancel en stuur controls-distribution.txt door.\n"
+                f"Structuur: {pad}"
+            , na_add=True)
+
+        if not self._beantwoord(handle, {"antwoord": dcfg.get("ok_button", "OK")}):
+            raise BridgeStop("Kon OK niet aanklikken in het distributiescherm — controleer Eagle.", na_add=True)
         time.sleep(self.pace * 3)
 
     # -- vouchernummer ---------------------------------------------------
@@ -657,6 +1085,11 @@ def voer_regel_in(eagle, regel, dry_run):
         "terms_code": regel["termsCode"],
         "voucher_ref": regel["voucherRef"],
         "invoice_amount": regel["invoiceAmount"],
+        # Eagle rekent Due Date alleen zelf uit als de terms code bekend is.
+        # Wij zetten hem expliciet gelijk aan de factuurdatum, zodat de
+        # boeking niet afhangt van wat Eagle wel of niet invult.
+        "due_date": regel.get("dueDate") or regel["invoiceDate"],
+        "disc_date": regel.get("discDate") or regel["invoiceDate"],
     }
 
     if dry_run:
@@ -674,9 +1107,14 @@ def voer_regel_in(eagle, regel, dry_run):
     eagle.win.type_keys("{F4}")
     time.sleep(eagle.pace * 3)
 
-    eagle.handel_dialogen_af()
-    eagle.vul_distributie(dist_main, dist_sub, regel["distribution"]["amount"])
-    eagle.handel_dialogen_af()
+    handle = eagle.verwerk_na_add()
+    log("  distributiescherm gevonden")
+    eagle.vul_distributie(handle, dist_main, dist_sub, regel["distribution"]["amount"])
+
+    # na OK kan nog een melding komen; wachten tot het scherm rustig is
+    einde = time.time() + 5
+    while time.time() < einde and eagle._distributie_venster():
+        time.sleep(0.3)
 
     return eagle.lees_vouchernummer()
 
@@ -727,7 +1165,9 @@ def cmd_run(args):
             log(str(e), "ERROR")
             return 4
 
-    al_geboekt = geboekte_sleutels()
+    al_geboekt = {} if args.negeer_ledger else geboekte_sleutels()
+    if args.negeer_ledger:
+        log("LET OP: --negeer-ledger actief — eerder geboekte regels worden NIET overgeslagen.", "WARN")
     gedaan = overgeslagen = 0
 
     for i, regel in enumerate(regels, 1):
@@ -745,11 +1185,20 @@ def cmd_run(args):
             voucher = voer_regel_in(eagle, regel, args.dry_run)
         except BridgeStop as e:
             log(str(e), "ERROR")
-            schrijf_ledger({
-                "tijd": dt.datetime.now().isoformat(timespec="seconds"),
-                "batchId": batch.get("batchId"), "rij": regel["rij"],
-                "dedupeKey": sleutel, "status": "gestopt", "reden": str(e),
-            })
+            if e.na_add and not args.dry_run:
+                schrijf_ledger({
+                    "tijd": dt.datetime.now().isoformat(timespec="seconds"),
+                    "batchId": batch.get("batchId"), "rij": regel["rij"],
+                    "dedupeKey": sleutel, "status": "geboekt_handmatig", "reden": str(e),
+                })
+                log("LET OP: de kopregel van deze boeking staat al in Eagle. Maak hem daar af of "
+                    "verwijder hem. Een herstart slaat deze regel over (zie ledger).", "ERROR")
+            else:
+                schrijf_ledger({
+                    "tijd": dt.datetime.now().isoformat(timespec="seconds"),
+                    "batchId": batch.get("batchId"), "rij": regel["rij"],
+                    "dedupeKey": sleutel, "status": "gestopt", "reden": str(e),
+                })
             log(f"Gestopt na {gedaan} geboekte regel(s).", "ERROR")
             return 5
         except Exception:
@@ -908,6 +1357,8 @@ def main():
     r.add_argument("batch", help="pad naar het .eaglebatch-bestand")
     r.add_argument("--dry-run", action="store_true", help="toon alleen wat er getypt zou worden")
     r.add_argument("--limit", type=int, default=0, help="alleen de eerste N regels")
+    r.add_argument("--negeer-ledger", action="store_true",
+                   help="alleen voor testen: boek ook regels die al in het ledger staan")
 
     args = p.parse_args()
     handlers = {"run": cmd_run, "calibrate": cmd_calibrate, "doctor": cmd_doctor, "register": cmd_register}
