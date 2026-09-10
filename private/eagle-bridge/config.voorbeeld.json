@@ -66,7 +66,7 @@
         82
       ],
       "_veld": "Vendor Ref No",
-      "strategie": "selectie"
+      "strategie": "cijfers_home"
     },
     "ap_account_main": {
       "parent": "32770",
@@ -222,9 +222,9 @@
     "ok_button": "OK",
     "verwacht_aantal": 3,
     "bedrag_index": 2,
-    "_uitleg": "Drie vakken van boven naar beneden: Account Number, Job (blijft leeg), Distribution Amount (staat al ingevuld). Rekening en entiteit gaan samen in Account Number: bij 000 alleen '2099', anders volgens account_formaat (bijv. '2099-700'). Vóór OK worden rekening en bedrag teruggelezen. gekalibreerd=true: OK wordt automatisch gedrukt (bovenste knop, anders Enter).",
+    "_uitleg": "Drie vakken van boven naar beneden: Account Number, Job (blijft leeg), Distribution Amount (staat al ingevuld). Account Number altijd voluit volgens account_formaat: 2099-000 (Curaçao) of 2099-700 (Bonaire), via het pijltje van de keuzelijst, typen, en dan enter_aantal keer Enter — pas bij de tweede Enter zoekt Eagle de omschrijving erbij (Clearing Account Payments), net als bij Vendor. Vóór OK worden rekening en bedrag teruggelezen; na OK moet het scherm verdwenen zijn, anders is er niet geboekt. Sluit Eagle het scherm al zelf na de tweede Enter, dan geldt dat als geaccepteerd (mits het bedrag vooraf al goed stond).",
     "account_formaat": "{main}-{sub}",
-    "sub_000_weglaten": true
+    "enter_aantal": 2
   },
   "niet_aanraken": [
     "Check Date",
@@ -257,5 +257,12 @@
   ],
   "beeld_drempel": 0.15,
   "_soort_uitleg": "soort=keuzelijst: veld met uitklaplijst. Alleen daar mag de manier 'keuzelijst' (pijltje, typen, Enter, Tab) gebruikt worden; bij gewone vakken en datums opent die alleen maar een lijst of kalender.",
-  "_beeld_drempel_uitleg": "Aandeel afwijkende beeldpunten in het tekstmasker van de vraagregel. Zelfde venster op andere schaal ≈ 0,08; venster met andere tekst ≈ 0,3."
+  "_beeld_drempel_uitleg": "Aandeel afwijkende beeldpunten in het tekstmasker van de vraagregel. Zelfde venster op andere schaal ≈ 0,08; venster met andere tekst ≈ 0,3.",
+  "clear_key": "{F12}",
+  "_clear_uitleg": "Toets waarmee het invoerscherm na elke geboekte regel wordt leeggemaakt (Clear F12). Ook vóór een regel als het scherm nog niet leeg blijkt.",
+  "stores": {
+    "000": "1",
+    "700": "B"
+  },
+  "_stores_uitleg": "Welke Eagle-store bij welke entiteit hoort. Wordt vóór het boeken hard gecontroleerd tegen 'Store: X' in de titelbalk van New A/P Transactions; klopt het niet, dan wordt er niets geboekt."
 }

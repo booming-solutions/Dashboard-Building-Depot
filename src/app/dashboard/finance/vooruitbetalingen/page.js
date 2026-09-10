@@ -7,16 +7,23 @@
    en als batch klaarzetten voor de Eagle Bridge, die de regels
    in "New A/P Transactions" invoert.
 
-   STATUS: preview. De knop "Batch klaarzetten" schrijft nog niet
-   naar de database en start de Bridge nog niet — hij toont wat er
-   verstuurd zou worden. Zie de TODO's onderaan bij handleSend().
+   STATUS: preview, maar de koppeling met Eagle werkt:
+     1. "Boeken in Eagle" slaat de batch op (POST /api/finance/prepay/batches)
+        en start de Eagle Bridge op de PC via eagleprepay://batch/<id>.
+     2. De Bridge haalt de batch op, boekt regel voor regel en meldt
+        elke stap terug (POST .../voortgang).
+     3. Deze pagina leest de voortgang elke 2 s uit Supabase
+        (eagle_prepay_batches / _rows / _events) en toont hem live.
+   Fallback als de Bridge niet reageert: het batchbestand downloaden en
+   dubbelklikken — ook dan komt de voortgang terug.
 
-   Logica staat in src/lib/eaglePrepay.js zodat de Bridge en een
-   latere server-route dezelfde regels gebruiken.
+   Logica staat in src/lib/eaglePrepay.js zodat de Bridge en de
+   server-routes dezelfde regels gebruiken.
    ============================================================ */
 'use client';
 
-import { Fragment, useState, useMemo, useRef, useCallback } from 'react';
+import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { createClient } from '@/lib/supabase';
 import {
   ENTITEITEN, PREPAY_CONFIG,
   lastDayPrevMonth, toISODate, parseISODate, eagleDate, nlDate,
@@ -39,6 +46,39 @@ function Pill({ status }) {
   };
   const [label, cls] = map[status] || map.ready;
   return <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${cls}`}>{label}</span>;
+}
+
+const STORE_VAN = { '000': '1', '700': 'B' };
+
+function RowPill({ status }) {
+  const map = {
+    wachten:           ['Wacht', 'bg-gray-100 text-gray-600'],
+    bezig:             ['Bezig', 'bg-blue-100 text-blue-800 animate-pulse'],
+    geboekt:           ['Geboekt', 'bg-emerald-100 text-emerald-800'],
+    overgeslagen:      ['Al geboekt', 'bg-gray-200 text-gray-600'],
+    gestopt:           ['Gestopt', 'bg-red-100 text-red-800'],
+    geboekt_handmatig: ['Afmaken in Eagle', 'bg-amber-100 text-amber-800'],
+  };
+  const [label, cls] = map[status] || map.wachten;
+  return <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${cls}`}>{label}</span>;
+}
+
+function BatchPill({ status }) {
+  const map = {
+    klaar:    ['Klaargezet — wacht op de Bridge', 'bg-gray-100 text-gray-700'],
+    bezig:    ['Bezig in Eagle', 'bg-blue-100 text-blue-800'],
+    afgerond: ['Afgerond', 'bg-emerald-100 text-emerald-800'],
+    gestopt:  ['Gestopt', 'bg-red-100 text-red-800'],
+  };
+  const [label, cls] = map[status] || map.klaar;
+  return <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[12px] font-bold ${cls}`}>
+    {status === 'bezig' && <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />}{label}
+  </span>;
+}
+
+function tijd(iso) {
+  try { return new Date(iso).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+  catch { return ''; }
 }
 
 function Tile({ k, v, s, tone }) {
@@ -75,6 +115,14 @@ export default function VooruitbetalingenPage() {
   const [copied, setCopied] = useState(false);
   const [downloadOk, setDownloadOk] = useState(null);
 
+  // koppeling met Eagle
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [batchRec, setBatchRec] = useState(null);   // antwoord van /api/finance/prepay/batches
+  const [live, setLive] = useState(null);           // { batch, rows, events } uit Supabase
+  const [launched, setLaunched] = useState(false);
+  const voortgangRef = useRef(null);
+
   const minDatum = useMemo(() => minBoekdatum(vandaag), [vandaag]);
   const maxDatum = useMemo(
     () => new Date(Date.UTC(vandaag.getUTCFullYear(), vandaag.getUTCMonth(), vandaag.getUTCDate())),
@@ -102,6 +150,7 @@ export default function VooruitbetalingenPage() {
   function resetAll() {
     setFileName(null); setRawRows([]); setRowState({}); setOpenRow({});
     setFilter('alles'); setReadError(null); setSent(null); setShowPayload(false);
+    setBatchRec(null); setLive(null); setLaunched(false); setSaveError(null); setDownloadOk(null);
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -127,40 +176,116 @@ export default function VooruitbetalingenPage() {
   /* ------------------------------------------------------------ acties */
 
   /**
-   * Zet de batch klaar voor de Eagle Bridge.
+   * Boeken in Eagle.
    *
-   * Voorlopig gaat dat via een bestand: de browser kan geen programma op de
-   * PC starten, maar wél een download geven. Het .eaglebatch-bestand is aan
-   * de Bridge gekoppeld, dus dubbelklikken start hem met deze batch.
-   *
-   * TODO (volgende stap): batch eerst opslaan via /api/finance/prepay-batches
-   * en de Bridge starten met eagleprepay://batch/{id}, zodat de status per
-   * regel (vouchernummer) terugkomt in het dashboard.
+   * 1. De batch wordt opgeslagen via /api/finance/prepay/batches; die route
+   *    geeft een startlink terug (eagleprepay://batch/<id>?t=<token>).
+   * 2. De browser opent die link; Windows start de Eagle Bridge, die de
+   *    batch ophaalt en gaat boeken. De Bridge meldt elke stap terug.
+   * 3. Deze pagina volgt de voortgang (zie useEffect hieronder).
    */
-  function handleSend() {
+  async function handleSend() {
+    if (saving) return;
+    setSaving(true); setSaveError(null); setDownloadOk(null);
     const stamp = boekdatum.replace(/-/g, '');
     const batchId = `${stamp}-${entity}-${Date.now().toString().slice(-6)}`;
     const batch = buildBatch({
       rows, rowState, entity, boekdatumISO: boekdatum, fileName, modal, batchId,
     });
-
     try {
-      const blob = new Blob([JSON.stringify(batch, null, 2)], { type: 'application/json' });
+      const r = await fetch('/api/finance/prepay/batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || `server gaf ${r.status}`);
+      setBatchRec(j);
+      setSent(j.payload);
+      setLive(null);
+      startBridge(j.launch);
+      setTimeout(() => voortgangRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    } catch (err) {
+      setSaveError(err.message || String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Opent de eagleprepay://-link; Windows geeft die door aan de Bridge. */
+  function startBridge(launch) {
+    if (!launch) return;
+    try {
+      const a = document.createElement('a');
+      a.href = launch;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setLaunched(true);
+    } catch {
+      setLaunched(false);
+    }
+  }
+
+  /** Fallback: hetzelfde batchbestand downloaden (dubbelklik start de Bridge). */
+  function downloadBatch() {
+    if (!batchRec) return;
+    try {
+      const blob = new Blob([JSON.stringify(batchRec.payload, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `vooruitbetalingen-${batchId}.eaglebatch`;
+      a.download = batchRec.bestandsnaam;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 4000);
       setDownloadOk(true);
-    } catch (err) {
+    } catch {
       setDownloadOk(false);
     }
-
-    setSent(batch);
   }
+
+  /* -------------------------------------------------- voortgang volgen */
+
+  useEffect(() => {
+    if (!batchRec?.id) return undefined;
+    const supabase = createClient();
+    let stop = false;
+    let timer = null;
+
+    async function haal() {
+      if (stop) return;
+      try {
+        const [b, r, e] = await Promise.all([
+          supabase.from('eagle_prepay_batches')
+            .select('id,batch_id,status,laatste_bericht,eagle_store,eagle_user,machine,bridge_versie,geboekt,overgeslagen,fout,aantal_regels,store,started_at,finished_at,updated_at')
+            .eq('id', batchRec.id).maybeSingle(),
+          supabase.from('eagle_prepay_rows')
+            .select('rij,vendor_ref_no,invoice_amount,voucher_ref,status,stap,voucher,reden,updated_at')
+            .eq('batch_uuid', batchRec.id).order('rij'),
+          supabase.from('eagle_prepay_events')
+            .select('id,rij,tijd,niveau,bericht')
+            .eq('batch_uuid', batchRec.id).order('id', { ascending: false }).limit(60),
+        ]);
+        if (stop) return;
+        setLive({
+          batch: b.data || null,
+          rows: r.data || [],
+          events: (e.data || []).slice().reverse(),
+          fout: b.error?.message || r.error?.message || e.error?.message || null,
+        });
+        const status = b.data?.status;
+        if (status === 'afgerond' || status === 'gestopt') return; // klaar: niet meer pollen
+      } catch (err) {
+        if (!stop) setLive(prev => ({ ...(prev || { batch: null, rows: [], events: [] }), fout: err.message }));
+      }
+      timer = setTimeout(haal, 2000);
+    }
+    haal();
+    return () => { stop = true; if (timer) clearTimeout(timer); };
+  }, [batchRec?.id]);
 
   function copyManual() {
     const lines = [['Rij', 'Betaaldatum', 'Leverancier', 'Fact.nummer', 'Euro', 'XCG', 'Reden'].join('\t')];
@@ -592,46 +717,78 @@ export default function VooruitbetalingenPage() {
       <div className="flex items-baseline gap-3 mb-3">
         <span className="text-[12px] font-bold text-[#1B3A5C] bg-[#1B3A5C]/10 rounded px-2 py-0.5">4</span>
         <h2 className="text-[15px] font-semibold text-[#1B3A5C]">Naar Eagle</h2>
-        <span className="ml-auto text-[12px] text-gray-400">Zet Eagle klaar op New A/P Transactions vóór je start</span>
+        <span className="ml-auto text-[12px] text-gray-400">De Eagle Bridge op deze PC typt de regels in New A/P Transactions</span>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-7">
+        {/* store-instructie: prominent, want Curaçao en Bonaire zijn twee stores */}
+        <div className={`px-5 py-4 border-b border-gray-200 flex items-center gap-4 flex-wrap ${entity ? 'bg-[#1B3A5C]/5' : 'bg-gray-50'}`}>
+          <div className="flex-none w-14 h-14 rounded-xl bg-[#1B3A5C] text-white flex items-center justify-center font-mono text-[26px] font-bold">
+            {entity ? STORE_VAN[entity] : '?'}
+          </div>
+          <div className="flex-1 min-w-[260px]">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400">Vóór je start: Eagle op de juiste store</div>
+            <div className="text-[15px] font-semibold text-[#1B3A5C] mt-0.5">
+              {entity
+                ? <>Zet Eagle op <span className="font-mono">Store {STORE_VAN[entity]}</span> — {ENTITEITEN.find(e => e.code === entity)?.naam}, en open <span className="font-mono">New A/P Transactions</span>.</>
+                : <>Kies eerst een entiteit in stap 1. Curaçao = Store 1, Bonaire = Store B.</>}
+            </div>
+            <p className="text-[12.5px] text-gray-500 mt-1">
+              De store staat bovenin het Eagle-venster ("Store: 1" of "Store: B"). De Bridge controleert dit
+              zelf en weigert te boeken als het niet klopt — maar dan moet je opnieuw beginnen.
+            </p>
+          </div>
+        </div>
+
         <div className="px-5 py-4 flex items-center gap-4 flex-wrap">
           <div className="flex-1 min-w-[300px] text-[13px] text-gray-600">
             {!rows.length ? <><strong className="text-[#1B3A5C]">Nog geen bestand.</strong> Lees eerst een aanbetalingslijst in.</>
-              : !entity ? <><strong className="text-[#1B3A5C]">Kies eerst een entiteit.</strong> Zonder die keuze staat niet vast op welke rekening geboekt wordt.</>
+              : !entity ? <><strong className="text-[#1B3A5C]">Kies eerst een entiteit.</strong> Zonder die keuze staat niet vast op welke rekening en store geboekt wordt.</>
               : datumFout ? <><strong className="text-[#1B3A5C]">De boekdatum klopt niet.</strong> {datumFout}</>
               : actionRows.length ? <><strong className="text-[#1B3A5C]">{actionRows.length} regel(s) wachten op bevestiging.</strong> Bevestig ze of haal ze uit de batch.</>
               : !batchRows.length ? <><strong className="text-[#1B3A5C]">Geen boekbare regels.</strong> Alles staat op de lijst handmatig boeken.</>
+              : batchRec ? <>
+                  <strong className="text-emerald-700">Batch {batchRec.batchId} is klaargezet en de Eagle Bridge is gestart.</strong>{' '}
+                  <span className="text-gray-500">
+                    Op deze PC opent een venster van de Bridge; druk daar op Enter en raak muis en toetsenbord niet aan. De voortgang zie je hieronder.
+                  </span>
+                  <br />
+                  <span className="text-gray-500">
+                    Gebeurt er niets? Dan is de Bridge op deze PC nog niet geïnstalleerd, of blokkeert de browser de link:{' '}
+                    <button type="button" onClick={() => startBridge(batchRec.launch)} className="text-[#1B3A5C] underline underline-offset-2">opnieuw starten</button>
+                    {' '}of{' '}
+                    <button type="button" onClick={downloadBatch} className="text-[#1B3A5C] underline underline-offset-2">batchbestand downloaden</button>
+                    {' '}en dubbelklikken.
+                  </span>
+                  {downloadOk === true && <><br /><span className="text-emerald-700">Gedownload als {batchRec.bestandsnaam}.</span></>}
+                  {downloadOk === false && <><br /><span className="text-red-700 font-medium">De download werd geblokkeerd. Sta downloads toe voor deze site.</span></>}
+                </>
               : <>
                   <strong className="text-[#1B3A5C]">
                     {batchRows.length} regel(s) klaar voor {ENTITEITEN.find(e => e.code === entity)?.naam}.
                   </strong>{' '}
                   Rekening {PREPAY_CONFIG.apAccountMain}-{entity}, distributie {PREPAY_CONFIG.distributionAccountMain}-{entity},
-                  datum {eagleDate(boekdatumObj)}
+                  datum {eagleDate(boekdatumObj)}, totaal XCG {nlAmount(totXcg)}
                   {manualRows.length ? ` · ${manualRows.length} regel(s) blijven achter voor handmatig boeken.` : '.'}
-                  {sent && (
-                    <><br />
-                      <span className="text-emerald-700 font-medium">
-                        Batch {sent.batchId} is gedownload als .eaglebatch-bestand.
-                      </span>{' '}
-                      <span className="text-gray-500">
-                        Zet Eagle klaar op New A/P Transactions en dubbelklik het bestand om de Bridge te starten.
-                      </span>
-                    </>
-                  )}
-                  {downloadOk === false && (
-                    <><br /><span className="text-red-700 font-medium">De download werd geblokkeerd. Sta downloads toe voor deze site en probeer opnieuw.</span></>
-                  )}
                 </>}
+            {saveError && (
+              <><br /><span className="text-red-700 font-medium">Klaarzetten mislukt: {saveError}</span></>
+            )}
           </div>
-          <button type="button" disabled={blocked} onClick={handleSend}
-            className="px-4 py-2 rounded-lg bg-[#1B3A5C] text-white text-[13px] font-semibold hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed">
-            Batch downloaden voor Eagle
-          </button>
+          {!batchRec ? (
+            <button type="button" disabled={blocked || saving} onClick={handleSend}
+              className="px-5 py-2.5 rounded-lg bg-[#1B3A5C] text-white text-[13.5px] font-semibold hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed">
+              {saving ? 'Klaarzetten…' : 'Boeken in Eagle'}
+            </button>
+          ) : (
+            <button type="button" onClick={resetAll}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-[13px] font-semibold text-[#1B3A5C] hover:bg-gray-50">
+              Nieuwe batch
+            </button>
+          )}
           <button type="button" onClick={() => setShowPayload(v => !v)}
             className="px-4 py-2 rounded-lg border border-gray-300 text-[13px] font-semibold text-[#1B3A5C] hover:bg-gray-50">
-            {showPayload ? 'Verberg' : 'Toon wat de agent ontvangt'}
+            {showPayload ? 'Verberg' : 'Toon wat de Bridge ontvangt'}
           </button>
         </div>
         {showPayload && (
@@ -643,6 +800,107 @@ export default function VooruitbetalingenPage() {
           </pre>
         )}
       </div>
+
+      {/* STAP 5 — voortgang */}
+      {batchRec && (
+        <div ref={voortgangRef}>
+          <div className="flex items-baseline gap-3 mb-3">
+            <span className="text-[12px] font-bold text-[#1B3A5C] bg-[#1B3A5C]/10 rounded px-2 py-0.5">5</span>
+            <h2 className="text-[15px] font-semibold text-[#1B3A5C]">Voortgang in Eagle</h2>
+            <span className="ml-auto text-[12px] text-gray-400">Wordt elke 2 seconden bijgewerkt</span>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-7">
+            {(() => {
+              const b = live?.batch;
+              const lrows = live?.rows || [];
+              const n = b?.aantal_regels || batchRows.length;
+              const geboekt = lrows.filter(r => r.status === 'geboekt').length;
+              const overgeslagen = lrows.filter(r => r.status === 'overgeslagen').length;
+              const klaarAantal = geboekt + overgeslagen;
+              const pct = n ? Math.round((klaarAantal / n) * 100) : 0;
+              const status = b?.status || 'klaar';
+              return (
+                <>
+                  <div className="px-5 py-4 border-b border-gray-200 flex items-center gap-4 flex-wrap">
+                    <BatchPill status={status} />
+                    <div className="text-[13px] text-gray-600">
+                      {status === 'klaar' && !launched && 'De Bridge is nog niet gestart.'}
+                      {status === 'klaar' && launched && 'Wacht tot je in het Bridge-venster op Enter drukt…'}
+                      {status === 'bezig' && (b?.laatste_bericht || 'Bezig…')}
+                      {status === 'afgerond' && <span className="text-emerald-700 font-medium">{b?.geboekt ?? geboekt} geboekt{(b?.overgeslagen ?? overgeslagen) ? `, ${b?.overgeslagen ?? overgeslagen} al eerder gedaan` : ''}.</span>}
+                      {status === 'gestopt' && <span className="text-red-700 font-medium">{b?.laatste_bericht || 'Gestopt.'}</span>}
+                    </div>
+                    {b?.eagle_store && (
+                      <div className="ml-auto text-[12px] text-gray-500 font-mono">
+                        Store {b.eagle_store} · {b.eagle_user || '?'}{b.machine ? ` · ${b.machine}` : ''}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="px-5 py-3 border-b border-gray-200">
+                    <div className="flex items-center justify-between text-[12px] text-gray-500 mb-1.5">
+                      <span>{klaarAantal} van {n} regel(s) klaar</span>
+                      <span className="font-mono">{pct}%</span>
+                    </div>
+                    <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-500 ${status === 'gestopt' ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[820px] text-[13.5px]">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          {['Rij', 'Fact.nummer', 'XCG', 'Voucher Ref', 'Status', 'Stap', 'Voucher', 'Melding'].map((h, i) => (
+                            <th key={i} className={`px-3 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-gray-400 whitespace-nowrap ${i === 2 ? 'text-right' : 'text-left'}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {!lrows.length && (
+                          <tr><td colSpan={8} className="px-5 py-6 text-center text-gray-400 text-[13px]">
+                            {live?.fout ? `Voortgang kan niet gelezen worden: ${live.fout}` : 'Voortgang wordt opgehaald…'}
+                          </td></tr>
+                        )}
+                        {lrows.map(r => (
+                          <tr key={r.rij} className={`border-b border-gray-100 ${r.status === 'bezig' ? 'bg-blue-50' : r.status === 'gestopt' ? 'bg-red-50' : r.status === 'geboekt_handmatig' ? 'bg-amber-50' : ''}`}>
+                            <td className="px-3 py-2 font-mono text-[12px] text-gray-400">{r.rij}</td>
+                            <td className="px-3 py-2 font-mono text-[12.5px]">{r.vendor_ref_no}</td>
+                            <td className="px-3 py-2 text-right font-mono tabular-nums">{nlAmount(r.invoice_amount)}</td>
+                            <td className="px-3 py-2 font-mono text-[12px] text-gray-600">{r.voucher_ref}</td>
+                            <td className="px-3 py-2"><RowPill status={r.status} /></td>
+                            <td className="px-3 py-2 text-[12.5px] text-gray-600">{r.stap || ''}</td>
+                            <td className="px-3 py-2 font-mono text-[12.5px] text-[#1B3A5C]">{r.voucher || ''}</td>
+                            <td className="px-3 py-2 text-[12px] text-gray-600 max-w-[320px]"><div className="line-clamp-2">{r.reden || ''}</div></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="border-t border-gray-200">
+                    <div className="px-5 py-2 bg-gray-50 border-b border-gray-200 text-[11px] uppercase tracking-wider font-semibold text-gray-500 flex items-center">
+                      Logboek van de Bridge
+                      <span className="ml-auto normal-case tracking-normal font-normal text-gray-400">laatste {Math.min(60, (live?.events || []).length)} regels</span>
+                    </div>
+                    <div className="px-5 py-3 max-h-[260px] overflow-y-auto font-mono text-[12px] leading-relaxed bg-white">
+                      {!(live?.events || []).length && <div className="text-gray-400">Nog geen meldingen.</div>}
+                      {(live?.events || []).map(ev => (
+                        <div key={ev.id} className={`flex gap-3 ${ev.niveau === 'ERROR' ? 'text-red-700' : ev.niveau === 'WARN' ? 'text-amber-700' : 'text-gray-700'}`}>
+                          <span className="text-gray-400 flex-none">{tijd(ev.tijd)}</span>
+                          <span className="text-gray-400 flex-none w-8 text-right">{ev.rij ? `r${ev.rij}` : ''}</span>
+                          <span className="whitespace-pre-wrap break-words">{ev.bericht}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
     </div>
   );
