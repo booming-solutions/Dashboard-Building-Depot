@@ -73,7 +73,7 @@ export async function POST(req) {
       .from('eagle_prepay_rows')
       .select('dedupe_key,status,voucher')
       .in('dedupe_key', keys)
-      .in('status', ['geboekt', 'geboekt_handmatig', 'bezig']);
+      .in('status', ['geboekt', 'geboekt_handmatig', 'bezig', 'geweigerd']);
     if (eErr) return NextResponse.json({ ok: false, error: eErr.message }, { status: 500 });
     const al = new Map((eerder || []).map((r) => [r.dedupe_key, r]));
     const geweigerd = batch.regels

@@ -24,6 +24,7 @@
 
 import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
+import ExcelExportButton from '@/components/ExcelExportButton';
 import {
   ENTITEITEN, PREPAY_CONFIG,
   lastDayPrevMonth, toISODate, parseISODate, eagleDate, nlDate,
@@ -58,6 +59,7 @@ function RowPill({ status }) {
     overgeslagen:      ['Al geboekt', 'bg-gray-200 text-gray-600'],
     gestopt:           ['Gestopt', 'bg-red-100 text-red-800'],
     geboekt_handmatig: ['Afmaken in Eagle', 'bg-amber-100 text-amber-800'],
+    geweigerd:         ['Geweigerd door Eagle', 'bg-amber-100 text-amber-800'],
   };
   const [label, cls] = map[status] || map.wachten;
   return <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${cls}`}>{label}</span>;
@@ -123,6 +125,13 @@ export default function VooruitbetalingenPage() {
   const [launched, setLaunched] = useState(false);
   const voortgangRef = useRef(null);
 
+  // historie: ingelezen batches in een periode, met uitvallijst en Excel-export
+  const [histVan, setHistVan] = useState(() => { const d = new Date(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`; });
+  const [histTot, setHistTot] = useState(() => toISODate(new Date()));
+  const [hist, setHist] = useState(null);         // { batches:[{...batch, rows:[], handmatig:[]}] }
+  const [histBusy, setHistBusy] = useState(false);
+  const [histOpen, setHistOpen] = useState({});
+
   const minDatum = useMemo(() => minBoekdatum(vandaag), [vandaag]);
   const maxDatum = useMemo(
     () => new Date(Date.UTC(vandaag.getUTCFullYear(), vandaag.getUTCMonth(), vandaag.getUTCDate())),
@@ -144,6 +153,8 @@ export default function VooruitbetalingenPage() {
       const wanneer = e.tijd ? new Date(e.tijd).toLocaleDateString('nl-NL') : 'eerder';
       const wat = e.status === 'geboekt'
         ? `is op ${wanneer} al via het dashboard in Eagle geboekt${e.voucher ? ` (voucher ${e.voucher})` : ''}`
+        : e.status === 'geweigerd'
+          ? `is op ${wanneer} door Eagle geweigerd: ${e.reden || 'factuurnummer al in gebruik'}`
         : e.status === 'bezig'
           ? (e.tijd && Date.now() - new Date(e.tijd).getTime() > 15 * 60 * 1000
               ? `is bij een eerdere poging (${wanneer}) afgebroken tijdens het boeken — controleer in Eagle (Viewer F9) of hij er staat`
@@ -167,16 +178,16 @@ export default function VooruitbetalingenPage() {
         const supabase = createClient();
         const { data, error } = await supabase
           .from('eagle_prepay_rows')
-          .select('dedupe_key,status,voucher,invoice_amount,updated_at,eagle_prepay_batches(batch_id,created_by,entiteit_naam)')
+          .select('dedupe_key,status,voucher,reden,invoice_amount,updated_at,eagle_prepay_batches(batch_id,created_by,entiteit_naam)')
           .in('dedupe_key', keys)
-          .in('status', ['geboekt', 'geboekt_handmatig', 'bezig'])
+          .in('status', ['geboekt', 'geboekt_handmatig', 'bezig', 'geweigerd'])
           .order('updated_at', { ascending: false });
         if (stop || error || !data) return;
         const map = {};
         data.forEach(r => {
           if (map[r.dedupe_key]) return; // nieuwste eerst
           map[r.dedupe_key] = {
-            status: r.status, voucher: r.voucher, bedrag: r.invoice_amount, tijd: r.updated_at,
+            status: r.status, voucher: r.voucher, reden: r.reden, bedrag: r.invoice_amount, tijd: r.updated_at,
             batch_id: r.eagle_prepay_batches?.batch_id, door: r.eagle_prepay_batches?.created_by,
           };
         });
@@ -340,6 +351,123 @@ export default function VooruitbetalingenPage() {
     haal();
     return () => { stop = true; if (timer) clearTimeout(timer); };
   }, [batchRec?.id]);
+
+  /* -------------------------------------------------- historie */
+
+  async function laadHistorie() {
+    setHistBusy(true);
+    try {
+      const supabase = createClient();
+      const van = `${histVan}T00:00:00.000Z`;
+      const tot = `${histTot}T23:59:59.999Z`;
+      const { data: batches, error } = await supabase
+        .from('eagle_prepay_batches')
+        .select('id,batch_id,token,entiteit,entiteit_naam,store,voucher_date,bestand,aantal_regels,aantal_handmatig,totaal_xcg,status,laatste_bericht,eagle_store,eagle_user,geboekt,overgeslagen,created_by,created_at,finished_at,payload')
+        .gte('created_at', van).lte('created_at', tot)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const ids = (batches || []).map(b => b.id);
+      let rows = [];
+      if (ids.length) {
+        const r = await supabase
+          .from('eagle_prepay_rows')
+          .select('batch_uuid,rij,vendor,vendor_ref_no,invoice_amount,voucher_ref,status,stap,voucher,reden,updated_at')
+          .in('batch_uuid', ids)
+          .order('rij');
+        if (r.error) throw r.error;
+        rows = r.data || [];
+      }
+      const perBatch = {};
+      rows.forEach(r => { (perBatch[r.batch_uuid] = perBatch[r.batch_uuid] || []).push(r); });
+      setHist({
+        batches: (batches || []).map(b => ({
+          ...b,
+          rows: perBatch[b.id] || [],
+          handmatig: Array.isArray(b.payload?.handmatig) ? b.payload.handmatig : [],
+          regelsPayload: Array.isArray(b.payload?.regels) ? b.payload.regels : [],
+        })),
+        fout: null,
+      });
+    } catch (err) {
+      setHist({ batches: [], fout: err.message || String(err) });
+    } finally {
+      setHistBusy(false);
+    }
+  }
+
+  /** Een eerdere batch opnieuw aan Booming geven (al geboekte regels worden overgeslagen). */
+  function hervatBatch(b) {
+    const host = typeof window !== 'undefined' ? window.location.host : 'boomingsolutions.ai';
+    const rec = {
+      id: b.id, batchId: b.batch_id, token: b.token, store: b.store,
+      launch: `eagleprepay://batch/${b.id}?t=${b.token}&h=${encodeURIComponent(host)}`,
+      bestandsnaam: `vooruitbetalingen-${b.batch_id}.eaglebatch`,
+      payload: { ...(b.payload || {}), rapportage: { id: b.id, token: b.token, host } },
+    };
+    setEntity(b.entiteit);
+    setBatchRec(rec);
+    setLive(null);
+    startBridge(rec.launch);
+    setTimeout(() => voortgangRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+  }
+
+  const ROW_LABEL = {
+    wachten: 'Niet geboekt (wacht)', bezig: 'Afgebroken tijdens boeken', geboekt: 'Geboekt',
+    overgeslagen: 'Overgeslagen (al eerder geboekt)', gestopt: 'Gestopt — niet geboekt', geboekt_handmatig: 'Afmaken in Eagle',
+    geweigerd: 'Geweigerd door Eagle (factuurnummer al in gebruik)',
+  };
+  const BATCH_LABEL = { klaar: 'Klaargezet, niet gestart', bezig: 'Bezig / afgebroken', afgerond: 'Afgerond', gestopt: 'Gestopt' };
+
+  function leverancierUit(voucherRef, vendor) {
+    const m = /^VOORUITBET\s+(.*?)\s+EUR/i.exec(voucherRef || '');
+    return m ? m[1] : (vendor || '');
+  }
+
+  function histSheets() {
+    const batches = hist?.batches || [];
+    const overzicht = batches.map(b => ({
+      'Ingelezen op': new Date(b.created_at).toLocaleString('nl-NL'),
+      'Bestand': b.bestand || '', 'Batch': b.batch_id, 'Entiteit': b.entiteit_naam || b.entiteit, 'Store': b.store,
+      'Boekdatum (Eagle)': b.voucher_date, 'Door': b.created_by || '',
+      'Status': BATCH_LABEL[b.status] || b.status,
+      'Regels in batch': b.aantal_regels, 'Geboekt': b.rows.filter(r => r.status === 'geboekt').length,
+      'Niet geboekt': b.rows.filter(r => r.status !== 'geboekt' && r.status !== 'overgeslagen').length,
+      'Handmatig (niet in batch)': b.handmatig.length,
+      'Totaal XCG batch': Number(b.totaal_xcg || 0), 'Laatste melding': b.laatste_bericht || '',
+    }));
+    const alle = [];
+    const handmatig = [];
+    batches.forEach(b => {
+      b.rows.forEach(r => {
+        const rec = {
+          'Ingelezen op': new Date(b.created_at).toLocaleString('nl-NL'), 'Bestand': b.bestand || '', 'Batch': b.batch_id,
+          'Entiteit': b.entiteit_naam || b.entiteit, 'Boekdatum (Eagle)': b.voucher_date,
+          'Rij Excel': r.rij, 'Leverancier': leverancierUit(r.voucher_ref, r.vendor),
+          'Fact.nummer': r.vendor_ref_no, 'XCG': Number(r.invoice_amount || 0), 'Voucher Ref': r.voucher_ref || '',
+          'Resultaat': ROW_LABEL[r.status] || r.status, 'Voucher Eagle': r.voucher || '', 'Toelichting': r.reden || '',
+        };
+        alle.push(rec);
+        if (r.status !== 'geboekt' && r.status !== 'overgeslagen') handmatig.push({ ...rec, 'Waarom handmatig': ROW_LABEL[r.status] || r.status });
+      });
+      b.handmatig.forEach(h => {
+        const rec = {
+          'Ingelezen op': new Date(b.created_at).toLocaleString('nl-NL'), 'Bestand': b.bestand || '', 'Batch': b.batch_id,
+          'Entiteit': b.entiteit_naam || b.entiteit, 'Boekdatum (Eagle)': b.voucher_date,
+          'Rij Excel': h.rij, 'Leverancier': h.leverancier || '', 'Fact.nummer': h.factuurnummer || '',
+          'XCG': h.xcg != null ? Number(h.xcg) : '', 'Voucher Ref': '', 'Resultaat': 'Niet in batch (handmatig boeken)',
+          'Voucher Eagle': '', 'Toelichting': h.reden || '',
+        };
+        alle.push(rec);
+        handmatig.push({ ...rec, 'Waarom handmatig': h.reden || 'Uit de batch gehaald' });
+      });
+    });
+    return [
+      { name: 'Batches', rows: overzicht },
+      { name: 'Alle regels', rows: alle },
+      { name: 'Handmatig boeken', rows: handmatig },
+    ];
+  }
+
 
   function copyManual() {
     const lines = [['Rij', 'Betaaldatum', 'Leverancier', 'Fact.nummer', 'Euro', 'XCG', 'Reden'].join('\t')];
@@ -966,6 +1094,137 @@ export default function VooruitbetalingenPage() {
           </div>
         </div>
       )}
+
+      {/* HISTORIE */}
+      <div className="flex items-baseline gap-3 mb-3 mt-2">
+        <span className="text-[12px] font-bold text-[#1B3A5C] bg-[#1B3A5C]/10 rounded px-2 py-0.5">H</span>
+        <h2 className="text-[15px] font-semibold text-[#1B3A5C]">Historie</h2>
+        <span className="ml-auto text-[12px] text-gray-400">Welke bestanden zijn ingelezen, wat is geboekt en wat moet handmatig</span>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-7">
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center gap-3 flex-wrap">
+          <label className="text-[12px] text-gray-500">Van
+            <input type="date" value={histVan} max={histTot} onChange={e => e.target.value && setHistVan(e.target.value)}
+              className="ml-2 px-2.5 py-1.5 rounded-lg border border-gray-300 text-[13px] font-mono focus:outline-none focus:border-[#1B3A5C]" />
+          </label>
+          <label className="text-[12px] text-gray-500">t/m
+            <input type="date" value={histTot} min={histVan} onChange={e => e.target.value && setHistTot(e.target.value)}
+              className="ml-2 px-2.5 py-1.5 rounded-lg border border-gray-300 text-[13px] font-mono focus:outline-none focus:border-[#1B3A5C]" />
+          </label>
+          <button type="button" onClick={laadHistorie} disabled={histBusy}
+            className="px-4 py-1.5 rounded-lg bg-[#1B3A5C] text-white text-[12.5px] font-semibold hover:brightness-110 disabled:opacity-50">
+            {histBusy ? 'Ophalen…' : 'Ophalen'}
+          </button>
+          {hist && hist.batches.length > 0 && (
+            <div className="ml-auto">
+              <ExcelExportButton
+                filename={`${histVan.replace(/-/g, '')}-${histTot.replace(/-/g, '')}_vooruitbetalingen_eagle`}
+                reportTitle={`Vooruitbetalingen Keukendepot — ${nlDate(parseISODate(histVan))} t/m ${nlDate(parseISODate(histTot))}`}
+                sheets={histSheets}
+                label="⬇ Excel: batches, regels en handmatig boeken"
+              />
+            </div>
+          )}
+        </div>
+
+        {!hist && (
+          <div className="px-5 py-6 text-[13px] text-gray-400">Kies een periode en klik op Ophalen.</div>
+        )}
+        {hist?.fout && (
+          <div className="px-5 py-4 text-[13px] text-red-700">Historie ophalen mislukt: {hist.fout}</div>
+        )}
+        {hist && !hist.fout && !hist.batches.length && (
+          <div className="px-5 py-6 text-[13px] text-gray-400">Geen batches ingelezen in deze periode.</div>
+        )}
+        {hist && hist.batches.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] text-[13px]">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  {['Ingelezen', 'Bestand', 'Entiteit', 'Boekdatum', 'Door', 'Status', 'Geboekt', 'Niet geboekt', 'Handmatig', 'XCG', ''].map((h, i) => (
+                    <th key={i} className={`px-3 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-gray-400 whitespace-nowrap ${[6, 7, 8, 9].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {hist.batches.map(b => {
+                  const geboekt = b.rows.filter(r => r.status === 'geboekt').length;
+                  const nietGeboekt = b.rows.filter(r => r.status !== 'geboekt' && r.status !== 'overgeslagen').length;
+                  const open = !!histOpen[b.id];
+                  const uitval = [
+                    ...b.rows.filter(r => r.status !== 'geboekt' && r.status !== 'overgeslagen').map(r => ({
+                      rij: r.rij, factuur: r.vendor_ref_no, xcg: r.invoice_amount, wat: ROW_LABEL[r.status] || r.status, reden: r.reden || '',
+                    })),
+                    ...b.handmatig.map(h => ({ rij: h.rij, factuur: h.factuurnummer, xcg: h.xcg, wat: 'Niet in batch', reden: h.reden || '' })),
+                  ].sort((a, c) => a.rij - c.rij);
+                  return (
+                    <Fragment key={b.id}>
+                      <tr className="border-b border-gray-100">
+                        <td className="px-3 py-2 whitespace-nowrap text-gray-600">{new Date(b.created_at).toLocaleString('nl-NL', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                        <td className="px-3 py-2 max-w-[260px]"><div className="truncate" title={b.bestand || ''}>{b.bestand || '—'}</div><div className="font-mono text-[11px] text-gray-400">{b.batch_id}</div></td>
+                        <td className="px-3 py-2 whitespace-nowrap">{b.entiteit_naam || b.entiteit} <span className="text-gray-400 font-mono text-[11px]">St {b.store}</span></td>
+                        <td className="px-3 py-2 font-mono text-[12px]">{b.voucher_date}</td>
+                        <td className="px-3 py-2 text-[12px] text-gray-600 max-w-[160px] truncate" title={b.created_by || ''}>{(b.created_by || '').split('@')[0]}</td>
+                        <td className="px-3 py-2"><BatchPill status={b.status} /></td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-emerald-700">{geboekt}</td>
+                        <td className={`px-3 py-2 text-right font-mono tabular-nums ${nietGeboekt ? 'text-red-700 font-semibold' : 'text-gray-400'}`}>{nietGeboekt}</td>
+                        <td className={`px-3 py-2 text-right font-mono tabular-nums ${b.handmatig.length ? 'text-amber-700 font-semibold' : 'text-gray-400'}`}>{b.handmatig.length}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums">{nlAmount(b.totaal_xcg || 0)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <button type="button" onClick={() => setHistOpen(o => ({ ...o, [b.id]: !o[b.id] }))}
+                            className="text-[12px] text-[#1B3A5C] underline underline-offset-2 mr-3">{open ? 'verberg' : 'details'}</button>
+                          {b.status !== 'afgerond' && b.rows.some(r => r.status !== 'geboekt' && r.status !== 'overgeslagen') && (
+                            <button type="button" onClick={() => hervatBatch(b)}
+                              className="text-[12px] font-semibold text-[#1B3A5C] underline underline-offset-2">hervatten</button>
+                          )}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="border-b border-gray-100 bg-gray-50">
+                          <td colSpan={11} className="px-5 py-3">
+                            <div className="grid md:grid-cols-2 gap-4">
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 mb-1.5">Regels in de batch</div>
+                                <table className="w-full text-[12px]">
+                                  <tbody>
+                                    {b.rows.map(r => (
+                                      <tr key={r.rij} className="border-b border-gray-100 last:border-b-0">
+                                        <td className="py-1 pr-2 font-mono text-gray-400 w-8">{r.rij}</td>
+                                        <td className="py-1 pr-2 font-mono">{r.vendor_ref_no}</td>
+                                        <td className="py-1 pr-2 text-right font-mono tabular-nums">{nlAmount(r.invoice_amount)}</td>
+                                        <td className="py-1 pr-2"><RowPill status={r.status} /></td>
+                                        <td className="py-1 font-mono text-[#1B3A5C]">{r.voucher || ''}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 mb-1.5">Handmatig boeken ({uitval.length})</div>
+                                {!uitval.length && <div className="text-[12px] text-gray-400">Niets — alles is geboekt.</div>}
+                                {uitval.map((u, i) => (
+                                  <div key={i} className="text-[12px] border-b border-gray-100 last:border-b-0 py-1">
+                                    <span className="font-mono text-gray-400 mr-2">{u.rij}</span>
+                                    <span className="font-mono mr-2">{u.factuur}</span>
+                                    <span className="font-mono tabular-nums mr-2">{u.xcg != null && u.xcg !== '' ? nlAmount(u.xcg) : ''}</span>
+                                    <span className="font-semibold text-amber-800 mr-2">{u.wat}</span>
+                                    <span className="text-gray-500">{u.reden}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
     </div>
   );

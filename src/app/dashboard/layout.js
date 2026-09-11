@@ -2,6 +2,12 @@
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
+   WIJZIGINGEN V27.24:
+   - Finance › Automatisering: 'Boekingscheck' toegevoegd
+     (/dashboard/finance/automatisering/boekingscheck, badge preview,
+     zelfde recht als Keukendepot: finance_prepay). Excel uploaden en
+     per regel zien of hij via Booming in Eagle geboekt is.
+   - Versie naar V27.24
    WIJZIGINGEN V27.23:
    - Finance-menu opnieuw ingedeeld en hernoemd:
        Accounts Payable      (was AP Dashboard)
@@ -118,7 +124,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
-const APP_VERSION = 'V27.23';
+const APP_VERSION = 'V27.24';
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
   const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
@@ -326,6 +332,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/finance/reports': 'finance_reports',
     '/dashboard/finance/ar': 'finance_ar',
     '/dashboard/finance/vooruitbetalingen': 'finance_prepay',
+    '/dashboard/finance/automatisering/boekingscheck': 'finance_prepay',
     // '/dashboard/finance/factuurstatus' staat bewust NIET in de map:
     // dat item is voor iedereen zichtbaar (everyone: true).
   };
@@ -373,6 +380,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/finance/ar', label: 'Accounts Receivable' },
     { href: '/dashboard/finance/automatisering', label: 'Automatisering', children: [
       { href: '/dashboard/finance/vooruitbetalingen', label: 'Keukendepot', badge: '(preview)' },
+      { href: '/dashboard/finance/automatisering/boekingscheck', label: 'Boekingscheck', badge: '(preview)' },
     ]},
     { href: '/dashboard/finance/factuurstatus', label: 'Factuur status', everyone: true },
     { href: '/dashboard/finance/reports', label: 'Maandrapportage' },

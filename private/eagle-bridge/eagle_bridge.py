@@ -394,7 +394,7 @@ def geboekte_sleutels():
             # vervolg betekent: de Bridge is tijdens Add F4 afgebroken — dan
             # is onbekend of de kopregel in Eagle staat. Zo'n regel wordt
             # nooit stilzwijgend opnieuw geboekt.
-            if rec.get("status") in ("geboekt", "geboekt_handmatig", "bezig_add"):
+            if rec.get("status") in ("geboekt", "geboekt_handmatig", "bezig_add", "geweigerd"):
                 uit[rec["dedupeKey"]] = rec
             elif rec.get("status") == "gestopt":
                 uit.pop(rec.get("dedupeKey"), None)
@@ -449,7 +449,7 @@ def dump_controls(win, pad, kop):
     return len(alles), idx
 
 
-def tekstregel_masker(afbeelding, drempel=90):
+def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62)):
     """
     Zwart-witmasker van de vraagtekst in een Eagle-melding.
 
@@ -462,7 +462,8 @@ def tekstregel_masker(afbeelding, drempel=90):
     from PIL import Image
     g = afbeelding.convert("L")
     w, h = g.size
-    band = g.crop((int(w * 0.03), int(h * 0.18), int(w * 0.97), int(h * 0.62)))
+    b0, b1 = band
+    band = g.crop((int(w * 0.03), int(h * b0), int(w * 0.97), int(h * b1)))
     m = band.point(lambda v: 255 if v < drempel else 0)
     bw, bh = m.size
     px = m.load()
@@ -478,7 +479,7 @@ def tekstregel_masker(afbeelding, drempel=90):
              .point(lambda v: 255 if v > 100 else 0))
 
 
-def tekstverschil(a, b, schuif=3):
+def tekstverschil(a, b, schuif=3, band=(0.18, 0.62)):
     """
     Aandeel afwijkende beeldpunten tussen twee tekstmaskers
     (0 = gelijk, 1 = niets gemeen).
@@ -491,7 +492,7 @@ def tekstverschil(a, b, schuif=3):
     afwijking telt.
     """
     from PIL import ImageFilter
-    ma, mb = tekstregel_masker(a), tekstregel_masker(b)
+    ma, mb = tekstregel_masker(a, band=band), tekstregel_masker(b, band=band)
     if ma is None or mb is None:
         return 1.0
     ma = ma.filter(ImageFilter.MaxFilter(3))
@@ -532,6 +533,17 @@ def referentiebeelden(regel):
 def schermuitsnede(bbox):
     from PIL import ImageGrab
     return ImageGrab.grab(bbox=bbox, all_screens=True)
+
+
+class EagleWeigering(Exception):
+    """
+    Eagle heeft de Add geweigerd met een melding onderin het invoerscherm
+    (bijv. 'Invoice number already used for this vendor'). Er is dan niets
+    geboekt; de regel wordt overgeslagen en gemeld, de batch gaat door.
+    """
+    def __init__(self, regel):
+        super().__init__(regel.get("uitleg") or regel.get("naam"))
+        self.regel = regel
 
 
 class Noodstop(Exception):
@@ -1692,6 +1704,61 @@ class Eagle:
                 log(f"kon het venster niet vastleggen: {e}", "WARN")
         return paden
 
+    # -- statusmeldingen onderin het invoerscherm -----------------------
+    #
+    # Eagle weigert een Add soms zonder venster: de reden staat dan als
+    # tekst onderin het scherm ("Invoice number already used for this
+    # vendor"). Dat label is niet uit te lezen; herkennen gaat op beeld,
+    # net als bij de dialogen: strook onderin het venster, tekstmasker,
+    # vergelijken met de referentiebeelden in dialogen/ (config:
+    # "statusmeldingen").
+
+    STROOK_FRACTIE = 0.05
+
+    def lees_statusstrook(self):
+        try:
+            r = self.win.rectangle()
+            h = max(28, int(r.height() * self.STROOK_FRACTIE))
+            return schermuitsnede((r.left, r.bottom - h, r.right, r.bottom))
+        except Exception as e:
+            log(f"statusstrook niet te lezen: {e}", "WARN")
+            return None
+
+    def _bekende_status(self, beeld):
+        regels = self.cfg.get("statusmeldingen") or []
+        if beeld is None or not regels:
+            return None, 999.0
+        from PIL import Image
+        drempel = float(self.cfg.get("beeld_drempel", 0.15))
+        beste, beste_score = None, 999.0
+        for regel in regels:
+            for naam in referentiebeelden(regel):
+                pad = SCRIPT_DIR / "dialogen" / naam
+                if not pad.exists():
+                    continue
+                try:
+                    score = tekstverschil(beeld, Image.open(pad), band=(0.0, 1.0))
+                except Exception as e:
+                    log(f"vergelijken met {pad.name} mislukt: {e}", "WARN")
+                    continue
+                if score < beste_score:
+                    beste, beste_score = regel, score
+        if beste is not None and beste_score <= drempel:
+            return beste, beste_score
+        return None, beste_score
+
+    def _leg_status_vast(self, beeld):
+        if beeld is None:
+            return None
+        map_ = SCRIPT_DIR / "dialogen"
+        map_.mkdir(parents=True, exist_ok=True)
+        pad = map_ / f"onbekend-status-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+        try:
+            beeld.save(pad)
+            return pad
+        except Exception:
+            return None
+
     def verwerk_na_add(self, max_stappen=6):
         """
         Wacht na Add F4 op een positief herkende toestand en handelt die af.
@@ -1757,6 +1824,15 @@ class Eagle:
             if beantwoord:
                 continue  # opnieuw kijken wat er nu op het scherm staat
 
+            # Geen venster en geen distributiescherm: heeft Eagle de Add
+            # geweigerd met een melding onderin het scherm?
+            strook = self.lees_statusstrook()
+            status, score = self._bekende_status(strook)
+            if status is not None:
+                log(f"  Eagle meldt onderin het scherm: {status.get('uitleg') or status['naam']} (afwijking {score:.2f})")
+                raise EagleWeigering(status)
+            strookpad = self._leg_status_vast(strook)
+
             pad = schermafdruk("onbekende-toestand")
             dump = self._dump_alles("geen bekende vraag en geen distributiescherm binnen de wachttijd")
             beelden = self._leg_onbekend_vast(gezien)
@@ -1768,6 +1844,7 @@ class Eagle:
                 "Na Add F4 verscheen een venster dat ik nog niet ken — gestopt zonder te raden.\n"
                 f"Gezien: {samenvatting}\n"
                 + (f"Beeld vastgelegd: {', '.join(p.name for p in beelden)}\n" if beelden else "")
+                + (f"Strook onderin het scherm vastgelegd: {strookpad.name} (afwijking t.o.v. bekende meldingen {score:.2f})\n" if strookpad else "")
                 + f"Volledige uitlezing: {dump}\n"
                 + (f"Schermafdruk: {pad}\n" if pad else ""),
                 na_add=True,
@@ -2298,7 +2375,7 @@ def cmd_run(args):
     al_geboekt = {} if args.negeer_ledger else geboekte_sleutels()
     if args.negeer_ledger:
         log("LET OP: --negeer-ledger actief — eerder geboekte regels worden NIET overgeslagen.", "WARN")
-    gedaan = overgeslagen = 0
+    gedaan = overgeslagen = geweigerd = 0
 
     for i, regel in enumerate(regels, 1):
         sleutel = regel["dedupeKey"]
@@ -2311,6 +2388,9 @@ def cmd_run(args):
                 log(f"  overgeslagen: bij een eerdere poging ({eerder.get('tijd')}) is Booming tijdens Add F4 "
                     "afgebroken — CONTROLEER IN EAGLE of deze regel er staat (Viewer F9, op factuurnummer).", "WARN")
                 reden = f"Onzeker: eerdere poging op {eerder.get('tijd')} afgebroken tijdens Add F4 — controleer in Eagle."
+            elif eerder.get("status") == "geweigerd":
+                log(f"  overgeslagen: op {eerder.get('tijd')} door Eagle geweigerd ({eerder.get('reden')}) — handmatig beoordelen.", "WARN")
+                reden = f"Eerder ({eerder.get('tijd')}) door Eagle geweigerd: {eerder.get('reden')}"
             elif eerder.get("status") == "geboekt_handmatig":
                 log(f"  overgeslagen: op {eerder.get('tijd')} in Eagle blijven staan om af te maken — controleer in Eagle.", "WARN")
                 reden = f"Eerder ({eerder.get('tijd')}) gestopt ná Add F4 — in Eagle afmaken of verwijderen."
@@ -2331,6 +2411,25 @@ def cmd_run(args):
 
         try:
             voucher = voer_regel_in(eagle, regel, args.dry_run, batch.get("batchId"))
+        except EagleWeigering as e:
+            regel_cfg = e.regel
+            reden = regel_cfg.get("uitleg") or regel_cfg.get("naam")
+            log(f"Eagle heeft deze regel geweigerd: {reden}. Niet geboekt; verder met de volgende regel.", "WARN")
+            schrijf_ledger({
+                "tijd": dt.datetime.now().isoformat(timespec="seconds"),
+                "batchId": batch.get("batchId"), "rij": regel["rij"],
+                "dedupeKey": sleutel, "status": "geweigerd", "reden": reden,
+            })
+            geweigerd += 1
+            if RAPPORTEUR:
+                RAPPORTEUR.regel(regel["rij"], status="geweigerd", stap="geweigerd door Eagle", reden=reden)
+                RAPPORTEUR.einde_regel()
+                RAPPORTEUR.batch(fout=geweigerd)
+            try:
+                eagle.maak_leeg("geweigerde regel opruimen")
+            except Exception as ex:
+                log(f"Clear F12 na weigering mislukte: {ex}", "WARN")
+            continue
         except Noodstop as e:
             schrijf_ledger({
                 "tijd": dt.datetime.now().isoformat(timespec="seconds"),
@@ -2403,13 +2502,15 @@ def cmd_run(args):
     if args.dry_run:
         log(f"Proef klaar. {gedaan} regel(s) doorlopen — er is niets in Eagle ingevoerd.")
     else:
-        log(f"Klaar. {gedaan} geboekt, {overgeslagen} overgeslagen (al eerder gedaan).")
+        log(f"Klaar. {gedaan} geboekt, {overgeslagen} overgeslagen (al eerder gedaan)"
+            + (f", {geweigerd} door Eagle geweigerd (zie dashboard, handmatig beoordelen)" if geweigerd else "") + ".")
     if batch.get("handmatig"):
         log(f"Vergeet niet: {len(batch['handmatig'])} regel(s) moeten handmatig geboekt worden.")
     log(f"Logboek: {log.path}")
     if RAPPORTEUR:
-        RAPPORTEUR.batch(status="afgerond", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=0,
-                         laatste_bericht=f"Klaar: {gedaan} geboekt, {overgeslagen} overgeslagen.")
+        RAPPORTEUR.batch(status="afgerond", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=geweigerd,
+                         laatste_bericht=f"Klaar: {gedaan} geboekt, {overgeslagen} overgeslagen"
+                                         + (f", {geweigerd} door Eagle geweigerd." if geweigerd else "."))
         RAPPORTEUR.sluit()
         RAPPORTEUR = None
     return 0

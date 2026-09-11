@@ -23,7 +23,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const BATCH_STATUS = new Set(['klaar', 'bezig', 'afgerond', 'gestopt']);
-const ROW_STATUS = new Set(['wachten', 'bezig', 'geboekt', 'overgeslagen', 'gestopt', 'geboekt_handmatig']);
+const ROW_STATUS = new Set(['wachten', 'bezig', 'geboekt', 'overgeslagen', 'gestopt', 'geboekt_handmatig', 'geweigerd']);
 
 function admin() {
   return createClient(
