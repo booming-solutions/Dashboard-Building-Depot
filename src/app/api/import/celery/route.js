@@ -1,17 +1,24 @@
 /* ============================================================
    BESTAND: celery-route.js
    KOPIEER NAAR: src/app/api/import/celery/route.js
-   VERSIE: v1
+   VERSIE: v2
 
-   DOEL: Parse C4 Loonjournaalpost OF C16 Werknemerslijst CSV
-   uit Celery en sla op in respectievelijk:
+   DOEL: Parse C4 Loonjournaalpost OF C16 Werknemerslijst uit Celery
+   en sla op in respectievelijk:
    - payroll_journal (C4)
    - employee_snapshots (C16)
    
-   Auto-detect: type wordt bepaald op basis van eerste header-rij.
+   Auto-detect:
+   - Bestandstype (C4/C16) via eerste header-rij
+   - Bestandsformaat (CSV/XLSX) via extension
+   
+   WIJZIGINGEN V2:
+   - XLSX support toegevoegd (Celery XLSX-export met extra kolommen)
+   - Vereist: `xlsx` npm package: npm install xlsx
    ============================================================ */
 
 import { createClient } from '@supabase/supabase-js';
+import * as XLSX from 'xlsx';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -338,16 +345,35 @@ export async function POST(request) {
       return new Response(JSON.stringify({ error: 'Geen bestand ontvangen' }), { status: 400 });
     }
 
-    const text = await file.text();
-    const rows = parseCSV(text);
+    // Auto-detect XLSX vs CSV op basis van bestandsnaam
+    const fname = (file.name || '').toLowerCase();
+    const isXlsx = fname.endsWith('.xlsx') || fname.endsWith('.xls');
+
+    let rows;
+    if (isXlsx) {
+      // XLSX parsing via SheetJS
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', cellDates: false });
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      // Sheet naar array-of-arrays, alles als string voor consistentie met CSV-pad
+      rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+      // Zorg dat alle cellen strings zijn
+      rows = rows.map(r => r.map(c => c == null ? '' : String(c)));
+    } else {
+      // CSV parsing (bestaande logica)
+      const text = await file.text();
+      rows = parseCSV(text);
+    }
+
     if (rows.length < 3) {
-      return new Response(JSON.stringify({ error: 'CSV is leeg of onvolledig' }), { status: 400 });
+      return new Response(JSON.stringify({ error: `${isXlsx ? 'XLSX' : 'CSV'} is leeg of onvolledig` }), { status: 400 });
     }
 
     const type = detectType(rows);
     if (!type) {
       return new Response(JSON.stringify({
-        error: 'Bestandstype niet herkend. Verwacht C4 Loonjournaalpost of C16 Werknemerslijst CSV uit Celery.',
+        error: 'Bestandstype niet herkend. Verwacht C4 Loonjournaalpost of C16 Werknemerslijst (CSV of XLSX) uit Celery.',
         firstHeader: rows[1]?.slice(0, 8),
       }), { status: 400 });
     }

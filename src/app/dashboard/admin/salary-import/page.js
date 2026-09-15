@@ -123,7 +123,7 @@ export default function SalaryImportPage() {
         </div>
         <input
           type="file"
-          accept=".csv"
+          accept=".csv,.xlsx,.xls"
           onChange={e => e.target.files[0] && handleUpload(e.target.files[0], 'c4')}
           disabled={uploadingC4}
           style={{fontSize:13, padding:'8px 0'}}
@@ -160,7 +160,7 @@ export default function SalaryImportPage() {
         </div>
         <input
           type="file"
-          accept=".csv"
+          accept=".csv,.xlsx,.xls"
           onChange={e => e.target.files[0] && handleUpload(e.target.files[0], 'c16')}
           disabled={uploadingC16}
           style={{fontSize:13, padding:'8px 0'}}
