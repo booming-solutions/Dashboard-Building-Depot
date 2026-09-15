@@ -1,7 +1,7 @@
 /* ============================================================
    BESTAND: celery-route.js
    KOPIEER NAAR: src/app/api/import/celery/route.js
-   VERSIE: v2
+   VERSIE: v3
 
    DOEL: Parse C4 Loonjournaalpost OF C16 Werknemerslijst uit Celery
    en sla op in respectievelijk:
@@ -11,6 +11,12 @@
    Auto-detect:
    - Bestandstype (C4/C16) via eerste header-rij
    - Bestandsformaat (CSV/XLSX) via extension
+   
+   WIJZIGINGEN V3:
+   - Filter oude uit-dienst records (>24 mnd voor snapshot) om
+     Celery's hergebruik van personeelsnummers te omzeilen
+   - Dedup binnen batch: bij duplicate personeelsnummers houdt
+     de meest recente (hoogste in_dienst datum) aan
    
    WIJZIGINGEN V2:
    - XLSX support toegevoegd (Celery XLSX-export met extra kolommen)
@@ -298,6 +304,22 @@ function parseC16(rows, filename, snapshotDate) {
     const dtPct = num(r[idx['Deeltijdpercentage']]) || 100;
     const fte = dtPct / 100;
 
+    const inDienst = parseDate(r[idx['Datum in dienst']]);
+    const uitDienst = parseDate(r[idx['Uit dienst']]);
+
+    // Skip mensen die > 24 maanden voor snapshot al uit dienst waren.
+    // Celery hergebruikt personeelsnummers, dus oude historische records
+    // conflicteren met huidige medewerkers op dezelfde nummer.
+    if (uitDienst) {
+      const cutoff = new Date(snapshotDate);
+      cutoff.setMonth(cutoff.getMonth() - 24);
+      const uitDate = new Date(uitDienst);
+      if (uitDate < cutoff) { skipped++; continue; }
+    }
+
+    // Ook skip mensen die nog niet in dienst waren op snapshot_date
+    if (inDienst && new Date(inDienst) > new Date(snapshotDate)) { skipped++; continue; }
+
     records.push({
       snapshot_date: snapshotDate,
       personeelsnummer: pnr,
@@ -310,8 +332,8 @@ function parseC16(rows, filename, snapshotDate) {
       functie: r[idx['Functie']]?.trim() || null,
       afdeling_raw: afdeling,
       bu,
-      in_dienst: parseDate(r[idx['Datum in dienst']]),
-      uit_dienst: parseDate(r[idx['Uit dienst']]),
+      in_dienst: inDienst,
+      uit_dienst: uitDienst,
       status: r[idx['Werknemeraccount']]?.trim() || null,
       betaalschema: r[idx['Betaalschema']]?.trim() || null,
       salaris: idx['Salaris'] >= 0 ? num(r[idx['Salaris']]) : null,
@@ -322,7 +344,23 @@ function parseC16(rows, filename, snapshotDate) {
       source_file: filename || `c16_${snapshotDate}.csv`,
     });
   }
-  return { type: 'c16', records, skipped, snapshot_date: snapshotDate };
+  return { type: 'c16', records: dedupRecords(records), skipped, snapshot_date: snapshotDate };
+}
+
+// Als Celery hetzelfde personeelsnummer voor 2 personen hergebruikt en beide
+// vallen binnen het 24-mnd venster, houd de meest recente aan (hoogste in_dienst).
+function dedupRecords(records) {
+  const byPnr = new Map();
+  for (const rec of records) {
+    const key = rec.personeelsnummer;
+    const existing = byPnr.get(key);
+    if (!existing) { byPnr.set(key, rec); continue; }
+    // Vergelijk in_dienst datums; nieuwste wint
+    const dNew = rec.in_dienst || '1900-01-01';
+    const dOld = existing.in_dienst || '1900-01-01';
+    if (dNew > dOld) byPnr.set(key, rec);
+  }
+  return Array.from(byPnr.values());
 }
 
 // ============================================================
