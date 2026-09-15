@@ -1,6 +1,18 @@
 /* ============================================================
-   BESTAND: route_email_v32.js
+   BESTAND: route_email_v33.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
+
+   WIJZIGING v33:
+   - Skip-list voor filenames toegevoegd. Files met "red cube" of
+     "redcube" in de naam worden geskipt (niet verwerkt).
+     Reden: de "AI - Red Cube update QOH en prices" file werd door
+     de pipeline als negative_inventory gedetecteerd en overschreef
+     via TRUNCATE+INSERT de correcte Negative Inventory data die
+     dagelijks om 02:58 UTC binnenkomt (2417 rijen). Vervolgens bleef
+     alleen dept 26 (115 rijen) over in de tabel.
+     Red Cube data wordt niet gebruikt in het dashboard.
+   - Skipped files worden nog wel gelogd in upload_log met
+     status='skipped' zodat je kunt zien dat ze zijn aangekomen.
 
    WIJZIGING v31:
    - Nieuw file type 'rc_intraday' voor het Compass 30-min rapport
@@ -1676,6 +1688,34 @@ export async function POST(request) {
 
     if ((!data && !storagePath) || !filename) {
       return Response.json({ error: 'Missing data/storage_path or filename' }, { status: 400 });
+    }
+
+    // v33: Skip-list voor filenames die we NIET willen verwerken.
+    // Red Cube QOH file bevat alleen dept 26 en overschrijft anders TRUNCATE+INSERT
+    // de correcte Negative Inventory data (die dagelijks om 02:58 UTC binnenkomt
+    // met alle 70 depts, ~2400 rijen). Sinds Compass Red Cube QOH file dagelijks
+    // levert bleef alleen dept 26 (~115 rijen) over in negative_inventory.
+    // Red Cube data wordt niet gebruikt in het dashboard.
+    var lowerFilename = String(filename).toLowerCase();
+    var SKIP_PATTERNS = [
+      'red cube',
+      'redcube',
+    ];
+    for (var sp = 0; sp < SKIP_PATTERNS.length; sp++) {
+      if (lowerFilename.indexOf(SKIP_PATTERNS[sp]) !== -1) {
+        console.log('SKIP (v33 skip-list): ' + filename + ' matches pattern "' + SKIP_PATTERNS[sp] + '"');
+        // Log naar upload_log met status 'skipped' zodat we kunnen zien dat de mail is aangekomen
+        try {
+          await getSupabase().from('upload_log').insert({
+            filename: '[email] ' + filename,
+            rows_imported: 0,
+            status: 'skipped',
+          });
+        } catch (logErr) {
+          console.error('Failed to log skip:', logErr.message);
+        }
+        return Response.json({ success: true, action: 'skipped', reason: 'matches skip pattern: ' + SKIP_PATTERNS[sp] });
+      }
     }
 
     console.log('Processing email attachment: ' + filename + ' from ' + sender + (storagePath ? ' (via storage: ' + storagePath + ')' : ' (inline)'));
