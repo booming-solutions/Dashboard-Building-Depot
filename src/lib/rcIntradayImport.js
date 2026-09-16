@@ -2,20 +2,16 @@
    BESTAND: rcIntradayImport.js
    KOPIEER NAAR: src/lib/rcIntradayImport.js
 
-   v2: filename patroon tolerant voor onderscheid tussen underscore/spatie
-   Compass filename kan zijn:
-     - RC_sales_update_08-27-26.csv (originele naam)
-     - RC sales update_08-27-26.csv (na email transport)
+   v3: Return object aligned met route.js verwachting (table + rows_imported).
+        Verbose logging zodat we bij failure zien wat er misgaat.
+        Bij Supabase error wordt de error zichtbaar in Vercel logs.
    ============================================================ */
 
-// Filename patroon: matcht zowel onderstrepen als spaties
 export function isRcIntradayFile(columns, filename) {
   var fn = String(filename || '').toLowerCase();
-  // Normaliseer spaties naar onderstrepen voor de check
   var normalized = fn.replace(/\s+/g, '_');
   if (/^rc_sales_update_/i.test(normalized)) return true;
 
-  // Fallback op kolom-signatuur
   var cols = (columns || []).map(function(c) { return String(c || '').toLowerCase(); });
   var hasShort = cols.some(function(c) { return c.includes('store short name'); });
   var hasMargin = cols.some(function(c) { return c.includes('gross margin'); });
@@ -33,13 +29,30 @@ function parseAmount(v) {
 
 function parseDate(v) {
   if (!v) return null;
+  // SheetJS levert Date objecten (door cellDates: true)
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return null;
+    return v.getUTCFullYear() + '-' +
+           String(v.getUTCMonth() + 1).padStart(2, '0') + '-' +
+           String(v.getUTCDate()).padStart(2, '0');
+  }
+  if (typeof v === 'number') {
+    var d = new Date((v - 25569) * 86400000);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  }
   var s = String(v).trim();
   var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (!m) return null;
-  var mo = m[1].padStart(2, '0');
-  var d = m[2].padStart(2, '0');
-  var y = m[3].length === 2 ? '20' + m[3] : m[3];
-  return y + '-' + mo + '-' + d;
+  if (m) {
+    var mo = m[1].padStart(2, '0');
+    var dd = m[2].padStart(2, '0');
+    var y = m[3].length === 2 ? '20' + m[3] : m[3];
+    return y + '-' + mo + '-' + dd;
+  }
+  // ISO-achtige fallback
+  var d2 = new Date(s);
+  if (!isNaN(d2.getTime())) return d2.toISOString().slice(0, 10);
+  return null;
 }
 
 function normalizeDeptCode(v) {
@@ -51,9 +64,16 @@ function normalizeDeptCode(v) {
 }
 
 export async function processRcIntraday(supabase, rows, filename) {
+  console.log('[RC intraday] Start processing ' + filename + ' (' + (rows || []).length + ' rows)');
+
   if (!Array.isArray(rows) || !rows.length) {
-    return { inserted: 0, skipped: 0, errors: ['no rows'] };
+    console.log('[RC intraday] Empty rows, aborting');
+    return { table: 'compass_ticket_intraday', rows_imported: 0 };
   }
+
+  // Log de eerste rij zodat we altijd kunnen zien wat er binnenkwam
+  console.log('[RC intraday] Sample row keys: ' + Object.keys(rows[0]).join(', '));
+  console.log('[RC intraday] Sample row values: ' + JSON.stringify(rows[0]));
 
   var toUpsert = [];
   var skipped = 0;
@@ -72,6 +92,7 @@ export async function processRcIntraday(supabase, rows, filename) {
     var gross_margin = parseAmount(lookup['gross margin']);
 
     if (!sale_date || !store_number || !dept_code) {
+      console.log('[RC intraday] Skipping row ' + i + ': sale_date=' + sale_date + ', store=' + store_number + ', dept=' + dept_code);
       skipped++;
       continue;
     }
@@ -88,20 +109,30 @@ export async function processRcIntraday(supabase, rows, filename) {
     });
   }
 
+  console.log('[RC intraday] Prepared ' + toUpsert.length + ' rows to upsert (skipped ' + skipped + ')');
+
   if (!toUpsert.length) {
-    return { inserted: 0, skipped: skipped, errors: ['no valid rows to upsert'] };
+    console.log('[RC intraday] No valid rows to upsert');
+    return { table: 'compass_ticket_intraday', rows_imported: 0 };
   }
+
+  console.log('[RC intraday] Upserting: ' + JSON.stringify(toUpsert));
 
   var res = await supabase
     .from('compass_ticket_intraday')
     .upsert(toUpsert, { onConflict: 'sale_date,store_number,dept_code' });
 
   if (res.error) {
-    return { inserted: 0, skipped: skipped, errors: [res.error.message] };
+    console.error('[RC intraday] UPSERT ERROR: ' + res.error.message);
+    console.error('[RC intraday] UPSERT ERROR details: ' + JSON.stringify(res.error));
+    throw new Error('compass_ticket_intraday upsert failed: ' + res.error.message);
   }
 
+  console.log('[RC intraday] Upsert succeeded, ' + toUpsert.length + ' rows written');
+
   return {
-    inserted: toUpsert.length,
+    table: 'compass_ticket_intraday',
+    rows_imported: toUpsert.length,
     skipped: skipped,
     filename: filename,
     date: toUpsert[0].sale_date,
