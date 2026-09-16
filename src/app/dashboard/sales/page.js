@@ -111,7 +111,7 @@ export default function SalesDashboard(){
   const[dateTo,setDateTo]=useState('');
   const[rangeRows,setRangeRows]=useState([]);  // sales_data_enriched voor CY + LY range
   const[rangeLoading,setRangeLoading]=useState(false);
-  const monthlyRef=useRef(null);const gmRef=useRef(null);const mgrRef=useRef(null);const deptRef=useRef(null);const chartsRef=useRef({});
+  const monthlyRef=useRef(null);const gmRef=useRef(null);const mgrRef=useRef(null);const deptRef=useRef(null);const waterfallRef=useRef(null);const chartsRef=useRef({});
   const supabase=createClient();
 
   useEffect(()=>{loadData();checkAuth();},[]);
@@ -415,6 +415,116 @@ export default function SalesDashboard(){
 
   function handleMonthClick(m,e){if(m==='all'||m==='ytd'){setMonths([m]);return}if(e&&e.ctrlKey){setMonths(prev=>{const c=prev.filter(x=>x!=='all'&&x!=='ytd');if(c.includes(m))return c.filter(x=>x!==m).length?c.filter(x=>x!==m):['all'];return[...c,m]})}else setMonths([m])}
 
+  // ── Waterfall: budget vs actual per BUM of per dept binnen BUM ──
+  // Reageert op alle dashboard filters. Auto-schakel:
+  //   Afdeling = 'all' → 5 BUM staven ("Totaal")
+  //   Afdeling = specifieke BUM → dept breakdown (top-3 winners + Overig + top-3 losers)
+  //   Departement gekozen → verbergen (1 dept heeft geen zinvolle breakdown)
+  // Dept 26 + 27 samengevoegd als "27 KEUKEN DEPOT" (Optie A, alleen in-view).
+  const waterfallData=useMemo(()=>{
+    if(dept!=='all')return null; // Specifieke dept → geen waterfall
+    // Merge 26 → 27 en hernoem naar Keuken Depot
+    function mergeKD(code,name){
+      if(code==='26'||code==='27')return{code:'27',name:'27 KEUKEN DEPOT'};
+      return{code,name};
+    }
+    // Aggregeer sales per (dept, bum) — respecteert alle filters via `filtered`
+    const salesAgg={}; // key = bum|dept_code → {dept_name, sales}
+    filtered.forEach(r=>{
+      const bumCode=r.effective_bum_group;
+      if(!bumCode||!bumLabel[bumCode])return; // skip OVERIG e.d. voor waterfall
+      const m=mergeKD(r.effective_dept_code||r.dept_code,r.effective_dept_name||r.dept_name);
+      const k=bumCode+'|'+m.code;
+      if(!salesAgg[k])salesAgg[k]={bum:bumCode,dept_code:m.code,dept_name:m.name,sales:0};
+      salesAgg[k].sales+=parseFloat(r.net_sales)||0;
+    });
+    // Correcties tellen ook mee (zoals in tableData/KPIs)
+    const personToGroupWF={PASCAL:'BUILDING_MATERIALS',HENK:'SANITAIR_KEUKENS',JOHN:'HARDWARE',GIJS:'LIVING',DANIEL:'APPLIANCES_HOUSEWARE',OTHER:'OVERIG'};
+    corrFiltered.forEach(c=>{
+      let bumCode=c.bum;
+      if(personToGroupWF[bumCode])bumCode=personToGroupWF[bumCode];
+      if(!bumLabel[bumCode])return;
+      const m=mergeKD(c.dept_code,c.dept_name);
+      const k=bumCode+'|'+m.code;
+      if(!salesAgg[k])salesAgg[k]={bum:bumCode,dept_code:m.code,dept_name:m.name,sales:0};
+      salesAgg[k].sales+=parseFloat(c.sales_correction)||0;
+    });
+    // Budget aggregatie per (dept). BUM lookup via deptBumMap.
+    // Prorate + toekomstige maanden aftrekken conform proAdj logica.
+    const budgetAgg={}; // key = dept_code → {bum, budget}
+    budgetFiltered.filter(b=>b.budget_type===salesType).forEach(b=>{
+      const m=mergeKD(b.dept_code,'');
+      const bumCode=deptBumMap[b.dept_code];
+      if(!bumCode||!bumLabel[bumCode])return;
+      const mo=parseInt(b.month.split('-')[1]);
+      let amt=parseFloat(b.amount)||0;
+      if(needsProrate(mo))amt*=dayFrac.frac;
+      if(!budgetAgg[m.code])budgetAgg[m.code]={bum:bumCode,dept_code:m.code,budget:0};
+      budgetAgg[m.code].budget+=amt;
+    });
+    // YTD: toekomstige maanden na dayFrac.month eraf voor pace-vergelijking
+    if(dayFrac.month&&isYTD){
+      budgetData.filter(b=>{
+        if(b.budget_type!==salesType)return false;
+        if(store!=='all'&&b.store_number!==store)return false;
+        if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
+        const[by,bm]=b.month.split('-').map(Number);
+        return by===currentYear&&bm>dayFrac.month;
+      }).forEach(b=>{
+        const m=mergeKD(b.dept_code,'');
+        if(budgetAgg[m.code])budgetAgg[m.code].budget-=parseFloat(b.amount)||0;
+      });
+    }
+    // Verzamel per (bum, dept): sales + budget
+    const merged={}; // bum|dept → {bum, dept_code, dept_name, sales, budget}
+    Object.values(salesAgg).forEach(s=>{
+      const k=s.bum+'|'+s.dept_code;
+      merged[k]={bum:s.bum,dept_code:s.dept_code,dept_name:s.dept_name,sales:s.sales,budget:0};
+    });
+    Object.values(budgetAgg).forEach(b=>{
+      const k=b.bum+'|'+b.dept_code;
+      if(!merged[k])merged[k]={bum:b.bum,dept_code:b.dept_code,dept_name:'',sales:0,budget:0};
+      merged[k].budget=b.budget;
+    });
+    const rows=Object.values(merged).map(r=>({...r,verschil:r.sales-r.budget}));
+    // Currency conversion
+    rows.forEach(r=>{r.sales=conv(r.sales);r.budget=conv(r.budget);r.verschil=conv(r.verschil)});
+
+    // Bepaal weergave: BUM-niveau of dept-niveau binnen 1 BUM
+    if(bum==='all'){
+      // Aggregeer naar BUM
+      const bAgg={};
+      rows.forEach(r=>{
+        if(!bAgg[r.bum])bAgg[r.bum]={label:bumLabel[r.bum]||r.bum,sales:0,budget:0,verschil:0};
+        bAgg[r.bum].sales+=r.sales;bAgg[r.bum].budget+=r.budget;bAgg[r.bum].verschil+=r.verschil;
+      });
+      const items=Object.values(bAgg).sort((a,b)=>b.verschil-a.verschil);
+      const totalSales=items.reduce((s,i)=>s+i.sales,0);
+      const totalBudget=items.reduce((s,i)=>s+i.budget,0);
+      return{items,totalSales,totalBudget,mode:'bum'};
+    }else{
+      // Dept-niveau binnen deze BUM: top-3 positief + Overig + top-3 negatief
+      const inBum=rows.filter(r=>r.bum===bum);
+      const totalSales=inBum.reduce((s,r)=>s+r.sales,0);
+      const totalBudget=inBum.reduce((s,r)=>s+r.budget,0);
+      const pos=inBum.filter(r=>r.verschil>0).sort((a,b)=>b.verschil-a.verschil).slice(0,3);
+      const neg=inBum.filter(r=>r.verschil<0).sort((a,b)=>a.verschil-b.verschil).slice(0,3);
+      const used=new Set([...pos,...neg].map(r=>r.dept_code));
+      const otherSum=inBum.filter(r=>!used.has(r.dept_code)).reduce((s,r)=>s+r.verschil,0);
+      const items=[];
+      pos.forEach(r=>items.push({label:r.dept_name,verschil:r.verschil}));
+      if(Math.abs(otherSum)>100)items.push({label:'Overig',verschil:otherSum,isOther:true});
+      neg.forEach(r=>items.push({label:r.dept_name,verschil:r.verschil}));
+      // Sort positief → Overig → negatief zoals voorbeeld-html
+      items.sort((a,b)=>{
+        if(a.isOther)return 0;
+        if(b.isOther)return 0;
+        return b.verschil-a.verschil;
+      });
+      return{items,totalSales,totalBudget,mode:'dept'};
+    }
+  },[filtered,corrFiltered,budgetFiltered,budgetData,dept,bum,store,currentYear,months,maxDataMonth,dayFrac,deptBumMap,bumLabel,salesType,conv,isYTD]);
+
   const renderCharts=useCallback(()=>{
     Object.values(chartsRef.current).forEach(c=>c?.destroy());chartsRef.current={};
     const cM={},lM={},bM={};
@@ -435,7 +545,38 @@ export default function SalesDashboard(){
     if(mgrRef.current&&bumS.length){const md2=mgrMetric==='sales'?bumS.map(b=>tP?b[1].s/tP*100:0):mgrMetric==='margin'?bumS.map(b=>conv(b[1].g)):bumS.map(b=>b[1].s?b[1].g/b[1].s*100:0);chartsRef.current.mgr=new Chart(mgrRef.current,{type:'bar',data:{labels:bumS.map(b=>bumLabel[b[0]]||b[0]),datasets:[{data:md2,backgroundColor:'rgba(232,78,27,0.3)',borderColor:'#E84E1B',borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>mgrMetric==='gm'||mgrMetric==='sales'?fmtP(c.raw):fmt(c.raw)+' '+curr}}},scales:{x:{ticks:{callback:v=>mgrMetric==='gm'||mgrMetric==='sales'?v+'%':fmtM(v)},grid:{color:'#f0ebe5'}},y:{grid:{display:false}}}}})}
     const dA={};filtered.forEach(r=>{const n=r.effective_dept_name||r.dept_name;if(!dA[n])dA[n]={s:0,g:0};dA[n].s+=parseFloat(r.net_sales);dA[n].g+=parseFloat(r.gross_margin)});const dSrt=Object.entries(dA).sort((a,b)=>b[1].s-a[1].s).slice(0,15);
     if(deptRef.current&&dSrt.length){const dd2=deptMetric==='sales'?dSrt.map(d=>conv(d[1].s)):deptMetric==='margin'?dSrt.map(d=>conv(d[1].g)):dSrt.map(d=>d[1].s?d[1].g/d[1].s*100:0);chartsRef.current.dept=new Chart(deptRef.current,{type:'bar',data:{labels:dSrt.map(d=>{const n=d[0].replace(/^\d+\s/,'');return n.length>25?n.substring(0,22)+'...':n}),datasets:[{data:dd2,backgroundColor:'rgba(232,78,27,0.3)',borderColor:'#E84E1B',borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>deptMetric==='gm'?fmtP(c.raw):fmt(c.raw)+' '+curr}}},scales:{x:{ticks:{callback:v=>deptMetric==='gm'?v+'%':fmtM(v)},grid:{color:'#f0ebe5'}},y:{grid:{display:false}}}}})}
-  },[filtered,priorFiltered,budgetFiltered,corrFiltered,currentYear,priorYear,budgetLabel,mgrMetric,deptMetric,selectedMonths,salesType,marginType,dayFrac,conv,curr,bumLabel]);
+
+    // ── Waterfall render ── (respecteert dashboard filters, auto-schakel BUM/dept)
+    if(waterfallRef.current&&waterfallData&&waterfallData.items.length){
+      const items=waterfallData.items;
+      const labels=[];const floating=[];const colors=[];
+      let cursor=0;
+      items.forEach(it=>{
+        labels.push(it.label);
+        const next=cursor+it.verschil;
+        floating.push([Math.min(cursor,next),Math.max(cursor,next)]);
+        if(it.isOther)colors.push('#a08a74');
+        else colors.push(it.verschil>=0?'#16a34a':'#dc2626');
+        cursor=next;
+      });
+      labels.push('Netto');
+      floating.push([Math.min(0,cursor),Math.max(0,cursor)]);
+      colors.push('#E84E1B');
+      chartsRef.current.waterfall=new Chart(waterfallRef.current,{
+        type:'bar',
+        data:{labels:labels,datasets:[{data:floating,backgroundColor:colors,borderColor:colors,borderWidth:1,borderRadius:2}]},
+        options:{
+          responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>{
+            const idx=c.dataIndex;
+            if(idx===labels.length-1){const sign=cursor>=0?'+':'';return 'Netto verschil: '+sign+fmt(cursor)+' '+curr;}
+            const v=items[idx].verschil;const sign=v>=0?'+':'';return sign+fmt(v)+' '+curr;
+          }}}},
+          scales:{y:{ticks:{callback:v=>fmtM(v)},grid:{color:'#f0ebe5'}},x:{ticks:{maxRotation:45,minRotation:45,font:{size:10},autoSkip:false},grid:{display:false}}}
+        }
+      });
+    }
+  },[filtered,priorFiltered,budgetFiltered,corrFiltered,currentYear,priorYear,budgetLabel,mgrMetric,deptMetric,selectedMonths,salesType,marginType,dayFrac,conv,curr,bumLabel,waterfallData]);
 
   useEffect(()=>{if(data.length&&tab==='actuals')renderCharts()},[renderCharts,data.length,tab]);
 
@@ -594,6 +735,32 @@ export default function SalesDashboard(){
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm"><h3 className="text-[15px] font-bold mb-4">Maandelijkse Omzet</h3><div style={{height:'280px'}}><canvas ref={monthlyRef}/></div></div>
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm"><h3 className="text-[15px] font-bold mb-4">Bruto Marge %</h3><div style={{height:'280px'}}><canvas ref={gmRef}/></div></div>
       </div>
+
+      {waterfallData&&waterfallData.items.length>0&&(function(){
+        const netto=waterfallData.items.reduce((s,i)=>s+i.verschil,0);
+        return(
+          <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm mb-5">
+            <div className="flex justify-between items-end mb-3 gap-6 flex-wrap">
+              <div className="flex items-baseline gap-6">
+                <div>
+                  <p className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px]">Waterfall — netto verschil</p>
+                  <p className={`text-[22px] font-mono font-bold ${netto>=0?'text-green-600':'text-red-600'}`}>{netto>=0?'+':''}{fmtMC(netto)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px]">Actual</p>
+                  <p className="text-[14px] font-mono font-semibold">{fmtMC(waterfallData.totalSales)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px]">Budget</p>
+                  <p className="text-[14px] font-mono font-semibold">{fmtMC(waterfallData.totalBudget)}</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-[#a08a74]">{waterfallData.mode==='bum'?'Per afdeling':`Departementen binnen ${bumLabel[bum]||bum}`}</p>
+            </div>
+            <div style={{height:'320px'}}><canvas ref={waterfallRef}/></div>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm"><div className="flex justify-between items-center mb-4"><h3 className="text-[15px] font-bold">Manager Vergelijking</h3><div className="flex gap-1"><Pill label="Omzet" active={mgrMetric==='sales'} onClick={()=>setMgrMetric('sales')}/><Pill label="BM €" active={mgrMetric==='margin'} onClick={()=>setMgrMetric('margin')}/><Pill label="BM %" active={mgrMetric==='gm'} onClick={()=>setMgrMetric('gm')}/></div></div><div style={{height:'260px'}}><canvas ref={mgrRef}/></div></div>
