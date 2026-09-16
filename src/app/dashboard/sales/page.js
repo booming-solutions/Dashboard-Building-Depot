@@ -354,16 +354,15 @@ export default function SalesDashboard(){
   // Budget voor pill: volgt huidige maand-selectie (i.p.v. altijd jaartotaal)
   // YTD = jan t/m max-data-maand; Alle = jaartotaal; specifieke maand(en) = som van die maanden.
   const targetForSelection=useMemo(()=>{
-    const targetType=budgetMode==='target'?'target_sales':'cgf_sales';
     return budgetData.filter(b=>{
       if(store!=='all'&&b.store_number!==store)return false;
       if(dept!=='all'&&b.dept_code!==dept)return false;
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       const[by,bm]=b.month.split('-').map(Number);
       if(by!==currentYear||!matchMonth(bm))return false;
-      return b.budget_type===targetType;
+      return b.budget_type==='target_sales';
     }).reduce((s,b)=>s+parseFloat(b.amount||0),0);
-  },[budgetData,store,dept,bum,deptBumMap,currentYear,budgetMode,months,maxDataMonth]);
+  },[budgetData,store,dept,bum,deptBumMap,currentYear,months,maxDataMonth]);
 
   const cgfForSelection=useMemo(()=>{
     return budgetData.filter(b=>{
