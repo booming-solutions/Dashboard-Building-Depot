@@ -279,7 +279,8 @@
     {
       "naam": "invoice-number-already-used",
       "bestanden": [
-        "status-invoice-number-already-used.png"
+        "status-invoice-number-already-used.png",
+        "status-invoice-number-already-used-2.png"
       ],
       "uitleg": "Eagle: 'Invoice number already used for this vendor' — dit factuurnummer staat bij leverancier 4741 al in Eagle (eerder handmatig of buiten het dashboard om geboekt). Niet geboekt; handmatig beoordelen.",
       "actie": "overslaan"

@@ -57,7 +57,7 @@ function RowPill({ status }) {
     bezig:             ['Bezig', 'bg-blue-100 text-blue-800 animate-pulse'],
     geboekt:           ['Geboekt', 'bg-emerald-100 text-emerald-800'],
     overgeslagen:      ['Al geboekt', 'bg-gray-200 text-gray-600'],
-    gestopt:           ['Gestopt', 'bg-red-100 text-red-800'],
+    gestopt:           ['Fout — niet geboekt', 'bg-red-100 text-red-800'],
     geboekt_handmatig: ['Afmaken in Eagle', 'bg-amber-100 text-amber-800'],
     geweigerd:         ['Geweigerd door Eagle', 'bg-amber-100 text-amber-800'],
   };
@@ -1021,7 +1021,7 @@ export default function VooruitbetalingenPage() {
                       {status === 'klaar' && !launched && 'Booming is nog niet gestart.'}
                       {status === 'klaar' && launched && 'Wacht tot je in het Booming-venster op Enter drukt…'}
                       {status === 'bezig' && (b?.laatste_bericht || 'Bezig…')}
-                      {status === 'afgerond' && <span className="text-emerald-700 font-medium">{b?.geboekt ?? geboekt} geboekt{(b?.overgeslagen ?? overgeslagen) ? `, ${b?.overgeslagen ?? overgeslagen} al eerder gedaan` : ''}.</span>}
+                      {status === 'afgerond' && <span className="text-emerald-700 font-medium">{b?.geboekt ?? geboekt} geboekt{(b?.overgeslagen ?? overgeslagen) ? `, ${b?.overgeslagen ?? overgeslagen} al eerder gedaan` : ''}{b?.fout ? <span className="text-amber-700">, {b.fout} uitzondering(en) — zie de regels hieronder en de lijst Handmatig boeken</span> : ''}.</span>}
                       {status === 'gestopt' && <span className="text-red-700 font-medium">{b?.laatste_bericht || 'Gestopt.'}</span>}
                     </div>
                     {b?.eagle_store && (

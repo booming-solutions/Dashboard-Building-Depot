@@ -16,11 +16,18 @@
    "LeverancierNR.") werkt ook; ontbreekt het leveranciersnummer, dan
    wordt 4741 aangenomen.
 
+   OPNIEUW BOEKEN: regels die eerder geweigerd, gestopt of niet afgemaakt
+   zijn kun je aanvinken en met "Opnieuw boeken" nog een keer door Booming
+   laten proberen (bijv. nadat de oorzaak in Eagle is opgelost). De regel
+   wordt opnieuw opgebouwd uit de oorspronkelijke batch en als nieuwe
+   batch met de vlag opnieuw=true aangeboden; de server en Booming laten
+   zo'n regel dan door (regels die echt geboekt zijn nooit).
+
    Recht: finance_prepay (zelfde als Keukendepot).
    ============================================================ */
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { createClient } from '@/lib/supabase';
 import ExcelExportButton from '@/components/ExcelExportButton';
@@ -100,6 +107,11 @@ export default function BoekingscheckPage() {
   const [uitslag, setUitslag] = useState(null);   // map dedupeKey -> { status, ... }
   const [filter, setFilter] = useState('alles');
   const [dragOver, setDragOver] = useState(false);
+  const [sel, setSel] = useState({});              // dedupeKey -> true
+  const [herboek, setHerboek] = useState(null);    // { id, batchId, launch, rijen:[{rij,...}] }
+  const [herboekFout, setHerboekFout] = useState(null);
+  const [herboekBusy, setHerboekBusy] = useState(false);
+  const [herboekLive, setHerboekLive] = useState(null);
 
   function reset() {
     setFileName(null); setRows([]); setReadError(null); setUitslag(null); setCheckFout(null); setFilter('alles');
@@ -140,7 +152,7 @@ export default function BoekingscheckPage() {
           const deel = keys.slice(i, i + 200);
           const { data, error } = await supabase
             .from('eagle_prepay_rows')
-            .select('dedupe_key,rij,status,voucher,reden,invoice_amount,updated_at,eagle_prepay_batches(batch_id,bestand,created_by,created_at,entiteit_naam,voucher_date)')
+            .select('dedupe_key,batch_uuid,rij,status,voucher,reden,invoice_amount,updated_at,eagle_prepay_batches(batch_id,bestand,created_by,created_at,entiteit_naam,voucher_date)')
             .in('dedupe_key', deel)
             .order('updated_at', { ascending: false });
           if (error) throw error;
@@ -152,6 +164,7 @@ export default function BoekingscheckPage() {
             map[r.dedupe_key] = {
               status: r.status, voucher: r.voucher, reden: r.reden, bedrag: r.invoice_amount, tijd: r.updated_at,
               batch: b.batch_id, bestand: b.bestand, door: b.created_by, ingelezen: b.created_at, entiteit: b.entiteit_naam, boekdatum: b.voucher_date,
+              batchUuid: r.batch_uuid, rij: r.rij,
             };
           });
         }
@@ -185,6 +198,85 @@ export default function BoekingscheckPage() {
       setBusy(false);
     }
   }
+
+  const HERBOEKBAAR = new Set(['geweigerd', 'gestopt', 'geboekt_handmatig', 'bezig', 'wachten']);
+
+  function toggle(key) { setSel(p => ({ ...p, [key]: !p[key] })); }
+
+  /** Bouwt uit de oorspronkelijke batches een nieuwe batch met de aangevinkte regels en start Booming. */
+  async function opnieuwBoeken() {
+    const gekozen = resultaat.filter(r => sel[r.dedupeKey] && HERBOEKBAAR.has(r.check) && r.info?.batchUuid);
+    if (!gekozen.length) return;
+    setHerboekBusy(true); setHerboekFout(null);
+    try {
+      const supabase = createClient();
+      const ids = Array.from(new Set(gekozen.map(r => r.info.batchUuid)));
+      const { data: batches, error } = await supabase
+        .from('eagle_prepay_batches').select('id,batch_id,entiteit,entiteit_naam,voucher_date,payload').in('id', ids);
+      if (error) throw error;
+      const perId = {}; (batches || []).forEach(b => { perId[b.id] = b; });
+      const regels = [];
+      const entiteiten = new Set();
+      gekozen.forEach(r => {
+        const b = perId[r.info.batchUuid];
+        const orig = (b?.payload?.regels || []).find(x => x.rij === r.info.rij);
+        if (!b || !orig) return;
+        entiteiten.add(b.entiteit);
+        regels.push({ ...orig, bevestigingen: [...(orig.bevestigingen || []), 'OPNIEUW'], _bron: b });
+      });
+      if (!regels.length) throw new Error('Geen oorspronkelijke regels gevonden bij de selectie.');
+      if (entiteiten.size > 1) throw new Error('Kies regels van één entiteit tegelijk (Curaçao óf Bonaire).');
+      const bron = regels[0]._bron;
+      const nieuw = regels.map(({ _bron, ...r }, i) => ({ ...r, rij: r.rij }));
+      const batch = {
+        batchId: null,
+        bestand: `Opnieuw boeken (${nieuw.length}) uit ${fileName || 'Boekingscheck'}`,
+        entiteit: bron.entiteit, entiteitNaam: bron.entiteit_naam,
+        voucherDate: bron.voucher_date, invoiceDate: bron.voucher_date,
+        apRekening: bron.payload?.apRekening, distributieRekening: bron.payload?.distributieRekening,
+        koersNorm: bron.payload?.koersNorm ?? null,
+        regels: nieuw, handmatig: [], opnieuw: true,
+      };
+      const resp = await fetch('/api/finance/prepay/batches', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch }),
+      });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok || !j.ok) throw new Error(j.error || `server gaf ${resp.status}`);
+      setHerboek({ id: j.id, batchId: j.batchId, launch: j.launch, store: j.store, aantal: nieuw.length, entiteit: bron.entiteit_naam });
+      setHerboekLive(null);
+      try {
+        const a = document.createElement('a'); a.href = j.launch; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      } catch { /* niets */ }
+    } catch (err) {
+      setHerboekFout(err.message || String(err));
+    } finally {
+      setHerboekBusy(false);
+    }
+  }
+
+  // voortgang van de herboek-batch volgen
+  useEffect(() => {
+    if (!herboek?.id) return undefined;
+    const supabase = createClient();
+    let stop = false; let timer = null;
+    async function haal() {
+      if (stop) return;
+      try {
+        const [b, r] = await Promise.all([
+          supabase.from('eagle_prepay_batches').select('status,laatste_bericht,geboekt,overgeslagen,fout,eagle_store,eagle_user').eq('id', herboek.id).maybeSingle(),
+          supabase.from('eagle_prepay_rows').select('rij,vendor_ref_no,invoice_amount,status,stap,voucher,reden').eq('batch_uuid', herboek.id).order('rij'),
+        ]);
+        if (stop) return;
+        setHerboekLive({ batch: b.data || null, rows: r.data || [] });
+        const st = b.data?.status;
+        if (st === 'afgerond' || st === 'gestopt') { controleer(rows); return; }
+      } catch { /* volgende poging */ }
+      timer = setTimeout(haal, 2000);
+    }
+    haal();
+    return () => { stop = true; if (timer) clearTimeout(timer); };
+  }, [herboek?.id]);
 
   const resultaat = useMemo(() => rows.map(r => {
     const u = uitslag ? uitslag[r.dedupeKey] : null;
@@ -278,7 +370,17 @@ export default function BoekingscheckPage() {
           ))}
           {busy && <span className="text-[12px] text-gray-400">Controleren…</span>}
           {rows.length > 0 && uitslag && (
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              {(() => {
+                const n = resultaat.filter(r => sel[r.dedupeKey] && HERBOEKBAAR.has(r.check) && r.info?.batchUuid).length;
+                return (
+                  <button type="button" disabled={!n || herboekBusy} onClick={opnieuwBoeken}
+                    title="Aangevinkte regels die eerder geweigerd/gestopt zijn nog een keer door Booming laten boeken"
+                    className="px-4 py-1.5 rounded-lg bg-[#1B3A5C] text-white text-[12px] font-semibold hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed">
+                    {herboekBusy ? 'Klaarzetten…' : `Opnieuw boeken (${n})`}
+                  </button>
+                );
+              })()}
               <ExcelExportButton
                 filename={`boekingscheck_${(fileName || 'lijst').replace(/\.xlsx$/i, '')}`}
                 reportTitle={`Boekingscheck — ${fileName}`}
@@ -288,10 +390,46 @@ export default function BoekingscheckPage() {
             </div>
           )}
         </div>
+        {herboekFout && <div className="px-5 py-3 border-b border-gray-200 text-[13px] text-red-700">Opnieuw boeken mislukt: {herboekFout}</div>}
+        {herboek && (
+          <div className="px-5 py-4 border-b border-gray-200 bg-[#1B3A5C]/5">
+            <div className="flex items-center gap-3 flex-wrap text-[13px]">
+              <strong className="text-[#1B3A5C]">Batch {herboek.batchId} klaargezet: {herboek.aantal} regel(s) opnieuw naar Eagle ({herboek.entiteit}, Store {herboek.store}).</strong>
+              <span className="text-gray-600">Booming is gestart — druk in het Booming-venster op Enter en blijf van muis en toetsenbord af.</span>
+              {herboekLive?.batch && (
+                <span className={`ml-auto rounded-full px-3 py-1 text-[12px] font-bold ${herboekLive.batch.status === 'afgerond' ? 'bg-emerald-100 text-emerald-800' : herboekLive.batch.status === 'gestopt' ? 'bg-red-100 text-red-800' : herboekLive.batch.status === 'bezig' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>
+                  {herboekLive.batch.status === 'klaar' ? 'Wacht op Booming' : herboekLive.batch.status === 'bezig' ? 'Bezig in Eagle' : herboekLive.batch.status === 'afgerond' ? 'Afgerond' : 'Gestopt'}
+                </span>
+              )}
+            </div>
+            {herboekLive?.batch?.laatste_bericht && <div className="text-[12px] text-gray-500 mt-1">{herboekLive.batch.laatste_bericht}</div>}
+            {herboekLive?.rows?.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {herboekLive.rows.map(r => (
+                  <span key={r.rij} className="inline-flex items-center gap-2 rounded-lg bg-white border border-gray-200 px-2.5 py-1 text-[12px]">
+                    <span className="font-mono">{r.vendor_ref_no}</span>
+                    <Pill status={r.status === 'geboekt' ? 'geboekt' : r.status === 'wachten' ? 'wachten' : r.status} />
+                    {r.voucher && <span className="font-mono text-[#1B3A5C]">{r.voucher}</span>}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="text-[11px] text-gray-400 mt-2">Na afloop wordt de lijst hierboven automatisch bijgewerkt.</div>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] text-[13.5px]">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="px-3 py-2.5 w-8">
+                  <input type="checkbox" title="Alle herboekbare regels in deze selectie aan/uit"
+                    checked={shown.some(r => HERBOEKBAAR.has(r.check) && r.info?.batchUuid) && shown.filter(r => HERBOEKBAAR.has(r.check) && r.info?.batchUuid).every(r => sel[r.dedupeKey])}
+                    onChange={e => {
+                      const aan = e.target.checked; const p = { ...sel };
+                      shown.forEach(r => { if (HERBOEKBAAR.has(r.check) && r.info?.batchUuid) p[r.dedupeKey] = aan; });
+                      setSel(p);
+                    }} />
+                </th>
                 {['Rij', 'Leverancier', 'Fact.nummer', 'XCG', 'Uitkomst', 'Voucher', 'Boekdatum', 'Wanneer', 'Batch / bestand', 'Door', 'Toelichting'].map((h, i) => (
                   <th key={i} className={`px-3 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-gray-400 whitespace-nowrap ${i === 3 ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
@@ -299,13 +437,18 @@ export default function BoekingscheckPage() {
             </thead>
             <tbody>
               {!rows.length && (
-                <tr><td colSpan={11} className="px-5 py-10 text-center text-gray-400 text-[13.5px]">Nog geen bestand ingelezen.</td></tr>
+                <tr><td colSpan={12} className="px-5 py-10 text-center text-gray-400 text-[13.5px]">Nog geen bestand ingelezen.</td></tr>
               )}
               {rows.length > 0 && !shown.length && (
-                <tr><td colSpan={11} className="px-5 py-8 text-center text-gray-400 text-[13.5px]">Geen regels in deze selectie.</td></tr>
+                <tr><td colSpan={12} className="px-5 py-8 text-center text-gray-400 text-[13.5px]">Geen regels in deze selectie.</td></tr>
               )}
               {shown.map(r => (
                 <tr key={r.excelRow} className={`border-b border-gray-100 ${r.check === 'onbekend' ? 'bg-red-50' : r.check !== 'geboekt' ? 'bg-amber-50' : ''}`}>
+                  <td className="px-3 py-2">
+                    {HERBOEKBAAR.has(r.check) && r.info?.batchUuid && (
+                      <input type="checkbox" checked={!!sel[r.dedupeKey]} onChange={() => toggle(r.dedupeKey)} title="Opnieuw boeken" />
+                    )}
+                  </td>
                   <td className="px-3 py-2 font-mono text-[12px] text-gray-400">{r.excelRow}</td>
                   <td className="px-3 py-2">{r.leverancier || <span className="text-gray-400 font-mono text-[12px]">{r.leverancierNr}</span>}</td>
                   <td className="px-3 py-2 font-mono text-[12.5px]">{r.factuurnummer}</td>

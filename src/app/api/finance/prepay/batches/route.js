@@ -66,23 +66,33 @@ export async function POST(req) {
   //    het dashboard geboekt is (of nu bezig is), gaat nooit mee. Het
   //    dashboard zet zo'n regel op de lijst handmatig boeken; dit is het
   //    slot op de deur voor het geval dat toch omzeild wordt.
+  //    Uitzondering: batch.opnieuw === true (Boekingscheck › "opnieuw
+  //    boeken"): regels die eerder geweigerd, gestopt of niet afgemaakt
+  //    zijn mogen dan nog een keer; regels die echt geboekt zijn nooit.
   const db = admin();
+  const opnieuw = batch.opnieuw === true;
   const keys = batch.regels.map((r) => r.dedupeKey).filter(Boolean);
   if (keys.length) {
+    const blokkerend = opnieuw ? ['geboekt', 'bezig'] : ['geboekt', 'geboekt_handmatig', 'bezig', 'geweigerd'];
     const { data: eerder, error: eErr } = await db
       .from('eagle_prepay_rows')
-      .select('dedupe_key,status,voucher')
+      .select('dedupe_key,status,voucher,updated_at')
       .in('dedupe_key', keys)
-      .in('status', ['geboekt', 'geboekt_handmatig', 'bezig', 'geweigerd']);
+      .in('status', blokkerend);
     if (eErr) return NextResponse.json({ ok: false, error: eErr.message }, { status: 500 });
-    const al = new Map((eerder || []).map((r) => [r.dedupe_key, r]));
+    // 'bezig' telt bij opnieuw boeken alleen als het recent is (een
+    // afgebroken batch van eerder mag wel opnieuw)
+    const al = new Map((eerder || [])
+      .filter((r) => !(opnieuw && r.status === 'bezig' && Date.now() - new Date(r.updated_at).getTime() > 15 * 60 * 1000))
+      .map((r) => [r.dedupe_key, r]));
     const geweigerd = batch.regels
       .filter((r) => al.has(r.dedupeKey))
       .map((r) => `rij ${r.rij} (factuur ${r.vendorRefNo}${al.get(r.dedupeKey).voucher ? `, voucher ${al.get(r.dedupeKey).voucher}` : ''})`);
     if (geweigerd.length) {
       return NextResponse.json({
         ok: false,
-        error: 'Al eerder geboekt en niet bevestigd: ' + geweigerd.join('; ') + '. Lees het bestand opnieuw in; deze regels horen op de lijst handmatig boeken.',
+        error: (opnieuw ? 'Al geboekt via Booming, kan niet opnieuw: ' : 'Al eerder geboekt en niet bevestigd: ')
+          + geweigerd.join('; ') + (opnieuw ? '.' : '. Lees het bestand opnieuw in; deze regels horen op de lijst handmatig boeken.'),
       }, { status: 409 });
     }
   }
@@ -96,7 +106,7 @@ export async function POST(req) {
   const [mm, dd, jj] = String(batch.voucherDate).split('/');
   const boekdatum = `20${jj}-${mm}-${dd}`;
 
-  const payload = { ...batch, batchId, store };
+  const payload = { ...batch, batchId, store, opnieuw };
 
   const { data: ins, error: e1 } = await db
     .from('eagle_prepay_batches')
@@ -139,7 +149,7 @@ export async function POST(req) {
 
   await db.from('eagle_prepay_events').insert({
     batch_uuid: ins.id, niveau: 'INFO',
-    bericht: `Batch klaargezet door ${user.email || user.id}: ${batch.regels.length} regel(s), ${batch.entiteitNaam || batch.entiteit}, Store ${store}, datum ${batch.voucherDate}.`,
+    bericht: `Batch ${opnieuw ? 'OPNIEUW ' : ''}klaargezet door ${user.email || user.id}: ${batch.regels.length} regel(s), ${batch.entiteitNaam || batch.entiteit}, Store ${store}, datum ${batch.voucherDate}.`,
   });
 
   // 5. Startlink voor de Bridge. De host gaat mee zodat de Bridge weet

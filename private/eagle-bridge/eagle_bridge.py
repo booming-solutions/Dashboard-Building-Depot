@@ -449,7 +449,7 @@ def dump_controls(win, pad, kop):
     return len(alles), idx
 
 
-def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62)):
+def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62), onderste=False):
     """
     Zwart-witmasker van de vraagtekst in een Eagle-melding.
 
@@ -467,8 +467,25 @@ def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62)):
     m = band.point(lambda v: 255 if v < drempel else 0)
     bw, bh = m.size
     px = m.load()
-    cols = [sum(1 for y in range(bh) if px[x, y]) for x in range(bw)]
     rows = [sum(1 for x in range(bw) if px[x, y]) for y in range(bh)]
+    if onderste:
+        # Alleen de onderste tekstregel: van onderaf de laatste band rijen
+        # met inkt nemen, tot de eerste lege rij erboven. Zo storen
+        # invoervakken hoger in de strook niet (statusregel van Eagle).
+        minr0 = max(1, bw // 60)
+        y1 = bh - 1
+        while y1 >= 0 and rows[y1] < minr0:
+            y1 -= 1
+        if y1 < 0:
+            return None
+        y0 = y1
+        while y0 - 1 >= 0 and rows[y0 - 1] >= minr0:
+            y0 -= 1
+        m = m.crop((0, y0, bw, y1 + 1))
+        bw, bh = m.size
+        px = m.load()
+        rows = [sum(1 for x in range(bw) if px[x, y]) for y in range(bh)]
+    cols = [sum(1 for y in range(bh) if px[x, y]) for x in range(bw)]
     minc, minr = max(1, bh // 12), max(1, bw // 60)
     xs = [x for x, c in enumerate(cols) if c >= minc]
     ys = [y for y, r in enumerate(rows) if r >= minr]
@@ -479,7 +496,7 @@ def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62)):
              .point(lambda v: 255 if v > 100 else 0))
 
 
-def tekstverschil(a, b, schuif=3, band=(0.18, 0.62)):
+def tekstverschil(a, b, schuif=3, band=(0.18, 0.62), onderste=False):
     """
     Aandeel afwijkende beeldpunten tussen twee tekstmaskers
     (0 = gelijk, 1 = niets gemeen).
@@ -492,7 +509,7 @@ def tekstverschil(a, b, schuif=3, band=(0.18, 0.62)):
     afwijking telt.
     """
     from PIL import ImageFilter
-    ma, mb = tekstregel_masker(a, band=band), tekstregel_masker(b, band=band)
+    ma, mb = tekstregel_masker(a, band=band, onderste=onderste), tekstregel_masker(b, band=band, onderste=onderste)
     if ma is None or mb is None:
         return 1.0
     ma = ma.filter(ImageFilter.MaxFilter(3))
@@ -1713,12 +1730,12 @@ class Eagle:
     # vergelijken met de referentiebeelden in dialogen/ (config:
     # "statusmeldingen").
 
-    STROOK_FRACTIE = 0.05
+    STROOK_FRACTIE = 0.10
 
     def lees_statusstrook(self):
         try:
             r = self.win.rectangle()
-            h = max(28, int(r.height() * self.STROOK_FRACTIE))
+            h = max(40, int(r.height() * self.STROOK_FRACTIE))
             return schermuitsnede((r.left, r.bottom - h, r.right, r.bottom))
         except Exception as e:
             log(f"statusstrook niet te lezen: {e}", "WARN")
@@ -1737,7 +1754,7 @@ class Eagle:
                 if not pad.exists():
                     continue
                 try:
-                    score = tekstverschil(beeld, Image.open(pad), band=(0.0, 1.0))
+                    score = tekstverschil(beeld, Image.open(pad), band=(0.0, 1.0), onderste=True)
                 except Exception as e:
                     log(f"vergelijken met {pad.name} mislukt: {e}", "WARN")
                     continue
@@ -2125,6 +2142,62 @@ class Eagle:
         except Exception:
             return True
 
+    def herstel_scherm(self):
+        """
+        Zet Eagle terug in een schone toestand na een mislukte regel, zodat
+        de batch door kan met de volgende regel:
+          1. distributiescherm open  -> Cancel
+          2. meldingsvenster open    -> Escape (sluit zonder iets te kiezen)
+          3. Clear F12
+          4. controle: geen vensters meer, invoerscherm leeg
+        Geeft (True, "") terug als het gelukt is, anders (False, reden).
+        """
+        from pywinauto import keyboard
+        for poging in range(3):
+            try:
+                h = self._distributie_venster()
+                if h:
+                    log("  herstel: distributiescherm annuleren")
+                    if not self._beantwoord(h, {"antwoord": "Cancel", "knop": "laatste", "enter": False}):
+                        try:
+                            self._wrap_beide(h)[1].set_focus()
+                        except Exception:
+                            pass
+                        keyboard.send_keys("{ESC}")
+                    time.sleep(self.pace * 3)
+                vensters = self._meldingsvensters()
+                for v in vensters:
+                    log(f"  herstel: meldingsvenster '{v['titel']}' sluiten met Escape")
+                    try:
+                        w = self._wrap_beide(v["handle"])[1]
+                        w.set_focus()
+                        time.sleep(self.pace)
+                        keyboard.send_keys("{ESC}")
+                    except Exception:
+                        keyboard.send_keys("{ESC}")
+                    time.sleep(self.pace * 3)
+                self.maak_leeg("scherm herstellen na mislukte regel")
+                time.sleep(self.pace * 2)
+                if self._distributie_venster() or self._meldingsvensters():
+                    continue
+                if not self.scherm_is_leeg():
+                    continue
+                return True, ""
+            except Exception as e:
+                log(f"  herstel: poging {poging + 1} mislukt: {e}", "WARN")
+                time.sleep(1.0)
+        rest = []
+        try:
+            if self._distributie_venster():
+                rest.append("distributiescherm staat nog open")
+            if self._meldingsvensters():
+                rest.append("er staat nog een meldingsvenster")
+            if not self.scherm_is_leeg():
+                rest.append("invoerscherm is niet leeg")
+        except Exception:
+            pass
+        return False, "; ".join(rest) or "onbekend"
+
     def maak_leeg(self, reden=""):
         """
         Clear F12: zet alle velden van het invoerscherm terug, zoals een
@@ -2373,9 +2446,15 @@ def cmd_run(args):
                          laatste_bericht="Gestart")
 
     al_geboekt = {} if args.negeer_ledger else geboekte_sleutels()
+    if batch.get("opnieuw") and al_geboekt:
+        # Opnieuw boeken vanuit het dashboard: eerder geweigerde, gestopte of
+        # niet afgemaakte regels mogen nog een keer. Alleen wat echt geboekt
+        # is (of tijdens Add F4 afgebroken) blijft overgeslagen.
+        al_geboekt = {k: v for k, v in al_geboekt.items() if v.get("status") in ("geboekt", "bezig_add")}
+        log("Opnieuw boeken: eerder geweigerde/gestopte regels worden nog een keer geprobeerd.")
     if args.negeer_ledger:
         log("LET OP: --negeer-ledger actief — eerder geboekte regels worden NIET overgeslagen.", "WARN")
-    gedaan = overgeslagen = geweigerd = 0
+    gedaan = overgeslagen = geweigerd = mislukt = achtereen = 0
 
     for i, regel in enumerate(regels, 1):
         sleutel = regel["dedupeKey"]
@@ -2445,44 +2524,67 @@ def cmd_run(args):
                                  laatste_bericht=f"Noodstop door de gebruiker bij rij {regel['rij']} (niets half geboekt).")
                 RAPPORTEUR.sluit()
             return 8
-        except BridgeStop as e:
-            log(str(e), "ERROR")
-            if e.na_add and not args.dry_run:
-                schrijf_ledger({
-                    "tijd": dt.datetime.now().isoformat(timespec="seconds"),
-                    "batchId": batch.get("batchId"), "rij": regel["rij"],
-                    "dedupeKey": sleutel, "status": "geboekt_handmatig", "reden": str(e),
-                })
-                log("LET OP: de kopregel van deze boeking staat al in Eagle. Maak hem daar af of "
-                    "verwijder hem. Een herstart slaat deze regel over (zie ledger).", "ERROR")
-                rij_status = "geboekt_handmatig"
+        except (BridgeStop, Exception) as e:
+            # Een regel die misgaat stopt de batch NIET: fout vastleggen,
+            # Eagle schoonmaken en door met de volgende regel. Alleen als
+            # Eagle niet meer schoon te krijgen is, of als het drie keer
+            # achter elkaar misgaat (dan is er iets structureels), stopt hij.
+            if isinstance(e, BridgeStop):
+                tekst = str(e)
+                na_add = e.na_add
+                log(tekst, "ERROR")
             else:
+                p = schermafdruk("onverwacht")
+                tekst = "Onverwachte fout in Booming: " + "".join(traceback.format_exception_only(type(e), e)).strip()
+                log("Onverwachte fout:\n" + traceback.format_exc(), "ERROR")
+                if p:
+                    log(f"Schermafdruk: {p}", "ERROR")
+                na_add = getattr(e, "na_add", False)
+            if not args.dry_run:
+                if na_add:
+                    rij_status = "geboekt_handmatig"
+                    log("LET OP: de kopregel van deze regel kan al in Eagle staan zonder distributie. "
+                        "Zoek hem op in de Viewer (F9) en maak hem af of verwijder hem.", "ERROR")
+                else:
+                    rij_status = "gestopt"
                 schrijf_ledger({
                     "tijd": dt.datetime.now().isoformat(timespec="seconds"),
                     "batchId": batch.get("batchId"), "rij": regel["rij"],
-                    "dedupeKey": sleutel, "status": "gestopt", "reden": str(e),
+                    "dedupeKey": sleutel, "status": rij_status, "reden": tekst[:2000],
                 })
+            else:
                 rij_status = "gestopt"
-            log(f"Gestopt na {gedaan} geboekte regel(s).", "ERROR")
+            mislukt += 1
+            achtereen += 1
             if RAPPORTEUR:
-                RAPPORTEUR.regel(regel["rij"], status=rij_status, reden=str(e)[:2000], stap="gestopt")
+                RAPPORTEUR.regel(regel["rij"], status=rij_status, reden=tekst[:2000],
+                                 stap="niet geboekt — fout" if rij_status == "gestopt" else "afmaken in Eagle")
                 RAPPORTEUR.einde_regel()
-                RAPPORTEUR.batch(status="gestopt", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=1,
-                                 laatste_bericht=f"Gestopt bij rij {regel['rij']}: " + str(e).splitlines()[0][:250])
-                RAPPORTEUR.sluit()
-            return 5
-        except Exception:
-            p = schermafdruk("onverwacht")
-            log("Onverwachte fout:\n" + traceback.format_exc(), "ERROR")
-            if p:
-                log(f"Schermafdruk: {p}", "ERROR")
-            if RAPPORTEUR:
-                RAPPORTEUR.regel(regel["rij"], status="gestopt", reden="Onverwachte fout in Booming — zie logboek op de PC.", stap="fout")
-                RAPPORTEUR.einde_regel()
-                RAPPORTEUR.batch(status="gestopt", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=1,
-                                 laatste_bericht=f"Onverwachte fout bij rij {regel['rij']} — zie logboek op de PC.")
-                RAPPORTEUR.sluit()
-            return 6
+                RAPPORTEUR.batch(fout=mislukt + geweigerd, laatste_bericht=f"Rij {regel['rij']} overgeslagen na fout; verder met de volgende.")
+
+            # Eagle weer schoon voor de volgende regel
+            if not args.dry_run:
+                ok, rest = eagle.herstel_scherm()
+                if not ok:
+                    log(f"Eagle is niet schoon te krijgen na deze regel ({rest}) — gestopt. "
+                        f"{gedaan} geboekt, {mislukt} met een fout.", "ERROR")
+                    if RAPPORTEUR:
+                        RAPPORTEUR.batch(status="gestopt", finished=True, geboekt=gedaan, overgeslagen=overgeslagen,
+                                         fout=mislukt + geweigerd,
+                                         laatste_bericht=f"Gestopt bij rij {regel['rij']}: Eagle niet schoon te krijgen ({rest}).")
+                        RAPPORTEUR.sluit()
+                    return 5
+            if achtereen >= 3:
+                log("Drie regels achter elkaar mislukt — dat wijst op iets structureels (Eagle, scherm of netwerk). "
+                    f"Gestopt. {gedaan} geboekt, {mislukt} met een fout.", "ERROR")
+                if RAPPORTEUR:
+                    RAPPORTEUR.batch(status="gestopt", finished=True, geboekt=gedaan, overgeslagen=overgeslagen,
+                                     fout=mislukt + geweigerd,
+                                     laatste_bericht="Gestopt: drie regels achter elkaar mislukt — controleer Eagle en hervat.")
+                    RAPPORTEUR.sluit()
+                return 5
+            log(f"  regel {regel['rij']} overgeslagen — verder met de volgende.", "WARN")
+            continue
 
         if not args.dry_run:
             schrijf_ledger({
@@ -2493,6 +2595,7 @@ def cmd_run(args):
             })
             log("  geboekt" + (f" — voucher {voucher}" if voucher else ""))
         gedaan += 1
+        achtereen = 0
         if RAPPORTEUR:
             RAPPORTEUR.regel(regel["rij"], status="geboekt", voucher=voucher, stap="geboekt")
             RAPPORTEUR.einde_regel()
@@ -2503,14 +2606,17 @@ def cmd_run(args):
         log(f"Proef klaar. {gedaan} regel(s) doorlopen — er is niets in Eagle ingevoerd.")
     else:
         log(f"Klaar. {gedaan} geboekt, {overgeslagen} overgeslagen (al eerder gedaan)"
-            + (f", {geweigerd} door Eagle geweigerd (zie dashboard, handmatig beoordelen)" if geweigerd else "") + ".")
+            + (f", {geweigerd} door Eagle geweigerd" if geweigerd else "")
+            + (f", {mislukt} met een fout niet geboekt" if mislukt else "")
+            + (" — zie het dashboard (Historie) voor de uitzonderingen." if (geweigerd or mislukt) else "."))
     if batch.get("handmatig"):
         log(f"Vergeet niet: {len(batch['handmatig'])} regel(s) moeten handmatig geboekt worden.")
     log(f"Logboek: {log.path}")
     if RAPPORTEUR:
-        RAPPORTEUR.batch(status="afgerond", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=geweigerd,
+        RAPPORTEUR.batch(status="afgerond", finished=True, geboekt=gedaan, overgeslagen=overgeslagen, fout=geweigerd + mislukt,
                          laatste_bericht=f"Klaar: {gedaan} geboekt, {overgeslagen} overgeslagen"
-                                         + (f", {geweigerd} door Eagle geweigerd." if geweigerd else "."))
+                                         + (f", {geweigerd} door Eagle geweigerd" if geweigerd else "")
+                                         + (f", {mislukt} met een fout" if mislukt else "") + ".")
         RAPPORTEUR.sluit()
         RAPPORTEUR = None
     return 0
