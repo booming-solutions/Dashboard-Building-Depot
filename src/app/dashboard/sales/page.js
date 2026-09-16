@@ -757,6 +757,18 @@ export default function SalesDashboard(){
               </div>
               <p className="text-[11px] text-[#a08a74]">{waterfallData.mode==='bum'?'Per afdeling':`Departementen binnen ${bumLabel[bum]||bum}`}</p>
             </div>
+            <div className="flex flex-wrap items-center gap-3 mb-4 pb-3 border-b border-[#f0ebe5]">
+              <span className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px]">Afdeling</span>
+              <div className="flex gap-1 flex-wrap">
+                <Pill label="Alle" active={bum==='all'} onClick={()=>setBum('all')}/>
+                {bums.map(b=><Pill key={b} label={bumLabel[b]||b} active={bum===b} onClick={()=>setBum(b)}/>)}
+              </div>
+              <span className="text-[10px] text-[#6b5240] font-bold uppercase tracking-[0.6px] ml-4">Budget</span>
+              <div className="flex gap-1">
+                <Pill label={`Target (${fmtBudgetPill(conv(targetForSelection))})`} active={budgetMode==='target'} onClick={()=>setBudgetMode('target')}/>
+                {cgfUnlocked&&<Pill label={`CGF (${fmtBudgetPill(conv(cgfForSelection))})`} active={budgetMode==='cgf'} onClick={()=>setBudgetMode('cgf')}/>}
+              </div>
+            </div>
             <div style={{height:'320px'}}><canvas ref={waterfallRef}/></div>
           </div>
         );
