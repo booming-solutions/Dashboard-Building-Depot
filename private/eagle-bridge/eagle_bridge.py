@@ -70,7 +70,7 @@ import urllib.parse
 import urllib.error
 from pathlib import Path
 
-BRIDGE_VERSIE = "2026.09.10"
+BRIDGE_VERSIE = "2026.09.21"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "EagleBridge"
@@ -144,6 +144,19 @@ BEKENDE_DIALOGEN = [
         "bevat": "invoice date earlier than 60 days ago",
         "antwoord": "STOP",
         "uitleg": "De boekdatum ligt te ver terug. Controleer de datum in het dashboard.",
+    },
+    {
+        # Venster 'Distribution error' met de tekst 'Account not on file':
+        # de distributierekening (bijv. 2999-000) bestaat niet in Eagle voor
+        # deze store. OK klikken, distributiescherm annuleren, regel naar
+        # 'afmaken in Eagle' en door met de volgende regel.
+        "bevat": "account not on file",
+        "antwoord": "OK",
+        "knop": "eerste",
+        "enter": True,
+        "actie": "annuleer_distributie",
+        "uitleg": "Eagle: 'Account not on file' — de distributierekening bestaat niet in Eagle voor deze store. "
+                  "Maak de rekening aan in Eagle (of pas de rekening in het dashboard aan).",
     },
 ]
 
@@ -628,6 +641,26 @@ class Eagle:
             self.win = self.desktop.window(title_re=self.cfg["window_title_re"])
             self.win.wait("exists ready", timeout=10)
         except Exception:
+            # Staat het scherm er wel, maar reageert het niet? Dan blokkeert
+            # een melding (modaal venster) het — zeg dat, in plaats van
+            # 'niet gevonden'.
+            bestaat = False
+            try:
+                bestaat = bool(self.win.exists(timeout=1))
+            except Exception:
+                pass
+            if bestaat:
+                meldingen = []
+                try:
+                    meldingen = [v["titel"] for v in self._meldingsvensters()]
+                except Exception:
+                    pass
+                raise BridgeStop(
+                    "Het scherm 'New A/P Transactions' staat er wel, maar reageert niet — er staat "
+                    "waarschijnlijk nog een melding of ander venster open in Eagle"
+                    + (f" ({'; '.join(meldingen)})" if meldingen else "")
+                    + ".\nSluit die melding in Eagle en maak het scherm leeg (Clear F12)."
+                )
             raise BridgeStop(
                 "Het scherm 'New A/P Transactions' is niet gevonden.\n"
                 "Open Eagle op: Accounts Payable > Daily Procedures > New A/P Transactions,\n"
@@ -1374,7 +1407,14 @@ class Eagle:
         uit = []
         for handle, titel, klasse, rect in self._zichtbare_vensters():
             t = (titel or "").lower()
-            if "add new transaction" not in t and "add distribution" not in t:
+            k = (klasse or "").lower()
+            # Eagle-meldingen: de vraagvensters van het A/P-scherm, én de
+            # foutvensters van Eagle zelf (VB6-formulier of Windows-
+            # meldingsvenster) zoals 'Distribution error'. Vensters van
+            # andere programma's met 'error' in de titel tellen niet mee.
+            eagle_venster = "thunderrt6" in k or k == "#32770"
+            if not ("add new transaction" in t or "add distribution" in t
+                    or (eagle_venster and ("error" in t or "warning" in t))):
                 continue
             if self._heeft_invoervakken(handle) >= 2:
                 continue  # dat is een invoerscherm, geen melding
@@ -1653,6 +1693,17 @@ class Eagle:
         bekend = self.cfg.get("dialogen") or []
         if not bekend:
             return None, None
+
+        # 2a. alleen op titel (op_titel: true), voor vensters waarvan de
+        #     titel al zegt wat het is, zoals 'Distribution error'. Het
+        #     antwoord is daar altijd hetzelfde (OK, en de regel naar
+        #     'afmaken in Eagle'), dus een beeldvergelijking is niet nodig.
+        for v in vensters:
+            for regel in bekend:
+                if regel.get("op_titel") and regel.get("titel") and \
+                   regel["titel"].lower() in v["titel"].lower():
+                    return regel, v
+
         from PIL import Image
         drempel = float(self.cfg.get("beeld_drempel", 0.15))
         for v in vensters:
@@ -1811,6 +1862,9 @@ class Eagle:
                 if regel["antwoord"] == "STOP":
                     pad = schermafdruk("blokkade")
                     raise BridgeStop(regel["uitleg"] + (f"\nSchermafdruk: {pad}" if pad else ""), na_add=True)
+
+                if regel.get("actie") == "annuleer_distributie":
+                    self._distributie_geweigerd(regel, v)   # gooit altijd BridgeStop
 
                 log(f"  dialoog: {regel['uitleg']}")
                 if not self._beantwoord(v["handle"], regel):
@@ -2018,10 +2072,35 @@ class Eagle:
         # pas bij de tweede Enter zoekt Eagle de omschrijving erbij
         # ("Clearing Account Payments"). Zelfde gedrag als bij Vendor.
         enter_aantal = int(dcfg.get("enter_aantal", 2) or 2)
+        hoofd = self._handle_van(self.win) if self.win is not None else None
 
         def scherm_zelf_gesloten():
-            """Waar: Eagle heeft het distributiescherm al zelf gesloten (Enter = OK)."""
-            return self._distributie_venster() is None
+            """
+            Waar: Eagle heeft het distributiescherm zelf gesloten (Enter = OK)
+            en er staat GEEN melding op het scherm.
+
+            Let op: bij een fout ('Distribution error: Account not on file')
+            verdwijnt het distributiescherm óók uit het zicht, achter het
+            foutvenster. Dat telt nooit als 'gesloten' — de melding wordt
+            afgehandeld en de regel gaat naar 'afmaken in Eagle'.
+            """
+            vensters = self._meldingsvensters()
+            if vensters:
+                self._distributie_geweigerd(None, None, vensters=vensters,
+                                            account_waarde=account_waarde, bedrag=bedrag)
+            if self._distributie_venster() is not None:
+                return False
+            # Het hoofdscherm moet er nog gewoon staan; anders weten we
+            # niet wat er gebeurd is en is het geen geslaagde boeking.
+            if hoofd and not self._venster_bestaat(hoofd):
+                pad = schermafdruk("hoofdscherm-weg")
+                raise BridgeStop(
+                    "Na het invullen van de distributierekening is het scherm 'New A/P Transactions' "
+                    "niet meer te vinden. Controleer deze boeking in Eagle."
+                    + (f"\nSchermafdruk: {pad}" if pad else ""),
+                    na_add=True,
+                )
+            return True
 
         def vul_ctrl(naam, ctrl, waarde, keuzelijst=False):
             waarde = str(waarde)
@@ -2123,7 +2202,15 @@ class Eagle:
         # on file") en is er NIET geboekt.
         einde = time.time() + 6
         while time.time() < einde and self._distributie_venster():
+            vensters = self._meldingsvensters()
+            if vensters:
+                self._distributie_geweigerd(None, None, vensters=vensters,
+                                            account_waarde=account_waarde, bedrag=bedrag)
             time.sleep(0.3)
+        vensters = self._meldingsvensters()
+        if vensters:
+            self._distributie_geweigerd(None, None, vensters=vensters,
+                                        account_waarde=account_waarde, bedrag=bedrag)
         if self._distributie_venster():
             pad = schermafdruk("distributie-geweigerd")
             raise BridgeStop(
@@ -2133,6 +2220,62 @@ class Eagle:
                 + (f"\nSchermafdruk: {pad}" if pad else ""),
                 na_add=True,
             )
+
+    def _distributie_geweigerd(self, regel, v, vensters=None, account_waarde=None, bedrag=None):
+        """
+        Eagle heeft de distributie geweigerd met een melding (bijv.
+        'Distribution error: Account not on file'). Gooit ALTIJD BridgeStop
+        met na_add=True: de kopregel staat al in Eagle, de distributie niet.
+
+          1. schermafdruk
+          2. bekende melding -> OK klikken; onbekende melding -> vastleggen
+             (sluiten doet herstel_scherm daarna met Escape)
+          3. distributiescherm, als het er nog staat -> Cancel
+          4. BridgeStop(na_add=True) -> regel naar 'afmaken in Eagle',
+             Booming gaat door met de volgende regel.
+        """
+        if regel is None:
+            regel, v = self._bekende_vraag(vensters or [])
+        pad = schermafdruk("distributie-geweigerd")
+        waar = f"rekening '{account_waarde}', bedrag {bedrag}" if account_waarde else "distributie"
+
+        if regel is None:
+            beelden = self._leg_onbekend_vast(vensters or [])
+            titels = "; ".join(f"'{x['titel']}' {x['breedte']}x{x['hoogte']}" for x in (vensters or [])) or "?"
+            raise BridgeStop(
+                f"Bij de distributie ({waar}) verscheen een venster dat ik nog niet ken: {titels}.\n"
+                "De kopregel staat al in Eagle zonder distributie — maak hem af in Eagle of verwijder hem.\n"
+                + (f"Beeld vastgelegd: {', '.join(p.name for p in beelden)}\n" if beelden else "")
+                + (f"Schermafdruk: {pad}" if pad else ""),
+                na_add=True,
+            )
+
+        uitleg = regel.get("uitleg") or regel.get("naam") or "melding van Eagle"
+        log(f"  Eagle weigert de distributie: {uitleg}", "WARN")
+        if regel.get("antwoord") and regel["antwoord"] != "STOP":
+            if not self._beantwoord(v["handle"], regel):
+                log("  kon de melding niet met een klik sluiten; herstel_scherm probeert het met Escape", "WARN")
+            time.sleep(self.pace * 2)
+
+        h = self._distributie_venster()
+        if h:
+            log("  distributiescherm annuleren (Cancel)")
+            if not self._beantwoord(h, {"antwoord": "Cancel", "knop": "laatste", "enter": False}):
+                try:
+                    from pywinauto import keyboard
+                    self._wrap_beide(h)[1].set_focus()
+                    time.sleep(self.pace)
+                    keyboard.send_keys("{ESC}")
+                except Exception:
+                    pass
+            time.sleep(self.pace * 3)
+
+        raise BridgeStop(
+            f"Distributie geweigerd door Eagle ({waar}): {uitleg}\n"
+            "De kopregel staat al in Eagle zonder distributie — maak hem af in Eagle (Viewer F9) of verwijder hem."
+            + (f"\nSchermafdruk: {pad}" if pad else ""),
+            na_add=True,
+        )
 
     # -- scherm leegmaken (Clear F12) --------------------------------------
 
@@ -2160,6 +2303,27 @@ class Eagle:
         from pywinauto import keyboard
         for poging in range(3):
             try:
+                # Eerst de meldingen: een melding is modaal en blokkeert
+                # alles daarachter (ook de Cancel-knop van het
+                # distributiescherm). Een bekende OK-melding wordt met OK
+                # gesloten, de rest met Escape.
+                vensters = self._meldingsvensters()
+                for v in vensters:
+                    regel, _ = self._bekende_vraag([v])
+                    if regel is not None and regel.get("antwoord") == "OK":
+                        log(f"  herstel: meldingsvenster '{v['titel']}' sluiten met OK")
+                        if self._beantwoord(v["handle"], regel):
+                            time.sleep(self.pace * 3)
+                            continue
+                    log(f"  herstel: meldingsvenster '{v['titel']}' sluiten met Escape")
+                    try:
+                        w = self._wrap_beide(v["handle"])[1]
+                        w.set_focus()
+                        time.sleep(self.pace)
+                        keyboard.send_keys("{ESC}")
+                    except Exception:
+                        keyboard.send_keys("{ESC}")
+                    time.sleep(self.pace * 3)
                 h = self._distributie_venster()
                 if h:
                     log("  herstel: distributiescherm annuleren")
@@ -2168,17 +2332,6 @@ class Eagle:
                             self._wrap_beide(h)[1].set_focus()
                         except Exception:
                             pass
-                        keyboard.send_keys("{ESC}")
-                    time.sleep(self.pace * 3)
-                vensters = self._meldingsvensters()
-                for v in vensters:
-                    log(f"  herstel: meldingsvenster '{v['titel']}' sluiten met Escape")
-                    try:
-                        w = self._wrap_beide(v["handle"])[1]
-                        w.set_focus()
-                        time.sleep(self.pace)
-                        keyboard.send_keys("{ESC}")
-                    except Exception:
                         keyboard.send_keys("{ESC}")
                     time.sleep(self.pace * 3)
                 self.maak_leeg("scherm herstellen na mislukte regel")

@@ -261,6 +261,17 @@
         "apply-to-invoice-not-found-groot.png"
       ],
       "_bestanden_uitleg": "Referentiebeelden op twee schermschalen (529x148 en 635x177); de best passende telt."
+    },
+    {
+      "naam": "distribution-error",
+      "titel": "Distribution error",
+      "op_titel": true,
+      "antwoord": "OK",
+      "knop": "eerste",
+      "enter": true,
+      "actie": "annuleer_distributie",
+      "uitleg": "Eagle weigert de distributie ('Distribution error', meestal 'Account not on file': de distributierekening bestaat niet in Eagle voor deze store). De kopregel staat in Eagle zonder distributie — afmaken of verwijderen in Eagle.",
+      "_herkomst": "Schermafdruk 21-9-2026 14:34 (BDMM, rekening 2999-000 op Store 1): venster 'Distribution error' met tekst 'Account not on file' en één OK-knop. Herkenning op titel; beeld niet nodig."
     }
   ],
   "beeld_drempel": 0.15,
