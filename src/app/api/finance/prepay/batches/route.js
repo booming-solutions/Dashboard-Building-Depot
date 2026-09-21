@@ -24,11 +24,9 @@ import { randomBytes } from 'crypto';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Store per entiteit. 600 (Multimart) en 400 (Repair Center) nog te bevestigen;
-// Booming controleert de echte store vóór het boeken, dus een verkeerde
-// waarde hier leidt hooguit tot een stop, nooit tot een boeking op de
-// verkeerde store.
-const STORES = { '000': '1', '700': 'B', '600': '?', '400': '?' };
+// Store per entiteit (Curaçao 1, Bonaire B, Multimart M, Repair Center R).
+// Booming controleert de echte store vóór het boeken.
+const STORES = { '000': '1', '700': 'B', '600': 'M', '400': 'R' };
 const SOORTEN = new Set(['keukendepot', 'bdmm']);
 
 function admin() {

@@ -32,7 +32,7 @@ import {
   statusOfBdmm, inBatchBdmm, isManualBdmm, buildBatchBdmm,
 } from '@/lib/eagleBdmm';
 
-const STORE_VAN = { '000': '1', '700': 'B', '600': '?', '400': '?' };
+const STORE_VAN = { '000': '1', '700': 'B', '600': 'M', '400': 'R' };
 
 /* ------------------------------------------------------------------ UI */
 

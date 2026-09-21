@@ -271,10 +271,10 @@
   "stores": {
     "000": "1",
     "700": "B",
-    "600": "?",
-    "400": "?"
+    "600": "M",
+    "400": "R"
   },
-  "_stores_uitleg": "Welke Eagle-store bij welke entiteit hoort. Wordt vóór het boeken hard gecontroleerd tegen 'Store: X' in de titelbalk van New A/P Transactions; klopt het niet, dan wordt er niets geboekt. '?' = nog niet ingesteld (Booming stopt dan met een melding).",
+  "_stores_uitleg": "Welke Eagle-store bij welke entiteit hoort: 000 Curaçao = 1, 700 Bonaire = B, 600 Multimart = M, 400 Repair Center = R. Wordt vóór het boeken hard gecontroleerd tegen 'Store: X' in de titelbalk van New A/P Transactions; klopt het niet, dan wordt er niets geboekt.",
   "toets_pauze": 0.05,
   "_toets_pauze_uitleg": "Pauze in seconden tussen twee toetsaanslagen in keuzevakken. Standaard 0,05; bij Vendor 0,3 omdat de leverancierslijst in productie automatisch aanvult tijdens het typen.",
   "statusmeldingen": [
