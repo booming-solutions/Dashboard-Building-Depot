@@ -9,7 +9,7 @@
 
    - Debet = factuur (Trx Type R), Credit = creditnota (Trx Type C).
    - EUR × koers = XCG (koers standaard 2,00, per batch aanpasbaar).
-   - AP 2000-{entiteit}, distributie 2999-{entiteit}, Terms Code 1.
+   - AP 2000-{entiteit}, distributie 2099-{entiteit}, Terms Code 1.
    - Boekdatum: laatste dag vorige maand, max 50 dagen terug.
    - Leveranciersnummer per entiteit: 4811 / 4815 / 4814 / 4816.
 

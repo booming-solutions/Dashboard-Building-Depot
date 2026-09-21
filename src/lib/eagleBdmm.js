@@ -16,7 +16,7 @@
        Credit-regel = creditnota    -> Trx Type C
      - Bedragen in het bestand zijn EUR; geboekt wordt in XCG:
        XCG = EUR × koers (standaard 2,00; per batch aanpasbaar).
-     - AP-rekening 2000-{entiteit}, distributie 2999-{entiteit}.
+     - AP-rekening 2000-{entiteit}, distributie 2099-{entiteit}.
      - Terms Code 1 (per invoice).
      - Voucher date = invoice date = boekdatum: standaard de laatste dag
        van de vorige maand, aanpasbaar tot maximaal 50 dagen terug
@@ -37,7 +37,7 @@ export const BDMM_CONFIG = {
   soort: 'bdmm',
   leverancierNaam: 'BDMM',
   apAccountMain: '2000',
-  distributionAccountMain: '2999',
+  distributionAccountMain: '2099',
   termsCode: '1',
   termsCodeLabel: 'PER INVOICE',
   koersStandaard: 2.0,
