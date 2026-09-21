@@ -24,7 +24,12 @@ import { randomBytes } from 'crypto';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const STORES = { '000': '1', '700': 'B' };
+// Store per entiteit. 600 (Multimart) en 400 (Repair Center) nog te bevestigen;
+// Booming controleert de echte store vóór het boeken, dus een verkeerde
+// waarde hier leidt hooguit tot een stop, nooit tot een boeking op de
+// verkeerde store.
+const STORES = { '000': '1', '700': 'B', '600': '?', '400': '?' };
+const SOORTEN = new Set(['keukendepot', 'bdmm']);
 
 function admin() {
   return createClient(
@@ -106,7 +111,8 @@ export async function POST(req) {
   const [mm, dd, jj] = String(batch.voucherDate).split('/');
   const boekdatum = `20${jj}-${mm}-${dd}`;
 
-  const payload = { ...batch, batchId, store, opnieuw };
+  const soort = SOORTEN.has(batch.soort) ? batch.soort : 'keukendepot';
+  const payload = { ...batch, batchId, store, opnieuw, soort };
 
   const { data: ins, error: e1 } = await db
     .from('eagle_prepay_batches')
@@ -124,6 +130,7 @@ export async function POST(req) {
       aantal_handmatig: Array.isArray(batch.handmatig) ? batch.handmatig.length : 0,
       totaal_xcg: Number(totaal.toFixed(2)),
       payload,
+      soort,
       status: 'klaar',
       created_by: user.email || user.id,
     })

@@ -362,7 +362,7 @@ export default function VooruitbetalingenPage() {
       const tot = `${histTot}T23:59:59.999Z`;
       const { data: batches, error } = await supabase
         .from('eagle_prepay_batches')
-        .select('id,batch_id,token,entiteit,entiteit_naam,store,voucher_date,bestand,aantal_regels,aantal_handmatig,totaal_xcg,status,laatste_bericht,eagle_store,eagle_user,geboekt,overgeslagen,created_by,created_at,finished_at,payload')
+        .select('id,batch_id,token,soort,koers_norm,entiteit,entiteit_naam,store,voucher_date,bestand,aantal_regels,aantal_handmatig,totaal_xcg,status,laatste_bericht,eagle_store,eagle_user,geboekt,overgeslagen,created_by,created_at,finished_at,payload')
         .gte('created_at', van).lte('created_at', tot)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -427,6 +427,7 @@ export default function VooruitbetalingenPage() {
     const batches = hist?.batches || [];
     const overzicht = batches.map(b => ({
       'Ingelezen op': new Date(b.created_at).toLocaleString('nl-NL'),
+      'Soort': b.soort === 'bdmm' ? 'BDMM' : 'Keukendepot', 'Koers': b.koers_norm ?? '',
       'Bestand': b.bestand || '', 'Batch': b.batch_id, 'Entiteit': b.entiteit_naam || b.entiteit, 'Store': b.store,
       'Boekdatum (Eagle)': b.voucher_date, 'Door': b.created_by || '',
       'Status': BATCH_LABEL[b.status] || b.status,
@@ -1096,10 +1097,10 @@ export default function VooruitbetalingenPage() {
       )}
 
       {/* HISTORIE */}
-      <div className="flex items-baseline gap-3 mb-3 mt-2">
+      <div id="historie" className="flex items-baseline gap-3 mb-3 mt-2">
         <span className="text-[12px] font-bold text-[#1B3A5C] bg-[#1B3A5C]/10 rounded px-2 py-0.5">H</span>
         <h2 className="text-[15px] font-semibold text-[#1B3A5C]">Historie</h2>
-        <span className="ml-auto text-[12px] text-gray-400">Welke bestanden zijn ingelezen, wat is geboekt en wat moet handmatig</span>
+        <span className="ml-auto text-[12px] text-gray-400">Alle Booming-batches (Keukendepot én BDMM): wat is ingelezen, geboekt en handmatig</span>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-7">
@@ -1142,8 +1143,8 @@ export default function VooruitbetalingenPage() {
             <table className="w-full min-w-[980px] text-[13px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  {['Ingelezen', 'Bestand', 'Entiteit', 'Boekdatum', 'Door', 'Status', 'Geboekt', 'Niet geboekt', 'Handmatig', 'XCG', ''].map((h, i) => (
-                    <th key={i} className={`px-3 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-gray-400 whitespace-nowrap ${[6, 7, 8, 9].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
+                  {['Ingelezen', 'Soort', 'Bestand', 'Entiteit', 'Boekdatum', 'Door', 'Status', 'Geboekt', 'Niet geboekt', 'Handmatig', 'XCG', ''].map((h, i) => (
+                    <th key={i} className={`px-3 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-gray-400 whitespace-nowrap ${[7, 8, 9, 10].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -1162,6 +1163,7 @@ export default function VooruitbetalingenPage() {
                     <Fragment key={b.id}>
                       <tr className="border-b border-gray-100">
                         <td className="px-3 py-2 whitespace-nowrap text-gray-600">{new Date(b.created_at).toLocaleString('nl-NL', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                        <td className="px-3 py-2 whitespace-nowrap"><span className={`rounded px-1.5 py-px text-[10.5px] font-semibold ${b.soort === 'bdmm' ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-100 text-gray-700'}`}>{b.soort === 'bdmm' ? 'BDMM' : 'Keukendepot'}</span>{b.soort === 'bdmm' && b.koers_norm ? <div className="font-mono text-[10.5px] text-gray-400">koers {b.koers_norm}</div> : null}</td>
                         <td className="px-3 py-2 max-w-[260px]"><div className="truncate" title={b.bestand || ''}>{b.bestand || '—'}</div><div className="font-mono text-[11px] text-gray-400">{b.batch_id}</div></td>
                         <td className="px-3 py-2 whitespace-nowrap">{b.entiteit_naam || b.entiteit} <span className="text-gray-400 font-mono text-[11px]">St {b.store}</span></td>
                         <td className="px-3 py-2 font-mono text-[12px]">{b.voucher_date}</td>
@@ -1182,7 +1184,7 @@ export default function VooruitbetalingenPage() {
                       </tr>
                       {open && (
                         <tr className="border-b border-gray-100 bg-gray-50">
-                          <td colSpan={11} className="px-5 py-3">
+                          <td colSpan={12} className="px-5 py-3">
                             <div className="grid md:grid-cols-2 gap-4">
                               <div>
                                 <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 mb-1.5">Regels in de batch</div>

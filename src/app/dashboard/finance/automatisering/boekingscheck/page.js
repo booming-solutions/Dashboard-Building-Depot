@@ -11,10 +11,11 @@
    Supabase, die Booming tijdens het boeken bijwerkt. Wat buiten
    Booming om (handmatig) in Eagle is geboekt, is hier niet zichtbaar.
 
-   Bestand: bij voorkeur de gewone aanbetalingslijst (tabblad "Lijst").
-   Elke andere Excel met een kolom "Fact.nummer" (en optioneel
-   "LeverancierNR.") werkt ook; ontbreekt het leveranciersnummer, dan
-   wordt 4741 aangenomen.
+   Bestand: de aanbetalingslijst Keukendepot (tabblad "Lijst"), het
+   Exact-uittreksel van BDMM (tabbladen BDT/BDB/MMC/RCC, leveranciers-
+   nummer per tabblad), of elke andere Excel met een kolom "Fact.nummer"
+   (en optioneel "LeverancierNR."; ontbreekt die, dan wordt 4741
+   aangenomen).
 
    OPNIEUW BOEKEN: regels die eerder geweigerd, gestopt of niet afgemaakt
    zijn kun je aanvinken en met "Opnieuw boeken" nog een keer door Booming
@@ -32,6 +33,7 @@ import * as XLSX from 'xlsx';
 import { createClient } from '@/lib/supabase';
 import ExcelExportButton from '@/components/ExcelExportButton';
 import { readWorkbook, nlAmount } from '@/lib/eaglePrepay';
+import { readWorkbookBdmm } from '@/lib/eagleBdmm';
 
 const STANDAARD_VENDOR = '4741';
 
@@ -123,6 +125,17 @@ export default function BoekingscheckPage() {
     const reader = new FileReader();
     reader.onload = async (e) => {
       let res = readWorkbook(e.target.result);
+      if (!res.ok) {
+        const b = readWorkbookBdmm(e.target.result);
+        if (b.ok) {
+          const rows = [];
+          b.tabbladen.forEach(t => t.rows.forEach(r => rows.push({
+            excelRow: r.excelRow, tabblad: t.naam, factuurnummer: r.onzeRef, leverancierNr: t.entiteit.vendor,
+            leverancier: `BDMM › ${t.entiteit.kort}`, xcg: NaN, eur: r.eur,
+          })));
+          res = { ok: true, rows, bdmm: true };
+        }
+      }
       if (!res.ok) res = leesLos(e.target.result);
       if (fileRef.current) fileRef.current.value = '';
       if (!res.ok) { setReadError(res.error); return; }
@@ -297,8 +310,8 @@ export default function BoekingscheckPage() {
 
   function sheets() {
     const alle = resultaat.map(r => ({
-      'Rij Excel': r.excelRow, 'Leverancier': r.leverancier || '', 'LeverancierNr': r.leverancierNr, 'Fact.nummer': r.factuurnummer,
-      'XCG (Excel)': Number.isFinite(r.xcg) ? r.xcg : '',
+      'Rij Excel': r.tabblad ? `${r.tabblad}:${r.excelRow}` : r.excelRow, 'Leverancier': r.leverancier || '', 'LeverancierNr': r.leverancierNr, 'Fact.nummer': r.factuurnummer,
+      'XCG (Excel)': Number.isFinite(r.xcg) ? r.xcg : '', 'EUR (Excel)': Number.isFinite(r.eur) ? r.eur : '',
       'Uitkomst': (STATUS[r.check] || STATUS.onbekend).label,
       'Voucher Eagle': r.info?.voucher || '', 'Boekdatum (Eagle)': r.info?.boekdatum || '',
       'Geboekt/ingelezen op': r.info?.tijd ? new Date(r.info.tijd).toLocaleString('nl-NL') : '',
@@ -443,16 +456,16 @@ export default function BoekingscheckPage() {
                 <tr><td colSpan={12} className="px-5 py-8 text-center text-gray-400 text-[13.5px]">Geen regels in deze selectie.</td></tr>
               )}
               {shown.map(r => (
-                <tr key={r.excelRow} className={`border-b border-gray-100 ${r.check === 'onbekend' ? 'bg-red-50' : r.check !== 'geboekt' ? 'bg-amber-50' : ''}`}>
+                <tr key={`${r.tabblad || ''}|${r.excelRow}`} className={`border-b border-gray-100 ${r.check === 'onbekend' ? 'bg-red-50' : r.check !== 'geboekt' ? 'bg-amber-50' : ''}`}>
                   <td className="px-3 py-2">
                     {HERBOEKBAAR.has(r.check) && r.info?.batchUuid && (
                       <input type="checkbox" checked={!!sel[r.dedupeKey]} onChange={() => toggle(r.dedupeKey)} title="Opnieuw boeken" />
                     )}
                   </td>
-                  <td className="px-3 py-2 font-mono text-[12px] text-gray-400">{r.excelRow}</td>
+                  <td className="px-3 py-2 font-mono text-[12px] text-gray-400">{r.tabblad ? `${r.tabblad}:` : ''}{r.excelRow}</td>
                   <td className="px-3 py-2">{r.leverancier || <span className="text-gray-400 font-mono text-[12px]">{r.leverancierNr}</span>}</td>
                   <td className="px-3 py-2 font-mono text-[12.5px]">{r.factuurnummer}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">{Number.isFinite(r.xcg) && r.xcg > 0 ? nlAmount(r.xcg) : '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">{Number.isFinite(r.xcg) && r.xcg > 0 ? nlAmount(r.xcg) : (Number.isFinite(r.eur) && r.eur > 0 ? <span className="text-gray-500">EUR {nlAmount(r.eur)}</span> : '—')}</td>
                   <td className="px-3 py-2"><Pill status={r.check} /></td>
                   <td className="px-3 py-2 font-mono text-[12.5px] text-[#1B3A5C]">{r.info?.voucher || ''}</td>
                   <td className="px-3 py-2 font-mono text-[12px]">{r.info?.boekdatum || ''}</td>

@@ -1,7 +1,10 @@
 /* ============================================================
-   BESTAND: page_admin_v15.js
+   BESTAND: page_admin_v16.js
    KOPIEER NAAR: src/app/dashboard/admin/users/page.js
    (vervang het bestaande page.js bestand)
+
+   WIJZIGING t.o.v. v15:
+   - finance_bdmm (Automatisering › BDMM facturen) toegevoegd.
 
    WIJZIGING t.o.v. v14:
    - Finance-rapporten hernoemd conform layout.js V27.23:
@@ -48,6 +51,7 @@ var REPORTS = [
   { id: 'finance_ap', label: 'Accounts Payable', group: 'Finance', icon: '💼' },
   { id: 'finance_ar', label: 'Accounts Receivable', group: 'Finance', icon: '💹' },
   { id: 'finance_prepay', label: 'Automatisering › Keukendepot', group: 'Finance', icon: '🤖' },
+  { id: 'finance_bdmm', label: 'Automatisering › BDMM facturen', group: 'Finance', icon: '🧾' },
   { id: 'finance_reports', label: 'Maandrapportage', group: 'Finance', icon: '📑' },
   { id: 'logistics_order_flow', label: 'Order Flow', group: 'Logistiek', icon: '🚢' },
   { id: 'logistics_vessel_map', label: 'Schepen (wereldkaart)', group: 'Logistiek', icon: '🗺️' },

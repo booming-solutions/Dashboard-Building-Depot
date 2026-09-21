@@ -270,9 +270,11 @@
   "_clear_uitleg": "Toets waarmee het invoerscherm na elke geboekte regel wordt leeggemaakt (Clear F12). Ook vóór een regel als het scherm nog niet leeg blijkt.",
   "stores": {
     "000": "1",
-    "700": "B"
+    "700": "B",
+    "600": "?",
+    "400": "?"
   },
-  "_stores_uitleg": "Welke Eagle-store bij welke entiteit hoort. Wordt vóór het boeken hard gecontroleerd tegen 'Store: X' in de titelbalk van New A/P Transactions; klopt het niet, dan wordt er niets geboekt.",
+  "_stores_uitleg": "Welke Eagle-store bij welke entiteit hoort. Wordt vóór het boeken hard gecontroleerd tegen 'Store: X' in de titelbalk van New A/P Transactions; klopt het niet, dan wordt er niets geboekt. '?' = nog niet ingesteld (Booming stopt dan met een melding).",
   "toets_pauze": 0.05,
   "_toets_pauze_uitleg": "Pauze in seconden tussen twee toetsaanslagen in keuzevakken. Standaard 0,05; bij Vendor 0,3 omdat de leverancierslijst in productie automatisch aanvult tijdens het typen.",
   "statusmeldingen": [
@@ -286,5 +288,11 @@
       "actie": "overslaan"
     }
   ],
-  "_statusmeldingen_uitleg": "Meldingen die Eagle onderin het invoerscherm toont (geen venster) als hij een Add weigert. Herkend op beeld van de onderste strook van het scherm (dialogen/status-*.png). actie 'overslaan' = regel overslaan en melden, batch gaat door. Een onbekende melding wordt vastgelegd als dialogen/onbekend-status-*.png."
+  "_statusmeldingen_uitleg": "Meldingen die Eagle onderin het invoerscherm toont (geen venster) als hij een Add weigert. Herkend op beeld van de onderste strook van het scherm (dialogen/status-*.png). actie 'overslaan' = regel overslaan en melden, batch gaat door. Een onbekende melding wordt vastgelegd als dialogen/onbekend-status-*.png.",
+  "entiteit_namen": {
+    "000": "Curaçao (BDT)",
+    "700": "Bonaire (BDB)",
+    "600": "Multimart (MMC)",
+    "400": "Repair Center (RCC)"
+  }
 }

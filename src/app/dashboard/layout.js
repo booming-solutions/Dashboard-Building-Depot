@@ -2,6 +2,12 @@
    BESTAND: layout.js
    KOPIEER NAAR: src/app/dashboard/layout.js
    (overschrijft de bestaande layout.js)
+   WIJZIGINGEN V27.25:
+   - Finance › Automatisering: 'BDMM facturen' toegevoegd
+     (/dashboard/finance/automatisering/bdmm, badge preview,
+     eigen recht finance_bdmm). Exact-uittreksel van BDMM Trading
+     inlezen en per entiteit door Booming in Eagle laten boeken.
+   - Versie naar V27.25
    WIJZIGINGEN V27.24:
    - Finance › Automatisering: 'Boekingscheck' toegevoegd
      (/dashboard/finance/automatisering/boekingscheck, badge preview,
@@ -124,7 +130,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import PageTracker from '@/components/PageTracker';
 import DataStatusPopup from '@/components/DataStatusPopup';
-const APP_VERSION = 'V27.24';
+const APP_VERSION = 'V27.25';
 function NavSubItem({ item, pathname, sidebarOpen }) {
   const hasChildren = item.children && item.children.length > 0;
   const isChildActive = hasChildren && item.children.some(c => pathname === c.href);
@@ -333,6 +339,7 @@ export default function DashboardLayout({ children }) {
     '/dashboard/finance/ar': 'finance_ar',
     '/dashboard/finance/vooruitbetalingen': 'finance_prepay',
     '/dashboard/finance/automatisering/boekingscheck': 'finance_prepay',
+    '/dashboard/finance/automatisering/bdmm': 'finance_bdmm',
     // '/dashboard/finance/factuurstatus' staat bewust NIET in de map:
     // dat item is voor iedereen zichtbaar (everyone: true).
   };
@@ -380,6 +387,7 @@ export default function DashboardLayout({ children }) {
     { href: '/dashboard/finance/ar', label: 'Accounts Receivable' },
     { href: '/dashboard/finance/automatisering', label: 'Automatisering', children: [
       { href: '/dashboard/finance/vooruitbetalingen', label: 'Keukendepot', badge: '(preview)' },
+      { href: '/dashboard/finance/automatisering/bdmm', label: 'BDMM facturen', badge: '(preview)' },
       { href: '/dashboard/finance/automatisering/boekingscheck', label: 'Boekingscheck', badge: '(preview)' },
     ]},
     { href: '/dashboard/finance/factuurstatus', label: 'Factuur status', everyone: true },

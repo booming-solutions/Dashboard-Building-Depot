@@ -663,11 +663,16 @@ class Eagle:
 
     def controleer_store(self, entiteit):
         stores = self.cfg.get("stores") or {"000": "1", "700": "B"}
-        namen = {"000": "Curaçao", "700": "Bonaire"}
+        namen = {"000": "Curaçao", "700": "Bonaire", "600": "Multimart", "400": "Repair Center"}
+        namen.update(self.cfg.get("entiteit_namen") or {})
         verwacht = str(stores.get(str(entiteit), "")).upper()
         gezien = self.eagle_store()
-        if not verwacht:
-            raise BridgeStop(f"Onbekende entiteit '{entiteit}' in de batch — geen store bekend (config.json: stores).")
+        if not verwacht or verwacht == "?":
+            raise BridgeStop(
+                f"Voor entiteit {entiteit} ({namen.get(str(entiteit), '?')}) is nog niet ingesteld op welke Eagle-store "
+                f"geboekt moet worden (config.json › stores). Eagle staat nu op Store {gezien or '?'}. "
+                "Geef de juiste store door, dan wordt hij vastgelegd. Er is niets geboekt."
+            )
         if gezien is None:
             raise BridgeStop(
                 "Kan niet zien op welke store Eagle staat (geen 'Store:' in de titelbalk):\n"
