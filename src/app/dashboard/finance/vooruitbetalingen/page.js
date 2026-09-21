@@ -25,6 +25,7 @@
 import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
 import ExcelExportButton from '@/components/ExcelExportButton';
+import { readWorkbookBdmm } from '@/lib/eagleBdmm';
 import {
   ENTITEITEN, PREPAY_CONFIG,
   lastDayPrevMonth, toISODate, parseISODate, eagleDate, nlDate,
@@ -225,7 +226,15 @@ export default function VooruitbetalingenPage() {
     reader.onload = (e) => {
       const res = readWorkbook(e.target.result);
       if (fileRef.current) fileRef.current.value = '';
-      if (!res.ok) { setReadError(res.error); return; }
+      if (!res.ok) {
+        // Verkeerde pagina? Een BDMM-uittreksel (Exact) hoort bij Automatisering › BDMM facturen.
+        const b = readWorkbookBdmm(e.target.result);
+        if (b.ok) {
+          setReadError(`Dit is een BDMM-uittreksel uit Exact (tabblad ${b.tabbladen.map(t => t.naam).join(', ')}), geen aanbetalingslijst van Keukendepot.\nGebruik hiervoor Finance › Automatisering › BDMM facturen.`);
+          return;
+        }
+        setReadError(res.error); return;
+      }
       setReadError(null);
       setFileName(file.name);
       setRawRows(res.rows);
@@ -633,6 +642,9 @@ export default function VooruitbetalingenPage() {
         {readError && (
           <div className="mt-3 rounded-lg bg-red-50 border border-red-200 p-3 text-[13px] text-red-800 whitespace-pre-line">
             {readError}
+            {readError.includes('BDMM facturen') && (
+              <div className="mt-2"><a href="/dashboard/finance/automatisering/bdmm" className="inline-block px-3 py-1.5 rounded-lg bg-[#1B3A5C] text-white text-[12.5px] font-semibold no-underline">Naar BDMM facturen</a></div>
+            )}
           </div>
         )}
       </div>

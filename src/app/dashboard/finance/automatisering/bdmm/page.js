@@ -25,7 +25,7 @@ import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from 'rea
 import { createClient } from '@/lib/supabase';
 import {
   lastDayPrevMonth, toISODate, parseISODate, eagleDate, nlDate,
-  minBoekdatum, checkBoekdatum, money, nlAmount,
+  minBoekdatum, checkBoekdatum, money, nlAmount, readWorkbook,
 } from '@/lib/eaglePrepay';
 import {
   BDMM_CONFIG, BDMM_ENTITEITEN, readWorkbookBdmm, analyseRowsBdmm,
@@ -160,7 +160,14 @@ export default function BdmmPage() {
     reader.onload = (e) => {
       const res = readWorkbookBdmm(e.target.result);
       if (fileRef.current) fileRef.current.value = '';
-      if (!res.ok) { setReadError(res.error); return; }
+      if (!res.ok) {
+        const k = readWorkbook(e.target.result);
+        if (k.ok) {
+          setReadError('Dit is een aanbetalingslijst van Keukendepot (tabblad "Lijst"), geen BDMM-uittreksel.\nGebruik hiervoor Finance › Automatisering › Keukendepot.');
+          return;
+        }
+        setReadError(res.error); return;
+      }
       setReadError(null);
       setFileName(file.name);
       setTabbladen(res.tabbladen);
@@ -385,7 +392,14 @@ export default function BdmmPage() {
           )}
           <input ref={fileRef} type="file" accept=".xlsx" className="hidden" onChange={e => handleFile(e.target.files?.[0])} />
         </div>
-        {readError && <div className="mt-3 rounded-lg bg-red-50 border border-red-200 p-3 text-[13px] text-red-800 whitespace-pre-line">{readError}</div>}
+        {readError && (
+          <div className="mt-3 rounded-lg bg-red-50 border border-red-200 p-3 text-[13px] text-red-800 whitespace-pre-line">
+            {readError}
+            {readError.includes('Keukendepot') && (
+              <div className="mt-2"><a href="/dashboard/finance/vooruitbetalingen" className="inline-block px-3 py-1.5 rounded-lg bg-[#1B3A5C] text-white text-[12.5px] font-semibold no-underline">Naar Keukendepot</a></div>
+            )}
+          </div>
+        )}
         {overgeslagen.length > 0 && tabbladen.length > 0 && (
           <div className="mt-3 text-[12px] text-gray-400">Overgeslagen tabblad(en): {overgeslagen.join(', ')}.</div>
         )}
