@@ -1,8 +1,22 @@
 /* ============================================================
-   BESTAND: StockRiskShared_v12.js
+   BESTAND: StockRiskShared_v13.js
    KOPIEER NAAR: src/components/StockRiskShared.js
    (vervangt de huidige StockRiskShared.js)
-   VERSIE: v3.28.30
+   VERSIE: v3.28.31
+
+   Wijzigingen t.o.v. v12 (v3.28.30):
+   - NIEUW: MMC (Multimart Curacao) als derde locatie naast CUR en BON.
+     · Nieuwe pill "MMC" bovenaan naast Curaçao en Bonaire (store = 'M')
+     · Filter op regio='MMC' uit buying_data (data komt via de "Daniel BON"
+       Compass file waar Store Group = 'MMC')
+     · Nieuwe kolommen "QOH MMC" en "QOO MMC" in de tabel bij "Alle" tab
+     · Excel-export bevat kolommen "QOH MMC" en "QOO MMC"
+     · Uitleg-tekst onderaan bijgewerkt (Totaal = CUR+BON+MMC)
+     · Voorraadwaarde MMC in XCG (net als CUR, geen USD-conversie)
+   - Vereist route_email v34+ in de pipeline (regio='MMC' opslag)
+   - Voor NOS-snapshots per MMC nog geen data beschikbaar; bij store='M'
+     tonen die grafieken 'geen data' totdat processNosSnapshot ook per
+     regio 'MMC' schrijft (aparte follow-up)
 
    Wijzigingen t.o.v. v12 (v3.28.29):
    - BUGFIX: dropdown "Alle Afdelingen" toonde alleen dept-codes,
@@ -184,8 +198,8 @@ function Spark({ sales }) {
    NEW: NOS Stacked Bar (per BUM of per Dept als bumFilter is gezet)
    ════════════════════════════════════════════════════════════ */
 function NosStackedBar({ snapshotsToday, store, bumFilter, items }) {
-  // store: 'all' (=> Total), '1' (=> Curacao), 'B' (=> Bonaire)
-  var region = store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Total';
+  // store: 'all' (=> Total), '1' (=> Curacao), 'B' (=> Bonaire), 'M' (=> MMC)
+  var region = store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : store === 'M' ? 'MMC' : 'Total';
   var deptMode = !!bumFilter;
   var rows;
 
@@ -235,7 +249,7 @@ function NosStackedBar({ snapshotsToday, store, bumFilter, items }) {
     );
   }
 
-  var regionLabel = region === 'Total' ? 'Curaçao + Bonaire' : region;
+  var regionLabel = region === 'Total' ? 'Curaçao + Bonaire + MMC' : region === 'MMC' ? 'Multimart Curaçao' : region;
 
   return (
     <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
@@ -308,7 +322,7 @@ function NosStackedBar({ snapshotsToday, store, bumFilter, items }) {
 function NosTrendChart({ allSnapshots, deptSnapshots, store, bumFilter }) {
   var deptMode = !!bumFilter;
   var canvasId = 'nos-trend-chart-' + (store || 'all') + (deptMode ? '-dept' : '');
-  var region = store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Total';
+  var region = store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : store === 'M' ? 'MMC' : 'Total';
 
   // Filter for this region. In deptMode gebruiken we deptSnapshots (per dept_code),
   // anders allSnapshots (per BUM).
@@ -451,7 +465,7 @@ function NosTrendChart({ allSnapshots, deptSnapshots, store, bumFilter }) {
     };
   }, [allSnapshots, deptSnapshots, store, bumFilter]);
 
-  var regionLabel = region === 'Total' ? 'Curaçao + Bonaire' : region;
+  var regionLabel = region === 'Total' ? 'Curaçao + Bonaire + MMC' : region === 'MMC' ? 'Multimart Curaçao' : region;
   var subtitle = deptMode
     ? regionLabel + ' — per afdeling, plus TOTAAL (gestreept)'
     : regionLabel + ' — per BUM, plus TOTAAL (gestreept)';
@@ -638,10 +652,12 @@ export default function StockRiskShared({ bumFilter }) {
     if (!data.length) return [];
 
     var filtered = data;
-    // FIX: filter op regio (CUR/BON) i.p.v. store_number
+    // FIX: filter op regio (CUR/BON/MMC) i.p.v. store_number
     // Sinds buying-pipeline v17 is store_number leeg en regio gevuld
+    // v34: MMC (Multimart Curacao) toegevoegd als 3e regio
     if (store === '1') filtered = data.filter(function(r) { return r.regio === 'CUR'; });
     else if (store === 'B') filtered = data.filter(function(r) { return r.regio === 'BON'; });
+    else if (store === 'M') filtered = data.filter(function(r) { return r.regio === 'MMC'; });
 
     var map = {};
     filtered.forEach(function(r) {
@@ -662,7 +678,8 @@ export default function StockRiskShared({ bumFilter }) {
           min_lt: parseFloat(r.min_lead_time) || 0,
           qoh: 0, qa: 0, qoo: 0, inv_value: 0,
           // Per regio splits (gebruikt bij 'Alle' tab voor QOH/QOO uitsplitsing)
-          qoh_cur: 0, qoh_bon: 0, qoo_cur: 0, qoo_bon: 0,
+          // v34: MMC (Multimart Curacao) toegevoegd naast CUR en BON
+          qoh_cur: 0, qoh_bon: 0, qoh_mmc: 0, qoo_cur: 0, qoo_bon: 0, qoo_mmc: 0,
           sales: [0,0,0,0,0,0,0,0,0,0,0,0],
         };
       }
@@ -684,6 +701,7 @@ export default function StockRiskShared({ bumFilter }) {
       // Per regio bijhouden
       if (r.regio === 'CUR') { m.qoh_cur += qohVal; m.qoo_cur += qooVal; }
       else if (r.regio === 'BON') { m.qoh_bon += qohVal; m.qoo_bon += qooVal; }
+      else if (r.regio === 'MMC') { m.qoh_mmc += qohVal; m.qoo_mmc += qooVal; }
       for (var i = 0; i < 12; i++) {
         m.sales[i] += parseFloat(r['sales_m' + String(i + 1).padStart(2, '0')]) || 0;
       }
@@ -995,6 +1013,7 @@ export default function StockRiskShared({ bumFilter }) {
             <Pill label="Alle" active={store === 'all'} onClick={function() { setStore('all'); }} />
             <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); }} />
             <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); }} />
+            <Pill label="MMC" active={store === 'M'} onClick={function() { setStore('M'); }} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -1225,8 +1244,8 @@ export default function StockRiskShared({ bumFilter }) {
           })}
         </div>
         <ExcelExportButton
-          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_stock_risk_' + (bumFilter || 'alle') + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'Totaal'); })()}
-          reportTitle={'Stock Risk Alert — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'Totaal')}
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_stock_risk_' + (bumFilter || 'alle') + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : store === 'M' ? 'MMC' : 'Totaal'); })()}
+          reportTitle={'Stock Risk Alert — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : store === 'M' ? 'MMC' : 'Totaal')}
           sheets={function() {
             return [
               {
@@ -1261,9 +1280,11 @@ export default function StockRiskShared({ bumFilter }) {
                     'QOH totaal': Math.round(m.qoh),
                     'QOH CUR': Math.round(m.qoh_cur),
                     'QOH BON': Math.round(m.qoh_bon),
+                    'QOH MMC': Math.round(m.qoh_mmc),
                     'QOO totaal': Math.round(m.qoo),
                     'QOO CUR': Math.round(m.qoo_cur),
                     'QOO BON': Math.round(m.qoo_bon),
+                    'QOO MMC': Math.round(m.qoo_mmc),
                     'Volgende ETA': m.next_eta || '',
                     'Volgende aantal': m.next_qty || '',
                     ['Voorraad +' + projHorizonWeeks + 'w']: Math.round(m.projected_stock),
@@ -1329,7 +1350,7 @@ export default function StockRiskShared({ bumFilter }) {
             <thead className="sticky top-0 z-30">
               <tr className="bg-[#1B3A5C]">
                 <th colSpan={5} className="text-left text-white text-[9px] font-bold uppercase py-2 px-2 border-r border-[#2a4f75]">Item</th>
-                <th colSpan={store === 'all' ? 9 : 7} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
+                <th colSpan={store === 'all' ? 11 : 7} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Voorraad & Dekking</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2 border-r border-[#2a4f75]">Verkoop</th>
                 <th colSpan={3} className="text-center text-white text-[9px] font-bold uppercase py-2">Actie</th>
               </tr>
@@ -1347,8 +1368,10 @@ export default function StockRiskShared({ bumFilter }) {
                   if (splitView) {
                     cols.push(['QOH CUR', 'qoh_cur', 'text-right']);
                     cols.push(['QOH BON', 'qoh_bon', 'text-right']);
+                    cols.push(['QOH MMC', 'qoh_mmc', 'text-right']);
                     cols.push(['QOO CUR', 'qoo_cur', 'text-right']);
                     cols.push(['QOO BON', 'qoo_bon', 'text-right']);
+                    cols.push(['QOO MMC', 'qoo_mmc', 'text-right']);
                   } else {
                     cols.push(['QOH', 'qoh', 'text-right']);
                     cols.push(['QOO', 'qoo', 'text-right']);
@@ -1374,10 +1397,10 @@ export default function StockRiskShared({ bumFilter }) {
             <tbody>
               {(function() {
                 var tQoh = 0, tQoo = 0, tQty = 0, tVal = 0;
-                var tQohCur = 0, tQohBon = 0, tQooCur = 0, tQooBon = 0;
+                var tQohCur = 0, tQohBon = 0, tQohMmc = 0, tQooCur = 0, tQooBon = 0, tQooMmc = 0;
                 displayed.forEach(function(m) {
                   tQoh += m.qoh; tQoo += m.qoo; tQty += m.suggested_qty; tVal += m.suggested_value;
-                  tQohCur += m.qoh_cur; tQohBon += m.qoh_bon; tQooCur += m.qoo_cur; tQooBon += m.qoo_bon;
+                  tQohCur += m.qoh_cur; tQohBon += m.qoh_bon; tQohMmc += m.qoh_mmc; tQooCur += m.qoo_cur; tQooBon += m.qoo_bon; tQooMmc += m.qoo_mmc;
                 });
                 var splitView = store === 'all';
                 return (
@@ -1387,8 +1410,10 @@ export default function StockRiskShared({ bumFilter }) {
                       <Fragment>
                         <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQohCur))}</td>
                         <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQohBon))}</td>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQohMmc))}</td>
                         <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQooCur))}</td>
                         <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQooBon))}</td>
+                        <td className="p-2 text-right font-mono text-[12px] font-bold border-b-2 border-[#c5bfb3]">{fmt(Math.round(tQooMmc))}</td>
                       </Fragment>
                     ) : (
                       <Fragment>
@@ -1411,7 +1436,7 @@ export default function StockRiskShared({ bumFilter }) {
                 );
               })()}
               {displayed.length === 0 && (
-                <tr><td colSpan={store === 'all' ? 20 : 18} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
+                <tr><td colSpan={store === 'all' ? 22 : 18} className="p-8 text-center text-[#6b5240]">Geen items gevonden voor dit filter</td></tr>
               )}
               {displayed.slice(0, tableRows).map(function(m, i) {
                 var bg = i % 2 === 0 ? 'bg-white' : 'bg-[#fdfcfb]';
@@ -1430,6 +1455,7 @@ export default function StockRiskShared({ bumFilter }) {
                       <Fragment>
                         <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoh_cur === 0 ? '#a08a74' : '#1B3A5C' }}>{m.qoh_cur === 0 ? '-' : fmt(Math.round(m.qoh_cur))}</td>
                         <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoh_bon === 0 ? '#a08a74' : '#1B3A5C' }}>{m.qoh_bon === 0 ? '-' : fmt(Math.round(m.qoh_bon))}</td>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoh_mmc === 0 ? '#a08a74' : '#1B3A5C' }}>{m.qoh_mmc === 0 ? '-' : fmt(Math.round(m.qoh_mmc))}</td>
                         <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo_cur > 0 ? '#1B3A5C' : '#a08a74' }}
                             title={m.po_list && m.po_list.length > 0
                               ? 'Verwachte leveringen (totaal voor item):\n' + m.po_list.map(function(p) {
@@ -1444,6 +1470,13 @@ export default function StockRiskShared({ bumFilter }) {
                                   return 'PO ' + p.po + ' — ' + (d.getUTCDate() + '/' + (d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()) + ' — ' + p.qty + ' stuks';
                                 }).join('\n')
                               : 'Geen verwachte leveringen geregistreerd'}>{m.qoo_bon > 0 ? fmt(Math.round(m.qoo_bon)) : '-'}</td>
+                        <td className="p-1.5 text-right font-mono text-[11px] border-b border-[#f0ebe5]" style={{ color: m.qoo_mmc > 0 ? '#1B3A5C' : '#a08a74' }}
+                            title={m.po_list && m.po_list.length > 0
+                              ? 'Verwachte leveringen (totaal voor item):\n' + m.po_list.map(function(p) {
+                                  var d = new Date(p.date);
+                                  return 'PO ' + p.po + ' — ' + (d.getUTCDate() + '/' + (d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()) + ' — ' + p.qty + ' stuks';
+                                }).join('\n')
+                              : 'Geen verwachte leveringen geregistreerd'}>{m.qoo_mmc > 0 ? fmt(Math.round(m.qoo_mmc)) : '-'}</td>
                       </Fragment>
                     ) : (
                       <Fragment>
@@ -1535,13 +1568,13 @@ export default function StockRiskShared({ bumFilter }) {
         </div>
       </div>
 
-      {/* Uitleg over Totaal versus Curaçao + Bonaire */}
+      {/* Uitleg over Totaal versus Curaçao + Bonaire + MMC */}
       <div className="bg-[#faf7f4] rounded-[14px] border border-[#e5ddd4] p-5 shadow-sm">
         <h3 className="text-[13px] font-bold mb-2 text-[#1a0a04]">Waarom kan &quot;Totaal&quot; minder kritieke items tonen dan Curaçao alleen?</h3>
         <p className="text-[11px] text-[#6b5240] leading-relaxed mb-2">
           Een item is <b>kritiek</b> als de dekking (QOH+QOO ÷ gem. maandverkoop) minder dan 1 maand is.
-          Bij <b>Totaal</b> worden QOH en QOO van Curaçao én Bonaire bij elkaar opgeteld vóór de classificatie.
-          Een item dat in Curaçao kritiek is maar op Bonaire wel voorraad heeft, kan op Totaal-niveau dus &quot;OK&quot; lijken.
+          Bij <b>Totaal</b> worden QOH en QOO van Curaçao, Bonaire én MMC bij elkaar opgeteld vóór de classificatie.
+          Een item dat in Curaçao kritiek is maar op Bonaire of MMC wel voorraad heeft, kan op Totaal-niveau dus &quot;OK&quot; lijken.
         </p>
         <div className="bg-white border border-[#e5ddd4] rounded-lg p-3 text-[11px] text-[#1a0a04] font-mono mb-2">
           <div className="font-bold mb-1">Voorbeeld:</div>
@@ -1551,8 +1584,8 @@ export default function StockRiskShared({ bumFilter }) {
           <div>Totaal: QOH=25, QOO=0, verkoop=12/mnd → dekking 2,1 mnd → <span className="text-green-600 font-bold">niet kritiek</span></div>
         </div>
         <p className="text-[11px] text-[#6b5240] leading-relaxed">
-          De cijfers kloppen wiskundig, maar er is in de praktijk geen automatische overheveling tussen eilanden.
-          Voor inkoopbeslissingen op één locatie is daarom de view <b>Curaçao</b> of <b>Bonaire</b> meestal nuttiger dan <b>Totaal</b>.
+          De cijfers kloppen wiskundig, maar er is in de praktijk geen automatische overheveling tussen eilanden of winkels.
+          Voor inkoopbeslissingen op één locatie is daarom de view <b>Curaçao</b>, <b>Bonaire</b> of <b>MMC</b> meestal nuttiger dan <b>Totaal</b>.
         </p>
       </div>
     </div>

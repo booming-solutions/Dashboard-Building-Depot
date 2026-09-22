@@ -1,6 +1,17 @@
 /* ============================================================
-   BESTAND: route_email_v34.js
+   BESTAND: route_email_v35.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
+
+   WIJZIGING v35:
+   - processNegativeInventory kent nu 4 regio's ipv 2:
+     · Bonaire: store A (magazijn) + B (winkel)
+     · MMC: store M (Multimart Curacao)
+     · Repair: store R (Repair Centre)
+     · Curacao: 1, 2, 4, 5 (blijven geaggregeerd)
+     Voorheen: M en R vielen onder Curacao, waardoor MMC en Repair
+     verstopt zaten in de Curacao-cijfers van negative_inventory_snapshots.
+   - Historische snapshots blijven ongewijzigd (te rommelig om te
+     backfillen); nieuwe snapshots vanaf nu correct opgesplitst.
 
    WIJZIGING v34:
    - MMC (Multimart Curacao) toegevoegd als 3e geldige regio.
@@ -659,7 +670,16 @@ async function processNegativeInventory(json) {
   negRows.forEach(function(r) {
     var sn = String(r.store_number).trim().toUpperCase();
     if (!sn) return;
-    var region = (sn === 'A' || sn === 'B') ? 'Bonaire' : 'Curacao';
+    // v35: 4 regio's ipv 2.
+    // Bonaire: A (magazijn) + B (winkel)
+    // MMC (Multimart Curacao): M
+    // Repair Centre: R
+    // Curacao winkels: 1, 2, 4, 5 (blijven onder 'Curacao' geaggregeerd)
+    var region;
+    if (sn === 'A' || sn === 'B') region = 'Bonaire';
+    else if (sn === 'M') region = 'MMC';
+    else if (sn === 'R') region = 'Repair';
+    else region = 'Curacao';
 
     var key = region + '|' + r.dept_code;
     if (!snapAgg[key]) {

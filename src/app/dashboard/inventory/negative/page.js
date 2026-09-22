@@ -1,7 +1,24 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v17.js
+   BESTAND: page_negative_inventory_v18.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
-   VERSIE: v3.28.28
+   VERSIE: v3.28.32
+
+   Wijzigingen t.o.v. v17:
+   - NIEUW: 4 regio's in de store-filter (was 2). Voor Negative
+     Inventory zijn deze operationeel relevant om apart te tonen:
+     · Totaal / Curaçao / Bonaire / MMC / Repair
+     · MMC = store 'M' (Multimart Curacao, aparte fysieke winkel op Cur)
+     · Repair = store 'R' (Repair Centre)
+     · Curaçao aggregeert nog steeds 1/2/4/5 (uitsplitsing komt later)
+   - Nieuwe kolom "Ovg MMC" in de detail-tabel naast Ovg CUR en Ovg BON,
+     zodat je vanuit elke tab kunt zien of MMC nog voorraad heeft van
+     dit item. Sortable + in Excel export.
+   - "Ovg REP" niet toegevoegd (jij besloot: Repair kolom niet nodig)
+   - Excel-export bevat "Ovg MMC" en "QOO MMC" kolommen
+   - regioQoh/regioQoo aggregatie neemt nu ook 'MMC' mee
+   - helpers regionOf() en regionCode() uitgebreid met MMC en Repair
+   - Vereist route_email v35+ in de pipeline (region='MMC'/'Repair'
+     opslag in negative_inventory_snapshots)
 
    Wijzigingen t.o.v. v16:
    - Dept 12 wordt samengevoegd met 11.
@@ -168,13 +185,18 @@ function daysSince(d) {
 }
 function regionOf(storeNumber) {
   var s = String(storeNumber || '').trim().toUpperCase();
+  // v3.28.32: 4 regio's (was 2)
   if (s === 'A' || s === 'B') return 'Bonaire';
-  return 'Curacao';
+  if (s === 'M') return 'MMC';
+  if (s === 'R') return 'Repair';
+  return 'Curacao';  // 1, 2, 4, 5 en overig
 }
 function regionCode(storeNumber) {
-  // Geeft 'CUR' of 'BON' terug — gebruikt voor lookup in regioQoh map
+  // Geeft 'CUR', 'BON', 'MMC' of 'REP' terug — gebruikt voor lookup in regioQoh/regioQoo maps
   var s = String(storeNumber || '').trim().toUpperCase();
   if (s === 'A' || s === 'B') return 'BON';
+  if (s === 'M') return 'MMC';
+  if (s === 'R') return 'REP';
   return 'CUR';
 }
 
@@ -365,9 +387,11 @@ export default function NegativeInventoryPage() {
         agg[k].priceSum += iv / qoh;
         agg[k].priceCount += 1;
       }
-      // Region key: 'CUR' of 'BON' (uit regio kolom)
+      // Region key: 'CUR', 'BON' of 'MMC' (uit regio kolom)
+      // v3.28.32: MMC toegevoegd zodat "Ovg MMC" kolom kan worden getoond
+      // Repair niet apart geaggregeerd (Ovg REP kolom niet gevraagd)
       var reg = String(row.regio || '').trim().toUpperCase();
-      if (reg === 'CUR' || reg === 'BON') {
+      if (reg === 'CUR' || reg === 'BON' || reg === 'MMC') {
         var rk = k + '|' + reg;
         if (!regAggQoh[rk]) regAggQoh[rk] = 0;
         regAggQoh[rk] += qoh;
@@ -407,8 +431,11 @@ export default function NegativeInventoryPage() {
 
   /* ── Apply global filters ── */
   function matchFilters(it) {
+    // v3.28.32: 4 regio-filters (was 2)
     if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return false;
     if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return false;
+    if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return false;
+    if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return false;
     if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return false;
     if (selDept !== '__total__' && it.dept_code !== selDept) return false;
     if (qtyFilter && (it.qty_on_hand || 0) >= -5) return false;
@@ -423,6 +450,8 @@ export default function NegativeInventoryPage() {
     items.forEach(function(it) {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
+      if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return;
+      if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return;
       if (it.bum) s[it.bum.toUpperCase()] = true;
     });
     var l = Object.keys(s);
@@ -441,6 +470,8 @@ export default function NegativeInventoryPage() {
     items.forEach(function(it) {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
+      if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return;
+      if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return;
       if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
       if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
       if (valFilter && (it.inv_value || 0) >= -500) return;
@@ -469,6 +500,8 @@ export default function NegativeInventoryPage() {
     items.forEach(function(it) {
       if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
       if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
+      if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return;
+      if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return;
       if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
       if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
       if (valFilter && (it.inv_value || 0) >= -500) return;
@@ -571,6 +604,8 @@ export default function NegativeInventoryPage() {
     snapshots.forEach(function(s) {
       if (store === 'Curacao' && s.region !== 'Curacao') return;
       if (store === 'Bonaire' && s.region !== 'Bonaire') return;
+      if (store === 'MMC' && s.region !== 'MMC') return;
+      if (store === 'Repair' && s.region !== 'Repair') return;
       if (selDept !== '__total__' && s.department_code !== selDept) return;
       // BUM filter via dept→BUM lookup (snapshot tabel heeft geen BUM kolom)
       if (selBum !== 'all') {
@@ -600,6 +635,8 @@ export default function NegativeInventoryPage() {
     snapshots.forEach(function(s) {
       if (store === 'Curacao' && s.region !== 'Curacao') return;
       if (store === 'Bonaire' && s.region !== 'Bonaire') return;
+      if (store === 'MMC' && s.region !== 'MMC') return;
+      if (store === 'Repair' && s.region !== 'Repair') return;
       if (selDept !== '__total__' && s.department_code !== selDept) return;
       var bum = deptToBum[s.department_code];
       if (!bum) return; // dept zonder BUM-mapping → uit grafiek
@@ -762,6 +799,14 @@ export default function NegativeInventoryPage() {
           vb = (regioQoh[rkBb] || 0) - (regionCode(b.store_number) === 'BON' ? (parseFloat(b.qty_on_hand) || 0) : 0);
           break;
         }
+        case 'ovg_mmc': {
+          // v3.28.32: Ovg MMC — voorraad bij MMC Multimart
+          var rkAm = a.item_number + '|MMC';
+          var rkBm = b.item_number + '|MMC';
+          va = (regioQoh[rkAm] || 0) - (regionCode(a.store_number) === 'MMC' ? (parseFloat(a.qty_on_hand) || 0) : 0);
+          vb = (regioQoh[rkBm] || 0) - (regionCode(b.store_number) === 'MMC' ? (parseFloat(b.qty_on_hand) || 0) : 0);
+          break;
+        }
         case 'qoo_cur': va = regioQoo[a.item_number + '|CUR'] || 0; vb = regioQoo[b.item_number + '|CUR'] || 0; break;
         case 'qoo_bon': va = regioQoo[a.item_number + '|BON'] || 0; vb = regioQoo[b.item_number + '|BON'] || 0; break;
         case 'inv_value': va = a.inv_value || 0; vb = b.inv_value || 0; break;
@@ -830,7 +875,12 @@ export default function NegativeInventoryPage() {
     ? snapshots.reduce(function(max, s) { return s.snapshot_date > max ? s.snapshot_date : max; }, snapshots[0].snapshot_date)
     : null;
 
-  var storeName = store === 'all' ? 'Totaal' : store === 'Curacao' ? 'Curaçao' : 'Bonaire';
+  var storeName = store === 'all' ? 'Totaal'
+                : store === 'Curacao' ? 'Curaçao'
+                : store === 'Bonaire' ? 'Bonaire'
+                : store === 'MMC' ? 'MMC'
+                : store === 'Repair' ? 'Repair Centre'
+                : store;
   var dateLabel = latestSnapshotDate ? fmtDateFull(latestSnapshotDate) : '';
 
   return (
@@ -853,6 +903,8 @@ export default function NegativeInventoryPage() {
             <Pill label="Totaal" active={store === 'all'} onClick={function() { setStore('all'); setSelBum('all'); setSelDept('__total__'); }} />
             <Pill label="Curaçao" active={store === 'Curacao'} onClick={function() { setStore('Curacao'); setSelBum('all'); setSelDept('__total__'); }} />
             <Pill label="Bonaire" active={store === 'Bonaire'} onClick={function() { setStore('Bonaire'); setSelBum('all'); setSelDept('__total__'); }} />
+            <Pill label="MMC" active={store === 'MMC'} onClick={function() { setStore('MMC'); setSelBum('all'); setSelDept('__total__'); }} />
+            <Pill label="Repair" active={store === 'Repair'} onClick={function() { setStore('Repair'); setSelBum('all'); setSelDept('__total__'); }} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -922,8 +974,10 @@ export default function NegativeInventoryPage() {
                   var ownQoh = parseFloat(it.qty_on_hand) || 0;
                   var rqCur = regioQoh[it.item_number + '|CUR'];
                   var rqBon = regioQoh[it.item_number + '|BON'];
+                  var rqMmc = regioQoh[it.item_number + '|MMC'];
                   var ovgCur = rqCur === undefined ? '' : (ownRegio === 'CUR' ? (rqCur - ownQoh) : rqCur);
                   var ovgBon = rqBon === undefined ? '' : (ownRegio === 'BON' ? (rqBon - ownQoh) : rqBon);
+                  var ovgMmc = rqMmc === undefined ? '' : (ownRegio === 'MMC' ? (rqMmc - ownQoh) : rqMmc);
                   return {
                     'Dept': it.dept_code,
                     'Departement': it.dept_name,
@@ -934,8 +988,10 @@ export default function NegativeInventoryPage() {
                     'QOH': it.qty_on_hand,
                     'Ovg CUR': ovgCur,
                     'Ovg BON': ovgBon,
+                    'Ovg MMC': ovgMmc,
                     'QOO CUR': regioQoo[it.item_number + '|CUR'] || 0,
                     'QOO BON': regioQoo[it.item_number + '|BON'] || 0,
+                    'QOO MMC': regioQoo[it.item_number + '|MMC'] || 0,
                     'Waarde (XCG)': Math.round(it.inv_value || 0),
                     'Eerste neg.': it.first_seen_date || '',
                     'Status': it.status || '',
@@ -1119,7 +1175,7 @@ export default function NegativeInventoryPage() {
               <table className="w-full border-collapse text-[12px]" style={{ minWidth: '1660px' }}>
                 <thead className="sticky top-0 z-30">
                   <tr className="bg-[#1B3A5C]">
-                    <th colSpan={15} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Items met negatieve voorraad</th>
+                    <th colSpan={16} className="text-center text-white text-[10px] font-bold uppercase tracking-wider py-2">Items met negatieve voorraad</th>
                   </tr>
                   <tr className="bg-[#f0ebe5]">
                     <SortableTh col="store" current={sortCol} dir={sortDir} onClick={handleSort} w="60px">Store</SortableTh>
@@ -1130,6 +1186,7 @@ export default function NegativeInventoryPage() {
                     <SortableTh col="qty_on_hand" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="60px">QOH</SortableTh>
                     <SortableTh col="ovg_cur" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="70px">Ovg CUR</SortableTh>
                     <SortableTh col="ovg_bon" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="70px">Ovg BON</SortableTh>
+                    <SortableTh col="ovg_mmc" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="70px">Ovg MMC</SortableTh>
                     <SortableTh col="qoo_cur" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="70px">QOO CUR</SortableTh>
                     <SortableTh col="qoo_bon" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="70px">QOO BON</SortableTh>
                     <SortableTh col="inv_value" current={sortCol} dir={sortDir} onClick={handleSort} align="right" w="110px">Waarde</SortableTh>
@@ -1158,14 +1215,16 @@ export default function NegativeInventoryPage() {
                         <td className="p-2 text-[12px] border-b border-[#f0ebe5] truncate max-w-[280px]" title={it.item_description}>{it.item_description}</td>
                         <td className="p-2 text-right font-mono text-[12px] border-b border-[#f0ebe5]" style={{ color: '#dc2626' }}>{fmt(it.qty_on_hand)}</td>
                         {(function() {
-                          // Twee cellen renderen: Ovg CUR en Ovg BON
+                          // v3.28.32: Drie Ovg cellen renderen: Ovg CUR, Ovg BON, Ovg MMC
                           // Voor de eigen regio van deze row: regio QOH − eigen QOH
-                          // Voor de andere regio: regio QOH (volledig)
+                          // Voor de andere regio's: regio QOH (volledig)
                           var ownRegio = regionCode(it.store_number);
                           var rkCur = it.item_number + '|CUR';
                           var rkBon = it.item_number + '|BON';
+                          var rkMmc = it.item_number + '|MMC';
                           var rqCur = regioQoh[rkCur];
                           var rqBon = regioQoh[rkBon];
+                          var rqMmc = regioQoh[rkMmc];
                           var ownQoh = parseFloat(it.qty_on_hand) || 0;
 
                           function renderOvgCell(regio, regioQohVal) {
@@ -1203,6 +1262,7 @@ export default function NegativeInventoryPage() {
                           return [
                             <Fragment key="ovg_cur">{renderOvgCell('CUR', rqCur)}</Fragment>,
                             <Fragment key="ovg_bon">{renderOvgCell('BON', rqBon)}</Fragment>,
+                            <Fragment key="ovg_mmc">{renderOvgCell('MMC', rqMmc)}</Fragment>,
                             <Fragment key="qoo_cur">{renderQooCell('CUR', regioQoo[rkCur])}</Fragment>,
                             <Fragment key="qoo_bon">{renderQooCell('BON', regioQoo[rkBon])}</Fragment>,
                           ];
