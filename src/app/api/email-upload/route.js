@@ -1,6 +1,18 @@
 /* ============================================================
-   BESTAND: route_email_v33.js
+   BESTAND: route_email_v34.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
+
+   WIJZIGING v34:
+   - MMC (Multimart Curacao) toegevoegd als 3e geldige regio.
+     Voorheen: alleen CUR en BON werden geaccepteerd; MMC-rijen kregen
+     regio=NULL waardoor MMC-voorraad nergens getoond werd.
+     Nu: MMC krijgt regio='MMC' in buying_data en price_snapshots.
+     MMC-data zit in de "AI Voorraden Daniel BON" Compass file
+     (Store Group = 'MMC', Store Number = 'A'). Multimart is per 1 juni
+     2026 onderdeel van Building Depot geworden.
+   - Frontend Stock Risk krijgt 3e toggle (CUR/BON/MMC) in aparte deploy.
+   - Voorraad vs Budget (inventory_data) en Negative Inventory blijven
+     ongewijzigd; die krijgen aparte fix als Compass daar MMC apart levert.
 
    WIJZIGING v33:
    - Skip-list voor filenames toegevoegd. Files met "red cube" of
@@ -887,7 +899,10 @@ async function processBuying(json, filename) {
     // geaggregeerd, niet per fysieke store). Filtering in dashboard
     // gebeurt op regio.
     var rawStore = String(row[findCol(keys, ['store group', 'store number', 'store'])] || '').trim().toUpperCase();
-    var regio = rawStore === 'CUR' || rawStore === 'BON' ? rawStore : null;
+    // v34: MMC (Multimart Curacao) is een aparte fysieke winkel op Curacao,
+    // sinds 1 juni 2026 onder Building Depot. Komt via de "Daniel BON" Compass
+    // file binnen met Store Group = 'MMC' (Store Number = 'A').
+    var regio = (rawStore === 'CUR' || rawStore === 'BON' || rawStore === 'MMC') ? rawStore : null;
 
     var r = {
       store_number: '',
@@ -1244,7 +1259,8 @@ async function processPriceChanges(json) {
     }
 
     var rawStore = String(row[findCol(keys, ['store group'])] || '').trim().toUpperCase();
-    var regio = (rawStore === 'CUR' || rawStore === 'BON') ? rawStore : null;
+    // v34: MMC (Multimart Curacao) als 3e geldige regio
+    var regio = (rawStore === 'CUR' || rawStore === 'BON' || rawStore === 'MMC') ? rawStore : null;
     if (!regio) {
       skippedNoRegio++;
       return;

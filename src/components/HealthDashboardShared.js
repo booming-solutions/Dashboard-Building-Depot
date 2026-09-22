@@ -1,7 +1,15 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared_v7.js
+   BESTAND: HealthDashboardShared_v8.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
-   VERSIE: v3.28.28
+   VERSIE: v3.28.31
+
+   Wijzigingen t.o.v. v7 (v3.28.28):
+   - NIEUW: MMC (Multimart Curacao) als derde locatie naast CUR en BON.
+     · Nieuwe pill "MMC" bovenaan naast Curaçao en Bonaire (store = 'M')
+     · Filter op regio='MMC' uit buying_data
+     · storeName + Excel-filename + reportTitle ondersteunen MMC
+     · Voorraadwaarde MMC in XCG (geen USD-conversie, MMC ligt op Curacao)
+   - Vereist route_email v34+ in de pipeline (regio='MMC' opslag)
 
    Wijzigingen t.o.v. v6:
    - Dept 12 wordt samengevoegd met 11 (via @/lib/dept-merge).
@@ -153,10 +161,12 @@ export default function HealthDashboardShared({ bumFilter }) {
   var items = useMemo(function() {
     var cFactor = store === 'B' ? 1.82 : 1;
     var filtered = data.filter(function(r) {
-      // FIX: filter op regio kolom (CUR/BON) sinds buying-pipeline v17.
+      // FIX: filter op regio kolom (CUR/BON/MMC) sinds buying-pipeline v17.
       // store_number is nu leeg bij nieuwe buying-data.
+      // v34: MMC (Multimart Curacao) toegevoegd als derde regio.
       if (store === '1') return r.regio === 'CUR';
       if (store === 'B') return r.regio === 'BON';
+      if (store === 'M') return r.regio === 'MMC';
       return true;
     });
 
@@ -464,7 +474,7 @@ export default function HealthDashboardShared({ bumFilter }) {
   if (loading) return <LoadingLogo text={'Gezondheid laden' + (bumFilter ? ' (' + bumFilter + ')' : '') + '...'} />;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">{"Geen data beschikbaar" + (bumFilter ? " voor " + bumFilter : "") + "."}</p></div>;
 
-  var storeName = store === '1' ? 'Curaçao' : 'Bonaire';
+  var storeName = store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'MMC';
   var updateLabel = lastUpdate ? 'Data t/m ' + (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
 
   // Stacked bar render helper
@@ -501,6 +511,7 @@ export default function HealthDashboardShared({ bumFilter }) {
           <div className="flex gap-1">
             <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} />
             <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} />
+            <Pill label="MMC" active={store === 'M'} onClick={function() { setStore('M'); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -626,8 +637,8 @@ export default function HealthDashboardShared({ bumFilter }) {
           })}
         </div>
         <ExcelExportButton
-          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraadgezondheid_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : 'Bonaire'); })()}
-          reportTitle={'Gezondheid Voorraden — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : 'Bonaire')}
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraadgezondheid_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'MMC'); })()}
+          reportTitle={'Gezondheid Voorraden — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'MMC')}
           sheets={buildExportSheets}
           className="px-4 py-1.5 mb-1 rounded-lg text-[12px] font-semibold border bg-white text-[#E84E1B] border-[#E84E1B] hover:bg-[#faf5f0] transition-colors"
         />
