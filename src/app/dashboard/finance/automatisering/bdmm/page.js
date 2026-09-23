@@ -305,14 +305,26 @@ export default function BdmmPage() {
   useEffect(() => { laadHistorie(); }, [laadHistorie]);
 
   /** Een eerdere (of klaargezette) BDMM-batch aan Booming geven; al geboekte regels slaat Booming over. */
-  function hervatBatch(b) {
+  function batchRecVan(b) {
     const host = typeof window !== 'undefined' ? window.location.host : 'boomingsolutions.ai';
-    const rec = {
+    return {
       id: b.id, batchId: b.batch_id, token: b.token, store: b.store,
       launch: `eagleprepay://batch/${b.id}?t=${b.token}&h=${encodeURIComponent(host)}`,
       bestandsnaam: `bdmm-${b.batch_id}.eaglebatch`,
       payload: { ...(b.payload || {}), rapportage: { id: b.id, token: b.token, host } },
     };
+  }
+
+  /** Batch alleen tonen (regels + logboek in stap 5), zonder Booming te starten — voor een visuele controle vooraf. */
+  function bekijkBatch(b) {
+    setBatchRec(batchRecVan(b));
+    setLive(null);
+    setLaunched(false);
+    setTimeout(() => voortgangRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+  }
+
+  function hervatBatch(b) {
+    const rec = batchRecVan(b);
     setBatchRec(rec);
     setLive(null);
     startBooming(rec.launch);
@@ -741,7 +753,9 @@ export default function BdmmPage() {
                   <div className="px-5 py-4 border-b border-gray-200 flex items-center gap-4 flex-wrap">
                     <BatchPill status={status} />
                     <div className="text-[13px] text-gray-600">
-                      {status === 'klaar' && !launched && 'Booming is nog niet gestart.'}
+                      {status === 'klaar' && !launched && <>Booming is nog niet gestart — controleer de regels hieronder en klik dan op{' '}
+                        <button type="button" onClick={() => startBooming(batchRec.launch)}
+                          className="ml-1 px-3 py-1 rounded-lg bg-[#1B3A5C] text-white text-[12px] font-semibold hover:brightness-110 align-middle">Starten in Eagle</button></>}
                       {status === 'klaar' && launched && 'Wacht tot je in het Booming-venster op Enter drukt…'}
                       {status === 'bezig' && (b?.laatste_bericht || 'Bezig…')}
                       {status === 'afgerond' && <span className="text-emerald-700 font-medium">{b?.geboekt ?? 0} geboekt{b?.overgeslagen ? `, ${b.overgeslagen} al eerder gedaan` : ''}{b?.fout ? <span className="text-amber-700">, {b.fout} uitzondering(en) — zie hieronder</span> : ''}.</span>}
@@ -844,15 +858,13 @@ export default function BdmmPage() {
                     <td className="px-3 py-2 text-right font-mono tabular-nums">{nlAmount(b.totaal_xcg)}</td>
                     <td className="px-3 py-2 whitespace-nowrap"><BatchPill status={b.status} /><div className="text-[10.5px] text-gray-400">{BATCH_LABEL[b.status] || b.status}</div></td>
                     <td className="px-3 py-2 whitespace-nowrap text-right">
+                      <button type="button" onClick={() => bekijkBatch(b)}
+                        className="mr-2 px-3 py-1 rounded-lg border border-gray-300 text-[12px] font-semibold text-[#1B3A5C] hover:bg-gray-50">Bekijken</button>
                       {b.tel.open > 0 && (
                         <button type="button" onClick={() => hervatBatch(b)}
                           className="px-3 py-1 rounded-lg bg-[#1B3A5C] text-white text-[12px] font-semibold hover:brightness-110">
                           {b.status === 'klaar' ? 'Starten in Eagle' : 'Hervatten'}
                         </button>
-                      )}
-                      {b.tel.open === 0 && batchRec?.id !== b.id && (
-                        <button type="button" onClick={() => { setBatchRec({ id: b.id, batchId: b.batch_id, token: b.token, store: b.store, launch: null, payload: b.payload }); setLive(null); setTimeout(() => voortgangRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300); }}
-                          className="text-[12px] text-[#1B3A5C] underline underline-offset-2">Bekijken</button>
                       )}
                     </td>
                   </tr>
