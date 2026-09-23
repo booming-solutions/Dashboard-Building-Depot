@@ -116,6 +116,12 @@ export default function BdmmPage() {
   const [launched, setLaunched] = useState(false);
   const [showPayload, setShowPayload] = useState(false);
   const voortgangRef = useRef(null);
+  // historie: BDMM-batches in een periode (ook correctiebatches), met hervatten
+  const [histVan, setHistVan] = useState(() => { const d = new Date(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`; });
+  const [histTot, setHistTot] = useState(() => toISODate(new Date()));
+  const [hist, setHist] = useState(null);
+  const [histBusy, setHistBusy] = useState(false);
+  const historieRef = useRef(null);
 
   const minDatum = useMemo(() => minBoekdatum(vandaag), [vandaag]);
   const maxDatum = useMemo(() => new Date(Date.UTC(vandaag.getUTCFullYear(), vandaag.getUTCMonth(), vandaag.getUTCDate())), [vandaag]);
@@ -261,6 +267,60 @@ export default function BdmmPage() {
     } catch { /* niets */ }
   }
 
+  /* -------------------------------------------------- historie (BDMM) */
+
+  const laadHistorie = useCallback(async () => {
+    setHistBusy(true);
+    try {
+      const supabase = createClient();
+      const { data: batches, error } = await supabase
+        .from('eagle_prepay_batches')
+        .select('id,batch_id,token,soort,koers_norm,entiteit,entiteit_naam,store,voucher_date,bestand,aantal_regels,aantal_handmatig,totaal_xcg,status,laatste_bericht,eagle_store,eagle_user,geboekt,overgeslagen,created_by,created_at,finished_at,payload')
+        .eq('soort', 'bdmm')
+        .gte('created_at', `${histVan}T00:00:00.000Z`).lte('created_at', `${histTot}T23:59:59.999Z`)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const ids = (batches || []).map(b => b.id);
+      let rows = [];
+      if (ids.length) {
+        const r = await supabase.from('eagle_prepay_rows').select('batch_uuid,status').in('batch_uuid', ids);
+        if (r.error) throw r.error;
+        rows = r.data || [];
+      }
+      const tel = {};
+      rows.forEach(r => {
+        const t = (tel[r.batch_uuid] = tel[r.batch_uuid] || { geboekt: 0, open: 0, fout: 0 });
+        if (r.status === 'geboekt' || r.status === 'overgeslagen') t.geboekt += 1;
+        else if (r.status === 'wachten' || r.status === 'bezig') t.open += 1;
+        else t.fout += 1;
+      });
+      setHist({ batches: (batches || []).map(b => ({ ...b, tel: tel[b.id] || { geboekt: 0, open: 0, fout: 0 } })), fout: null });
+    } catch (err) {
+      setHist({ batches: [], fout: err.message || String(err) });
+    } finally {
+      setHistBusy(false);
+    }
+  }, [histVan, histTot]);
+
+  useEffect(() => { laadHistorie(); }, [laadHistorie]);
+
+  /** Een eerdere (of klaargezette) BDMM-batch aan Booming geven; al geboekte regels slaat Booming over. */
+  function hervatBatch(b) {
+    const host = typeof window !== 'undefined' ? window.location.host : 'boomingsolutions.ai';
+    const rec = {
+      id: b.id, batchId: b.batch_id, token: b.token, store: b.store,
+      launch: `eagleprepay://batch/${b.id}?t=${b.token}&h=${encodeURIComponent(host)}`,
+      bestandsnaam: `bdmm-${b.batch_id}.eaglebatch`,
+      payload: { ...(b.payload || {}), rapportage: { id: b.id, token: b.token, host } },
+    };
+    setBatchRec(rec);
+    setLive(null);
+    startBooming(rec.launch);
+    setTimeout(() => voortgangRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+  }
+
+  const BATCH_LABEL = { klaar: 'Klaargezet, niet gestart', bezig: 'Bezig / afgebroken', afgerond: 'Afgerond', gestopt: 'Gestopt' };
+
   useEffect(() => {
     if (!batchRec?.id) return undefined;
     const supabase = createClient();
@@ -311,14 +371,14 @@ export default function BdmmPage() {
           <h1 className="text-[24px] font-bold text-[#1B3A5C] mt-1">BDMM-facturen boeken in Eagle</h1>
           <p className="text-[13px] text-gray-500 mt-1 max-w-[66ch]">
             Upload het Exact-uittreksel van BDMM Trading (tabbladen BDT, BDB, MMC, RCC), kies de koers, bevestig wat opvalt,
-            en laat Booming per entiteit de facturen (R) en creditnota&apos;s (C) in Eagle boeken.
+            en laat Booming per entiteit de facturen (Debet → Trx Type C) en creditnota&apos;s (Credit → Trx Type R) in Eagle boeken.
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <a href="/api/private/werkinstructie-vooruitbetalingen" target="_blank" rel="noopener"
             className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12.5px] font-semibold text-[#1B3A5C] hover:bg-gray-50">Werkinstructie</a>
-          <a href="/dashboard/finance/vooruitbetalingen#historie"
-            className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12.5px] font-semibold text-[#1B3A5C] hover:bg-gray-50">Historie</a>
+          <button type="button" onClick={() => { laadHistorie(); setTimeout(() => historieRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}
+            className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12.5px] font-semibold text-[#1B3A5C] hover:bg-gray-50">Historie</button>
           <span className="inline-flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 px-3 py-1 text-[11px] font-bold uppercase tracking-wider">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />Preview
           </span>
@@ -736,6 +796,72 @@ export default function BdmmPage() {
           </div>
         </div>
       )}
+
+      {/* HISTORIE — BDMM-batches (incl. correctiebatches) */}
+      <div ref={historieRef} id="historie" className="flex items-baseline gap-3 mb-3 mt-2">
+        <span className="text-[12px] font-bold text-[#1B3A5C] bg-[#1B3A5C]/10 rounded px-2 py-0.5">H</span>
+        <h2 className="text-[15px] font-semibold text-[#1B3A5C]">Historie BDMM</h2>
+        <span className="text-[12px] text-gray-400">Alle BDMM-batches in de periode. Klaargezette of afgebroken batches start je hier; Booming slaat al geboekte regels over.</span>
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-7">
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center gap-3 flex-wrap text-[13px]">
+          <label className="flex items-center gap-2">Van
+            <input type="date" value={histVan} max={histTot} onChange={e => e.target.value && setHistVan(e.target.value)}
+              className="rounded-lg border border-gray-300 px-2 py-1 text-[13px]" />
+          </label>
+          <label className="flex items-center gap-2">Tot
+            <input type="date" value={histTot} min={histVan} onChange={e => e.target.value && setHistTot(e.target.value)}
+              className="rounded-lg border border-gray-300 px-2 py-1 text-[13px]" />
+          </label>
+          <button type="button" onClick={laadHistorie} disabled={histBusy}
+            className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12.5px] font-semibold text-[#1B3A5C] hover:bg-gray-50 disabled:opacity-50">
+            {histBusy ? 'Ophalen…' : 'Vernieuwen'}
+          </button>
+          <a href="/dashboard/finance/vooruitbetalingen#historie" className="ml-auto text-[12px] text-gray-500 underline underline-offset-2">Volledige historie met Excel-export (Keukendepot én BDMM)</a>
+        </div>
+        {hist?.fout && <div className="px-5 py-4 text-[13px] text-red-700">Historie ophalen mislukt: {hist.fout}</div>}
+        {hist && !hist.fout && !hist.batches.length && <div className="px-5 py-6 text-center text-[13px] text-gray-400">Geen BDMM-batches in deze periode.</div>}
+        {!hist && <div className="px-5 py-6 text-center text-[13px] text-gray-400">Historie wordt opgehaald…</div>}
+        {hist && hist.batches.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-[13px]">
+              <thead><tr className="bg-gray-50 border-b border-gray-200">
+                {['Ingelezen op', 'Batch', 'Bestand', 'Entiteit', 'Regels', 'Geboekt', 'Open', 'Fout', 'XCG', 'Status', ''].map((h, i) => (
+                  <th key={i} className={`px-3 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-gray-400 whitespace-nowrap ${[4, 5, 6, 7, 8].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {hist.batches.map(b => (
+                  <tr key={b.id} className={`border-b border-gray-100 ${batchRec?.id === b.id ? 'bg-blue-50' : ''}`}>
+                    <td className="px-3 py-2 whitespace-nowrap text-gray-600">{new Date(b.created_at).toLocaleString('nl-NL', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                    <td className="px-3 py-2 font-mono text-[12px] text-[#1B3A5C] whitespace-nowrap">{b.batch_id}</td>
+                    <td className="px-3 py-2 text-[12px] text-gray-600 max-w-[280px]"><div className="line-clamp-2">{b.bestand || ''}</div></td>
+                    <td className="px-3 py-2 whitespace-nowrap">{b.entiteit_naam || b.entiteit}<div className="font-mono text-[10.5px] text-gray-400">Store {b.store}{b.koers_norm ? ` · koers ${b.koers_norm}` : ''}</div></td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{b.aantal_regels}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-emerald-700">{b.tel.geboekt}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-500">{b.tel.open}</td>
+                    <td className={`px-3 py-2 text-right font-mono tabular-nums ${b.tel.fout ? 'text-amber-700 font-semibold' : 'text-gray-400'}`}>{b.tel.fout}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{nlAmount(b.totaal_xcg)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap"><BatchPill status={b.status} /><div className="text-[10.5px] text-gray-400">{BATCH_LABEL[b.status] || b.status}</div></td>
+                    <td className="px-3 py-2 whitespace-nowrap text-right">
+                      {b.tel.open > 0 && (
+                        <button type="button" onClick={() => hervatBatch(b)}
+                          className="px-3 py-1 rounded-lg bg-[#1B3A5C] text-white text-[12px] font-semibold hover:brightness-110">
+                          {b.status === 'klaar' ? 'Starten in Eagle' : 'Hervatten'}
+                        </button>
+                      )}
+                      {b.tel.open === 0 && batchRec?.id !== b.id && (
+                        <button type="button" onClick={() => { setBatchRec({ id: b.id, batchId: b.batch_id, token: b.token, store: b.store, launch: null, payload: b.payload }); setLive(null); setTimeout(() => voortgangRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300); }}
+                          className="text-[12px] text-[#1B3A5C] underline underline-offset-2">Bekijken</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
