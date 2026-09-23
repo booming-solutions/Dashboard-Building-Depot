@@ -12,8 +12,10 @@
          BDB (Building Depot Bonaire)           4815  entiteit 700
          MMC (Multimart)                        4814  entiteit 600
          RCC (Repair Center Curaçao)            4816  entiteit 400
-     - Debet-regel  = factuur       -> Trx Type R
-       Credit-regel = creditnota    -> Trx Type C
+     - Debet-regel  (kolom H) = factuur     -> Trx Type C
+       Credit-regel (kolom I) = creditnota  -> Trx Type R
+       (Let op: dit is bewust omgekeerd t.o.v. de eerste versie van 21-9-2026;
+       de boekingen van die dag zijn met een correctiebatch rechtgezet.)
      - Bedragen in het bestand zijn EUR; geboekt wordt in XCG:
        XCG = EUR × koers (standaard 2,00; per batch aanpasbaar).
      - AP-rekening 2000-{entiteit}, distributie 2099-{entiteit}.
@@ -185,7 +187,7 @@ export function analyseRowsBdmm(rawRows, vendor, koers, eerder = {}) {
     const row = { ...r, errors: [], flags: [] };
     row.dedupeKey = `${vendor}|${row.onzeRef}`;
     row.xcg = xcgVanEur(row.eur, koers);
-    row.trxType = row.isCredit ? 'C' : 'R';
+    row.trxType = row.isCredit ? 'R' : 'C';   // Debet (H) = C, Credit (I) = R
     row.voucherRef = buildVoucherRefBdmm(row.eur);
 
     if (!row.onzeRef) row.errors.push('Kolom "Onze ref." is leeg — geen factuurnummer.');
@@ -212,7 +214,7 @@ export function analyseRowsBdmm(rawRows, vendor, koers, eerder = {}) {
       row.flags.push({ code: 'DUBBEL FACTUUR', text: `Factuurnummer ${row.onzeRef} staat ${perRef[row.onzeRef].length}× op dit tabblad (rij ${perRef[row.onzeRef].join(', ')}).` });
     }
     if (row.isCredit) {
-      row.flags.push({ code: 'CREDIT', text: `Creditnota van EUR ${money(row.eur)} — wordt geboekt als Trx Type C (in plaats van R).` });
+      row.flags.push({ code: 'CREDIT', text: `Creditnota van EUR ${money(row.eur)} — wordt geboekt als Trx Type R (in plaats van C).` });
     }
     if (row.bkst && row.onzeRef && row.bkst !== row.onzeRef) {
       row.flags.push({ code: 'REF WIJKT AF', text: `Bkst.nr. (${row.bkst}) en Onze ref. (${row.onzeRef}) verschillen; Onze ref. wordt als factuurnummer gebruikt.` });
@@ -260,6 +262,11 @@ export function buildBatchBdmm({ rows, rowState, entiteit, boekdatumISO, koers, 
       bevestigingen: r.flags.map(f => f.code),
       bedragAangepast: false,
       dedupeKey: r.dedupeKey,
+      isCredit: !!r.isCredit,
+      // typeVersie 2 = Debet (H) -> C, Credit (I) -> R. Batches zonder dit
+      // veld (21-9-2026) hadden het omgekeerd; Boekingscheck draait die om
+      // bij opnieuw boeken.
+      typeVersie: 2,
     };
   });
   const handmatig = rows.filter(r => isManualBdmm(r, rowState[r.excelRow])).map(r => ({

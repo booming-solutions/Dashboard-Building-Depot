@@ -225,7 +225,7 @@ export default function BoekingscheckPage() {
       const supabase = createClient();
       const ids = Array.from(new Set(gekozen.map(r => r.info.batchUuid)));
       const { data: batches, error } = await supabase
-        .from('eagle_prepay_batches').select('id,batch_id,entiteit,entiteit_naam,voucher_date,payload').in('id', ids);
+        .from('eagle_prepay_batches').select('id,batch_id,entiteit,entiteit_naam,voucher_date,payload,soort').in('id', ids);
       if (error) throw error;
       const perId = {}; (batches || []).forEach(b => { perId[b.id] = b; });
       const regels = [];
@@ -240,7 +240,21 @@ export default function BoekingscheckPage() {
       if (!regels.length) throw new Error('Geen oorspronkelijke regels gevonden bij de selectie.');
       if (entiteiten.size > 1) throw new Error('Kies regels van één entiteit tegelijk (Curaçao óf Bonaire).');
       const bron = regels[0]._bron;
-      const nieuw = regels.map(({ _bron, ...r }, i) => ({ ...r, rij: r.rij }));
+      const soort = bron.soort || 'keukendepot';
+      const nieuw = regels.map(({ _bron, ...r }) => {
+        if (soort === 'bdmm' && r.typeVersie !== 2) {
+          // Oude BDMM-batch (21-9-2026): Debet stond als R en Credit als C,
+          // dat moet andersom (Debet = C, Credit = R). Distributie altijd 2099.
+          const sub = r.distribution?.account?.[1] ?? bron.entiteit;
+          return {
+            ...r,
+            trxType: r.trxType === 'R' ? 'C' : 'R',
+            typeVersie: 2,
+            distribution: { ...(r.distribution || {}), account: ['2099', sub] },
+          };
+        }
+        return { ...r };
+      });
       const batch = {
         batchId: null,
         bestand: `Opnieuw boeken (${nieuw.length}) uit ${fileName || 'Boekingscheck'}`,
@@ -249,6 +263,7 @@ export default function BoekingscheckPage() {
         apRekening: bron.payload?.apRekening, distributieRekening: bron.payload?.distributieRekening,
         koersNorm: bron.payload?.koersNorm ?? null,
         regels: nieuw, handmatig: [], opnieuw: true,
+        soort,
       };
       const resp = await fetch('/api/finance/prepay/batches', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch }),

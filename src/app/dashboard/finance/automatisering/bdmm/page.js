@@ -7,7 +7,7 @@
    als batch door Booming in Eagle laten boeken — dezelfde opzet als
    Keukendepot (Vooruitbetalingen).
 
-   - Debet = factuur (Trx Type R), Credit = creditnota (Trx Type C).
+   - Debet (kolom H) = factuur (Trx Type C), Credit (kolom I) = creditnota (Trx Type R).
    - EUR × koers = XCG (koers standaard 2,00, per batch aanpasbaar).
    - AP 2000-{entiteit}, distributie 2099-{entiteit}, Terms Code 1.
    - Boekdatum: laatste dag vorige maand, max 50 dagen terug.
@@ -355,7 +355,7 @@ export default function BdmmPage() {
         <div className="rounded-xl border border-gray-200 p-4 bg-white">
           <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400">Vaste waarden</div>
           <dl className="mt-2 grid grid-cols-[130px_1fr] gap-y-1 text-[12.5px]">
-            <dt className="text-gray-400">Debet / Credit</dt><dd className="font-mono text-[#1B3A5C]">Trx Type R / C</dd>
+            <dt className="text-gray-400">Debet / Credit</dt><dd className="font-mono text-[#1B3A5C]">Trx Type C / R</dd>
             <dt className="text-gray-400">AP-rekening</dt><dd className="font-mono text-[#1B3A5C]">{BDMM_CONFIG.apAccountMain}-entiteit</dd>
             <dt className="text-gray-400">Distributie</dt><dd className="font-mono text-[#1B3A5C]">{BDMM_CONFIG.distributionAccountMain}-entiteit</dd>
             <dt className="text-gray-400">Terms Code</dt><dd className="font-mono text-[#1B3A5C]">{BDMM_CONFIG.termsCode} ({BDMM_CONFIG.termsCodeLabel})</dd>
@@ -434,7 +434,7 @@ export default function BdmmPage() {
         <Tile k="Regels" v={rows.length || '—'} s={huidig ? `tabblad ${huidig.naam}` : 'kies een tabblad'} />
         <Tile k="Te boeken EUR" v={rows.length ? nlAmount(totEur) : '—'} s={`${batchRows.length} regel(s)`} />
         <Tile k="Te boeken XCG" v={rows.length ? nlAmount(totXcg) : '—'} s={`koers ${Number.isFinite(koersNum) ? koersNum : '—'}`} tone={batchRows.length ? 'ok' : null} />
-        <Tile k="Creditnota's" v={rows.length ? nCredit : '—'} s="Trx Type C" tone={nCredit ? 'warn' : null} />
+        <Tile k="Creditnota's" v={rows.length ? nCredit : '—'} s="Trx Type R" tone={nCredit ? 'warn' : null} />
         <Tile k="Te bevestigen" v={rows.length ? actionRows.length : '—'} s={actionRows.length ? 'vraagt om een keuze' : 'niets open'} tone={actionRows.length ? 'warn' : null} />
         <Tile k="Handmatig" v={rows.length ? manualRows.length : '—'} s={manualRows.length ? 'gaat niet mee' : 'geen'} tone={manualRows.length ? 'err' : null} />
       </div>
