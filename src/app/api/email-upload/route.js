@@ -1,6 +1,15 @@
 /* ============================================================
-   BESTAND: route_email_v35.js
+   BESTAND: route_email_v36.js
    KOPIEER NAAR: src/app/api/email-upload/route.js
+
+   WIJZIGING v36:
+   - processInventory accepteert nu 'MMC' als Store Group.
+     Store Group 'MMC' → store_number 'M' in inventory_data.
+     Voorheen: MMC-rijen werden geskipt door de "if (store !== '1' &&
+     store !== 'B') return" filter.
+   - Voorwaarde: Compass "Inventory value (act vs bud vs 6m)" moet
+     Store Group MMC gaan meesturen (Compass-configuratie, buiten deze code).
+   - Als Compass MMC nog niet levert, is deze wijziging inert (geen effect).
 
    WIJZIGING v35:
    - processNegativeInventory kent nu 4 regio's ipv 2:
@@ -478,7 +487,8 @@ async function processInventory(json) {
   var rows = [];
   json.forEach(function(row) {
     var storeRaw = String(row[findCol(keys, ['store group'])] || '').trim().toUpperCase();
-    var store = storeRaw === 'CUR' ? '1' : storeRaw === 'BON' ? 'B' : storeRaw;
+    // v36: MMC (Multimart Curaçao) toegevoegd als 3e store. Store Group 'MMC' → store_number 'M'.
+    var store = storeRaw === 'CUR' ? '1' : storeRaw === 'BON' ? 'B' : storeRaw === 'MMC' ? 'M' : storeRaw;
     var rawDeptCode = String(row[findCol(keys, ['department code'])] || '').trim();
     var rawDeptName = String(row[findCol(keys, ['department name'])] || '').trim();
     var bum = String(row[findCol(keys, ['department group'])] || '').trim();
@@ -488,7 +498,7 @@ async function processInventory(json) {
     // Skip empty rows and 'GRAND SUMMARIES' totaal-rij uit Compass
     if (!rawDeptCode) return;
     if (storeRaw === 'GRAND SUMMARIES' || storeRaw === '') return;
-    if (store !== '1' && store !== 'B') return;
+    if (store !== '1' && store !== 'B' && store !== 'M') return;
 
     // Niet-numerieke dept codes (FA/FC/FE/FF/XX) samenvoegen tot 'OTHER'
     var isNumeric = /^\d+$/.test(rawDeptCode);

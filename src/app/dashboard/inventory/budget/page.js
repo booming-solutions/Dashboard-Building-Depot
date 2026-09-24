@@ -1,7 +1,29 @@
 /* ============================================================
-   BESTAND: page_budget_v2.js
+   BESTAND: page_budget_v3.js
    KOPIEER NAAR: src/app/dashboard/inventory/budget/page.js
-   VERSIE: v3.29.1 — dept 11+12 merge in UI
+   VERSIE: v3.30 — MMC toegevoegd + leverancier-filter
+
+   WIJZIGINGEN T.O.V. v3.29.1:
+   - NIEUW: MMC (Multimart Curaçao) als 4e pill naast Totaal/Curaçao/Bonaire.
+     · Filter op store_number = 'M' in inventory_data
+     · MMC waarde in XCG (geen USD-conversie, ligt op Curaçao)
+     · MMC heeft geen budget (net als Bonaire) → 'n.v.t.' in KPI's
+     · Totaal telt nu CUR + BON (×1.82) + MMC
+     · Vereist: Compass "Inventory value" export moet Store Group MMC gaan
+       meesturen. Route_email v36+ accepteert store 'M' in processInventory.
+     · Vereist óók: buying_data pipeline v34+ (regio='MMC' opslag)
+
+   - NIEUW: leverancier-dropdown. Kies één leverancier om de voorraad
+     over tijd voor die vendor te zien.
+     · Bron: buying_data (latest upload_date) — daar staat vendor_code
+       per item, plus totale inv_value_at_cost per (store, dept, vendor).
+     · Berekening: proportionele schaling — als leverancier X in dept Y
+       30% van de buying_data waarde vertegenwoordigt, tellen we 30% van
+       de inventory_value van dept Y mee. Werkt zonder schema-wijziging
+       aan inventory_data.
+     · Werkt voor CUR / BON / MMC / Totaal (mits buying_data ook die
+       regio bevat).
+     · Nog geen budget-per-vendor (komt later — volgens plan).
 
    WIJZIGINGEN T.O.V. v3.29:
    - Dept 12 wordt samengevoegd met 11 (in lijn met andere voorraad-rapporten)
@@ -32,7 +54,7 @@ var MN = ['Jan','Feb','Mrt','Apr','Mei','Jun','Jul','Aug','Sep','Okt','Nov','Dec
 var fmt = function(n) { return (n || 0).toLocaleString('nl-NL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
 var fmtK = function(n) { var a = Math.abs(n || 0); return (n < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : (a / 1e3).toFixed(0) + 'K'); };
 var fmtP = function(n) { return (n || 0).toFixed(1) + '%'; };
-var SN = { '1': 'Curaçao', 'B': 'Bonaire' };
+var SN = { '1': 'Curaçao', 'B': 'Bonaire', 'M': 'MMC' };
 var XCG_USD = 1.82;
 
 function pctColor(pct) {
@@ -86,6 +108,11 @@ export default function InventoryDashboard() {
   var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = _s('__total__'), selDept = _dept[0], setSelDept = _dept[1];
   var _bg = _s([]), bumGroups = _bg[0], setBumGroups = _bg[1];  // [{code, display_name, sort_order}]
+  // v3.30: leverancier filter (via buying_data lookup)
+  var _ven = _s('all'), selVendor = _ven[0], setSelVendor = _ven[1];
+  var _vm = _s({}), vendorByItem = _vm[0], setVendorByItem = _vm[1];   // { item_number: { code, name } }
+  var _vl = _s([]), vendorList = _vl[0], setVendorList = _vl[1];         // [{code, name}]
+  var _de = _s({}), deptByVendor = _de[0], setDeptByVendor = _de[1];     // { store|dept: { vendor_code: inv_value } }
   var trendRef = useRef(null);
   var chartRef = useRef(null);
 
@@ -115,6 +142,53 @@ export default function InventoryDashboard() {
     // Load bum_groups voor display namen + volgorde
     var bg = await supabase.from('bum_groups').select('*').eq('active', true).order('sort_order');
 
+    // v3.30: Laad vendor lookup uit buying_data (latest upload_date).
+    // Bouwt twee mappings:
+    // 1) vendorByItem: per item welke leverancier (voor filter-controle)
+    // 2) deptByVendor: per (store|dept) hoeveel inv_value per vendor_code — gebruikt
+    //    om proportioneel te schalen: als leverancier X in dept Y 30% van de buying_data
+    //    waarde vertegenwoordigt, tellen we 30% van de inventory-waarde van dept Y mee.
+    // Ook: verzamel unieke leveranciers voor de dropdown.
+    var latestUpload = await supabase.from('buying_data').select('upload_date').order('upload_date', { ascending: false }).limit(1);
+    var latestDate = latestUpload.data && latestUpload.data.length ? latestUpload.data[0].upload_date : null;
+    var vMap = {};    // item_number → {code, name}
+    var vSet = {};    // vendor_code → vendor_name
+    var deptVenMap = {};  // 'store|dept' → { vendor_code: inv_value }
+    if (latestDate) {
+      var bAll = [], bFrom = 0, bStep = 1000;
+      while (true) {
+        var br = await supabase.from('buying_data')
+          .select('item_number, vendor_code, vendor_name, regio, dept_code, inv_value_at_cost, qoh')
+          .eq('upload_date', latestDate)
+          .range(bFrom, bFrom + bStep - 1);
+        if (!br.data || !br.data.length) break;
+        bAll = bAll.concat(br.data);
+        if (br.data.length < bStep) break;
+        bFrom += bStep;
+      }
+      bAll.forEach(function(r) {
+        var vc = String(r.vendor_code || '').trim();
+        var vn = String(r.vendor_name || '').trim();
+        if (!vc || vc === '0') return;
+        if (r.item_number && !vMap[r.item_number]) vMap[r.item_number] = { code: vc, name: vn };
+        if (!vSet[vc]) vSet[vc] = vn;
+        // Store mapping: 'CUR' → '1', 'BON' → 'B', 'MMC' → 'M'
+        var storeKey = r.regio === 'CUR' ? '1' : r.regio === 'BON' ? 'B' : r.regio === 'MMC' ? 'M' : null;
+        if (!storeKey) return;
+        var deptCode = String(r.dept_code || '').trim();
+        if (!deptCode) return;
+        // Voor dept 12 → merge naar 11 (consistent met de rest van de pagina)
+        if (deptCode === '12') deptCode = '11';
+        var vKey = storeKey + '|' + deptCode;
+        if (!deptVenMap[vKey]) deptVenMap[vKey] = {};
+        // Bonaire buying_data is in USD → converteren naar XCG voor consistentie
+        var val = Math.abs(parseFloat(r.inv_value_at_cost) || 0) * (storeKey === 'B' ? XCG_USD : 1);
+        deptVenMap[vKey][vc] = (deptVenMap[vKey][vc] || 0) + val;
+      });
+    }
+    var vList = Object.keys(vSet).map(function(c) { return { code: c, name: vSet[c] }; });
+    vList.sort(function(a, b) { return a.name.localeCompare(b.name); });
+
     // Eerst: roll dept 12 → 11 op de raw dept_code velden (via shared helper).
     // Daarna: ook op effective_dept_code/_name, want de pagina aggregeert op die velden.
     // De inventory_data_enriched view doet al andere merges (31+32→30) maar nog niet 11+12.
@@ -139,13 +213,19 @@ export default function InventoryDashboard() {
     setData(merged);
     setQooData(qooMap);
     setBumGroups(bg.data || []);
+    setVendorByItem(vMap);
+    setVendorList(vList);
+    setDeptByVendor(deptVenMap);
     setLoading(false);
   }
 
-  function buildDepartments(storeFilter, bumFilter) {
-    // For 'all': combine CUR + BON, converting BON to XCG
+  function buildDepartments(storeFilter, bumFilter, vendorFilter) {
+    // For 'all': combine CUR + BON + MMC, converting BON to XCG (CUR + MMC already XCG)
     // For '1': CUR only (already XCG)
     // For 'B': BON only in USD
+    // For 'M': MMC only (XCG, geen conversie)
+    // v3.30: als vendorFilter actief, wordt de inventory_value proportioneel geschaald op basis van
+    // de aandeel van die vendor in de buying_data per (store, dept).
     var map = {};
     // Budget tracking: per (effective_dept, original_dept) eenmaal het budget setten.
     // Dit zorgt dat:
@@ -165,6 +245,23 @@ export default function InventoryDashboard() {
       var isBon = r.store_number === 'B';
       var valMultiplier = (storeFilter === 'all' && isBon) ? XCG_USD : 1;
 
+      // v3.30: vendor-schaling — bepaal welk aandeel van deze (store, dept) rij aan de gefilterde
+      // leverancier toe te schrijven is. Als geen filter: schaal = 1.
+      var vendorScale = 1;
+      if (vendorFilter && vendorFilter !== 'all') {
+        var vKey = r.store_number + '|' + eCode;
+        var vBreakdown = deptByVendor[vKey];
+        if (!vBreakdown) {
+          // Geen buying_data breakdown → onbekende samenstelling → skip deze rij
+          return;
+        }
+        var vendorVal = vBreakdown[vendorFilter] || 0;
+        var totalVal = 0;
+        Object.keys(vBreakdown).forEach(function(k) { totalVal += vBreakdown[k]; });
+        if (totalVal <= 0 || vendorVal <= 0) return;   // vendor komt niet voor in deze dept
+        vendorScale = vendorVal / totalVal;
+      }
+
       if (!map[key]) {
         map[key] = { deptCode: eCode, deptName: eName, bum: eBum, budget: 0, history: {} };
       }
@@ -174,18 +271,20 @@ export default function InventoryDashboard() {
       if (!bumByDept[key] || dt > bumByDept[key].date) {
         bumByDept[key] = { date: dt, bum: eBum, name: eName };
       }
-      // Budget: only CUR has budget. Per origineel dept_code maar 1x meetellen.
+      // Budget: only CUR (store '1') has budget. MMC en BON hebben geen budget.
+      // Per origineel dept_code maar 1x meetellen.
       // Bij merge (31+32→30) tel je 31's budget + 32's budget bij elkaar (eenmalig elk).
-      if (!isBon) {
+      // v3.30: bij vendor-filter proportioneel schalen.
+      if (r.store_number === '1') {
         var bKey = eCode + '|' + r.dept_code;
         if (!budgetSeen[bKey]) {
           budgetSeen[bKey] = true;
-          map[key].budget += parseFloat(r.budget) || 0;
+          map[key].budget += (parseFloat(r.budget) || 0) * vendorScale;
         }
       }
 
       if (!map[key].history[dt]) map[key].history[dt] = 0;
-      map[key].history[dt] += (parseFloat(r.inventory_value) || 0) * valMultiplier;
+      map[key].history[dt] += (parseFloat(r.inventory_value) || 0) * valMultiplier * vendorScale;
     });
 
     // Werk bum en name bij op basis van meest recente inventory_date
@@ -207,20 +306,24 @@ export default function InventoryDashboard() {
       d.pct = d.budget ? ((d.actual - d.budget) / d.budget) * 100 : 0;
 
       // QOO lookup uit voorgeaggregeerde view
-      // Voor 'all' (totaal): som Curacao + Bonaire (Bonaire × XCG_USD voor consistentie)
+      // Voor 'all' (totaal): som Curacao + Bonaire + MMC (Bonaire × XCG_USD, rest al XCG)
       var qooVal = 0;
       if (storeFilter === '1') {
         qooVal = qooData['1|' + d.deptCode] || 0;
       } else if (storeFilter === 'B') {
         qooVal = qooData['B|' + d.deptCode] || 0;
+      } else if (storeFilter === 'M') {
+        qooVal = qooData['M|' + d.deptCode] || 0;
       } else {
-        qooVal = (qooData['1|' + d.deptCode] || 0) + (qooData['B|' + d.deptCode] || 0) * XCG_USD;
+        qooVal = (qooData['1|' + d.deptCode] || 0)
+               + (qooData['B|' + d.deptCode] || 0) * XCG_USD
+               + (qooData['M|' + d.deptCode] || 0);
       }
       d.qoo = qooVal;
     });
 
-    // For BON standalone: filter out depts with all-zero history
-    if (storeFilter === 'B') {
+    // For BON en MMC standalone: filter out depts with all-zero history
+    if (storeFilter === 'B' || storeFilter === 'M') {
       list = list.filter(function(d) { return d.history.some(function(h) { return h.value !== 0; }); });
     }
 
@@ -229,7 +332,7 @@ export default function InventoryDashboard() {
     return list;
   }
 
-  var departments = useMemo(function() { return buildDepartments(store, selBum); }, [data, store, selBum, qooData]);
+  var departments = useMemo(function() { return buildDepartments(store, selBum, selVendor); }, [data, store, selBum, selVendor, qooData, deptByVendor]);
 
   // Bums lijst uit data via effective_bum_group; volgorde uit bum_groups.sort_order
   var bums = useMemo(function() {
@@ -276,7 +379,7 @@ export default function InventoryDashboard() {
     var labels = sortedDates.map(function(dt) { var p = dt.split('-'); return parseInt(p[2]) + ' ' + MN[parseInt(p[1]) - 1] + " '" + p[0].slice(2); });
     var title = '', values = [], budgetValues = [];
     if (selDept === '__total__') {
-      title = selBum !== 'all' ? ('Totaal ' + selBum) : ('Totaal ' + (store === 'all' ? 'Building Depot' : store === '1' ? 'Curaçao' : 'Bonaire'));
+      title = selBum !== 'all' ? ('Totaal ' + selBum) : ('Totaal ' + (store === 'all' ? 'Building Depot' : store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : store === 'M' ? 'MMC' : store));
       var totalBudget = 0;
       departments.forEach(function(d) { totalBudget += d.budget; });
       values = sortedDates.map(function(dt) { var sum = 0; departments.forEach(function(d) { var h = d.history.find(function(x) { return x.date === dt; }); if (h) sum += h.value; }); return sum; });
@@ -318,10 +421,13 @@ export default function InventoryDashboard() {
   var latestDate = dates.length ? dates[dates.length - 1] : '';
   var dateParts = latestDate.split('-');
   var dateLabel = dateParts.length === 3 ? (parseInt(dateParts[2]) + ' ' + MN[parseInt(dateParts[1]) - 1] + ' ' + dateParts[0]) : '';
-  var storeName = store === 'all' ? 'Totaal' : store === '1' ? 'Curaçao' : 'Bonaire';
+  var storeName = store === 'all' ? 'Totaal' : store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : store === 'M' ? 'MMC' : store;
   var currencyLabel = store === 'B' ? 'USD' : 'XCG';
   var isBonaire = store === 'B';
+  var isMmc = store === 'M';
   var isTotaal = store === 'all';
+  // Geen budget beschikbaar voor: BON, MMC, Totaal (alleen CUR heeft budget)
+  var noBudgetStore = isBonaire || isMmc || isTotaal;
 
   return (
     <div className="max-w-[1600px] mx-auto" style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", color: '#1a0a04' }}>
@@ -339,9 +445,10 @@ export default function InventoryDashboard() {
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
           <div className="flex gap-1">
-            <Pill label="Totaal" active={store === 'all'} onClick={function() { setStore('all'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setSelBum('all'); setSelDept('__total__'); }} />
+            <Pill label="Totaal" active={store === 'all'} onClick={function() { setStore('all'); setSelBum('all'); setSelDept('__total__'); setSelVendor('all'); }} />
+            <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setSelBum('all'); setSelDept('__total__'); setSelVendor('all'); }} />
+            <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setSelBum('all'); setSelDept('__total__'); setSelVendor('all'); }} />
+            <Pill label="MMC" active={store === 'M'} onClick={function() { setStore('M'); setSelBum('all'); setSelDept('__total__'); setSelVendor('all'); }} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -359,8 +466,18 @@ export default function InventoryDashboard() {
             {departments.map(function(d) { return <option key={d.deptCode} value={d.deptCode}>{d.deptCode + ' - ' + d.deptName}</option>; })}
           </select>
         </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Leverancier</span>
+          <select value={selVendor} onChange={function(e) { setSelVendor(e.target.value); }}
+            className="bg-white border border-[#e5ddd4] text-[#1a0a04] text-[13px] px-3 py-1.5 rounded-lg min-w-[280px]">
+            <option value="all">Alle leveranciers</option>
+            {vendorList.map(function(v) { return <option key={v.code} value={v.code}>{v.name + ' (' + v.code + ')'}</option>; })}
+          </select>
+          {selVendor !== 'all' && <span className="text-[11px] text-[#6b5240] italic">Waarde geschat op basis van aandeel in buying_data per afdeling</span>}
+        </div>
         {isBonaire && <div className="text-[11px] text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">Bonaire wordt weergegeven in USD. Budget is nog niet beschikbaar voor Bonaire.</div>}
-        {isTotaal && <div className="text-[11px] text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">Totaaloverzicht: Bonaire waarden zijn omgerekend naar XCG (×1.82). Budget geldt alleen voor Curaçao.</div>}
+        {isMmc && <div className="text-[11px] text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">MMC (Multimart Curaçao) in XCG. Budget is nog niet beschikbaar voor MMC.</div>}
+        {isTotaal && <div className="text-[11px] text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">Totaaloverzicht: Bonaire waarden zijn omgerekend naar XCG (×1.82). MMC in XCG. Budget geldt alleen voor Curaçao.</div>}
       </div>
 
       {/* View tabs + export */}
@@ -405,10 +522,10 @@ export default function InventoryDashboard() {
       {/* KPI tiles — react to all filters */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-5">
         {[
-          { label: 'Budget Voorraad', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtK(totals.budget), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.budget)) },
+          { label: 'Budget Voorraad', value: noBudgetStore ? 'n.v.t.' : fmtK(totals.budget), tooltip: noBudgetStore ? '' : fmt(Math.round(totals.budget)) },
           { label: 'Actuele Voorraad', value: fmtK(totals.actual), tooltip: fmt(Math.round(totals.actual)) },
-          { label: 'Verschil', value: (isBonaire || isTotaal) ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct), tooltip: (isBonaire || isTotaal) ? '' : fmt(Math.round(totals.diff)) },
-          { label: '% vs Budget', value: (isBonaire || isTotaal) ? 'n.v.t.' : fmtP(totals.pct), color: (isBonaire || isTotaal) ? undefined : pctColor(totals.pct) },
+          { label: 'Verschil', value: noBudgetStore ? 'n.v.t.' : ((totals.diff >= 0 ? '+' : '') + fmtK(totals.diff)), color: noBudgetStore ? undefined : pctColor(totals.pct), tooltip: noBudgetStore ? '' : fmt(Math.round(totals.diff)) },
+          { label: '% vs Budget', value: noBudgetStore ? 'n.v.t.' : fmtP(totals.pct), color: noBudgetStore ? undefined : pctColor(totals.pct) },
           { label: 'Besteld (QOO)', value: totals.qoo > 0 ? fmtK(totals.qoo) : '-', color: '#1B3A5C', tooltip: totals.qoo > 0 ? fmt(Math.round(totals.qoo)) : '' },
         ].map(function(k, i) {
           return (
@@ -424,7 +541,7 @@ export default function InventoryDashboard() {
 
       {/* ═══ OVERVIEW TABLE ═══ */}
       {view === 'overview' && (function() {
-        var noBudget = isBonaire || isTotaal;
+        var noBudget = noBudgetStore;
         return (
         <div className="bg-white rounded-[14px] border border-[#e5ddd4] shadow-sm overflow-hidden mb-8">
           <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
@@ -490,7 +607,7 @@ export default function InventoryDashboard() {
                 <div>
                   <h3 className="text-[15px] font-bold">{trendChartData.title}</h3>
                   <p className="text-[12px] text-[#6b5240]">
-                    {'Store: ' + (store === 'all' ? 'Totaal' : store === '1' ? 'Curaçao' : 'Bonaire') +
+                    {'Store: ' + storeName +
                     ' · Budget: ' + fmt(Math.round(trendChartData.budgetValues[0] || 0)) +
                     ' · Actual: ' + fmt(Math.round(trendChartData.values[trendChartData.values.length - 1] || 0))}
                   </p>
@@ -528,7 +645,7 @@ export default function InventoryDashboard() {
 
           {store !== '1' && (
             <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-8 shadow-sm text-center">
-              <p className="text-[13px] text-amber-600">{store === 'B' ? 'Bonaire heeft geen budget — visuele vergelijking niet beschikbaar.' : 'Budget vergelijking alleen beschikbaar voor Curaçao.'}</p>
+              <p className="text-[13px] text-amber-600">{store === 'B' ? 'Bonaire heeft geen budget — visuele vergelijking niet beschikbaar.' : store === 'M' ? 'MMC heeft nog geen budget — visuele vergelijking niet beschikbaar.' : 'Budget vergelijking alleen beschikbaar voor Curaçao.'}</p>
             </div>
           )}
         </div>
