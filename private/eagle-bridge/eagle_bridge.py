@@ -70,7 +70,7 @@ import urllib.parse
 import urllib.error
 from pathlib import Path
 
-BRIDGE_VERSIE = "2026.09.21"
+BRIDGE_VERSIE = "2026.09.24"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "EagleBridge"
@@ -462,7 +462,7 @@ def dump_controls(win, pad, kop):
     return len(alles), idx
 
 
-def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62), onderste=False):
+def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62), onderste=False, regel_van_onder=0):
     """
     Zwart-witmasker van de vraagtekst in een Eagle-melding.
 
@@ -482,18 +482,28 @@ def tekstregel_masker(afbeelding, drempel=90, band=(0.18, 0.62), onderste=False)
     px = m.load()
     rows = [sum(1 for x in range(bw) if px[x, y]) for y in range(bh)]
     if onderste:
-        # Alleen de onderste tekstregel: van onderaf de laatste band rijen
-        # met inkt nemen, tot de eerste lege rij erboven. Zo storen
-        # invoervakken hoger in de strook niet (statusregel van Eagle).
+        # Eén tekstregel uit de strook: van onderaf de banden rijen met
+        # inkt aflopen; regel_van_onder=0 is de onderste band, 1 de band
+        # daarboven, enz. De statusregel van Eagle staat meestal onderaan,
+        # maar het venster-rechthoek van Windows steekt een paar beeldpunten
+        # buiten het zichtbare venster, zodat er soms nog een stukje van een
+        # ander venster onder de statusregel in de strook zit. De aanroeper
+        # probeert daarom meerdere banden en houdt de beste overeenkomst.
         minr0 = max(1, bw // 60)
         y1 = bh - 1
-        while y1 >= 0 and rows[y1] < minr0:
-            y1 -= 1
-        if y1 < 0:
-            return None
-        y0 = y1
-        while y0 - 1 >= 0 and rows[y0 - 1] >= minr0:
-            y0 -= 1
+        for _ in range(regel_van_onder + 1):
+            while y1 >= 0 and rows[y1] < minr0:
+                y1 -= 1
+            if y1 < 0:
+                return None
+            y0 = y1
+            while y0 - 1 >= 0 and rows[y0 - 1] >= minr0:
+                y0 -= 1
+            band_y = (y0, y1)
+            y1 = y0 - 1
+        y0, y1 = band_y
+        if y1 - y0 < 4:
+            return None   # een lijntje, geen tekst
         m = m.crop((0, y0, bw, y1 + 1))
         bw, bh = m.size
         px = m.load()
@@ -522,30 +532,38 @@ def tekstverschil(a, b, schuif=3, band=(0.18, 0.62), onderste=False):
     afwijking telt.
     """
     from PIL import ImageFilter
-    ma, mb = tekstregel_masker(a, band=band, onderste=onderste), tekstregel_masker(b, band=band, onderste=onderste)
-    if ma is None or mb is None:
+    mb = tekstregel_masker(b, band=band, onderste=onderste)
+    if mb is None:
         return 1.0
-    ma = ma.filter(ImageFilter.MaxFilter(3))
     mb = mb.filter(ImageFilter.MaxFilter(3))
-    w, h = ma.size
-    pa, pb = ma.load(), mb.load()
+    # Bij een statusstrook (onderste=True) kan de tekstregel niet de
+    # onderste inktband zijn (rand van een ander venster eronder); dan
+    # worden de onderste vier banden geprobeerd en telt de beste.
+    kandidaten = range(4) if onderste else range(1)
     beste = 1.0
-    for dx in range(-schuif, schuif + 1):
-        for dy in range(-2, 3):
-            n = t = 0
-            for y in range(h):
-                yy = y + dy
-                if yy < 0 or yy >= h:
-                    continue
-                for x in range(w):
-                    xx = x + dx
-                    if xx < 0 or xx >= w:
+    for k in kandidaten:
+        ma = tekstregel_masker(a, band=band, onderste=onderste, regel_van_onder=k)
+        if ma is None:
+            continue   # geen (bruikbare) band op deze plek; hoger kijken
+        ma = ma.filter(ImageFilter.MaxFilter(3))
+        w, h = ma.size
+        pa, pb = ma.load(), mb.load()
+        for dx in range(-schuif, schuif + 1):
+            for dy in range(-2, 3):
+                n = t = 0
+                for y in range(h):
+                    yy = y + dy
+                    if yy < 0 or yy >= h:
                         continue
-                    t += 1
-                    if (pa[x, y] > 0) != (pb[xx, yy] > 0):
-                        n += 1
-            if t:
-                beste = min(beste, n / t)
+                    for x in range(w):
+                        xx = x + dx
+                        if xx < 0 or xx >= w:
+                            continue
+                        t += 1
+                        if (pa[x, y] > 0) != (pb[xx, yy] > 0):
+                            n += 1
+                if t:
+                    beste = min(beste, n / t)
     return beste
 
 
@@ -1875,6 +1893,17 @@ class Eagle:
                         na_add=True,
                     )
                 time.sleep(self.pace * 2)
+
+                # Komt dezelfde vraag ná de tweede F4 nog een keer, dan heeft
+                # Eagle de Add geweigerd en staat de reden onderin het scherm
+                # (bijv. 'Invoice number already used for this vendor').
+                # Meteen kijken, niet eerst de hele wachttijd uitzitten.
+                if tweede_f4_gedaan:
+                    strook = self.lees_statusstrook()
+                    status, score = self._bekende_status(strook)
+                    if status is not None:
+                        log(f"  Eagle meldt onderin het scherm: {status.get('uitleg') or status['naam']} (afwijking {score:.2f})")
+                        raise EagleWeigering(status)
 
                 # Na de melding staat Eagle weer op het invoerscherm. Het
                 # distributiescherm komt niet vanzelf: daarvoor moet je
