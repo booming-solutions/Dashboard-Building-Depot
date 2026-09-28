@@ -12,9 +12,12 @@
      freeze panes op Datum+Leverancier, Excel-export van alle acties.
    - NIEUW: Deadline per mail (streefdatum) + "Werklijst"-weergave per persoon
      per dag. Te laat = rood, met teller per persoon in de verdelingsstrook.
+   - NIEUW: "Dashboard"-weergave (voor iedereen): totale werkvoorraad,
+     ouderdom en productie per persoon per week.
    - "Openen": originele mail (met PDF-bijlage) in Outlook openen.
    - "Splitsen": mail met meerdere facturen opsplitsen in losse regels.
    - "Factuur gevraagd" opent de leveranciersmail (NL+EN) → /api/mailbox/resend-request.
+   - Toewijzen mag iedereen: aan wie dan ook, terugzetten of herverdelen.
    ============================================================ */
 'use client';
 
@@ -35,6 +38,8 @@ const FOLDER_OF = {
   reeds_betaald: 'Reeds betaald', info_bericht: 'Info-berichten', handmatig_opgelost: 'Info-berichten',
 };
 const OPEN_STATUS = ['nieuw', 'toegewezen', 'in_behandeling'];
+// Statussen die als "afgehandeld" tellen voor het productie-dashboard.
+const DONE_STATUS = ['geboekt', 'reeds_geboekt', 'factuur_gevraagd', 'reeds_betaald', 'info_bericht', 'handmatig_opgelost'];
 const FOLDERS = [
   { key: 'inbox',            label: 'Inbox (werklijst)', test: (r) => OPEN_STATUS.includes(r.status) },
   { key: 'geboekt',          label: 'Geboekt',           test: (r) => r.status === 'geboekt' },
@@ -128,7 +133,7 @@ export default function MailboxPage() {
   const [rules, setRules] = useState([]);
   const [dismissed, setDismissed] = useState(() => new Set());
 
-  const [view, setView] = useState('mailbox');   // 'mailbox' | 'werklijst'
+  const [view, setView] = useState('mailbox');   // 'mailbox' | 'werklijst' | 'productiviteit'
   const [folder, setFolder] = useState('inbox');
   const [q, setQ] = useState('');
   const [fClerk, setFClerk] = useState('');
@@ -214,8 +219,9 @@ export default function MailboxPage() {
   }
 
   async function assign(row, clerkId) {
-    // Alleen toewijzen. Het "voortaan altijd"-leren gebeurt via de voorstellen-strook bovenaan
-    // (verschijnt zodra je een leverancier vaak genoeg aan dezelfde persoon toewijst).
+    // Iedereen mag toewijzen én herverdelen: aan wie dan ook, terugzetten in de
+    // voorraad, of aan een ander geven. Wie wat uiteindelijk deed blijkt uit de
+    // productie in het dashboard (resolved_by).
     const fields = { assigned_clerk: clerkId || null, assigned_at: clerkId ? new Date().toISOString() : null, assigned_by: effectiveProfileId };
     if (clerkId && row.status === 'nieuw') fields.status = 'toegewezen';
     await patch(row.id, fields, 'toegewezen', { clerk: clerkName(clerkId) });
@@ -415,6 +421,83 @@ export default function MailboxPage() {
     return groups;
   }, [rows, passNoClerk, dueBucket, todayStr, clerkName]);
 
+  // DASHBOARD — totale werkvoorraad + ouderdom, en productie per persoon per week.
+  // "Productie" telt op wie de regel oploste (resolved_by/resolved_at).
+  const productivity = useMemo(() => {
+    const now = Date.now();
+    const d7 = now - 7 * 86400000;
+    const d30 = now - 30 * 86400000;
+
+    // Laatste 8 weken (maandag-start), oud → nieuw.
+    const curMon = new Date(); curMon.setHours(0, 0, 0, 0);
+    curMon.setDate(curMon.getDate() - ((curMon.getDay() + 6) % 7));
+    const weeks = [];
+    for (let i = 7; i >= 0; i--) {
+      const d = new Date(curMon.getTime() - i * 7 * 86400000);
+      weeks.push({ key: ymd(d), label: `${d.getDate()}/${d.getMonth() + 1}` });
+    }
+    const weekKeys = new Set(weeks.map((w) => w.key));
+    const curWeekKey = weeks[weeks.length - 1].key;
+    const mondayKey = (ts) => { const x = new Date(ts); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return ymd(x); };
+
+    // Totale werkvoorraad naar ouderdom (alle open items, ongeacht toewijzing).
+    const age = { b0_2: 0, b3_7: 0, b8_30: 0, b30: 0, total: 0, unassigned: 0, late: 0 };
+
+    const m = new Map();
+    const get = (id) => {
+      if (!m.has(id)) m.set(id, { id, open: 0, late: 0, done7: 0, done30: 0, doneTotal: 0, cycleSum: 0, cycleN: 0, wk: {} });
+      return m.get(id);
+    };
+    rows.forEach((r) => {
+      if (OPEN_STATUS.includes(r.status)) {
+        age.total++;
+        const a = r._age;
+        if (a <= 2) age.b0_2++; else if (a <= 7) age.b3_7++; else if (a <= 30) age.b8_30++; else age.b30++;
+        if (!r.assigned_clerk) age.unassigned++;
+        if (r.due_date && r.due_date < todayStr) age.late++;
+        if (r.assigned_clerk) {
+          const p = get(r.assigned_clerk);
+          p.open++;
+          if (r.due_date && r.due_date < todayStr) p.late++;
+        }
+      }
+      if (DONE_STATUS.includes(r.status) && r.resolved_by) {
+        const p = get(r.resolved_by);
+        p.doneTotal++;
+        const t = r.resolved_at ? new Date(r.resolved_at).getTime() : null;
+        if (t != null && !isNaN(t)) {
+          if (t >= d7) p.done7++;
+          if (t >= d30) p.done30++;
+          const wk = mondayKey(t);
+          if (weekKeys.has(wk)) p.wk[wk] = (p.wk[wk] || 0) + 1;
+          if (r.received_at) {
+            const c = (t - new Date(r.received_at).getTime()) / 86400000;
+            if (c >= 0 && c < 3650) { p.cycleSum += c; p.cycleN++; }
+          }
+        }
+      }
+    });
+
+    let weeklyMax = 1;
+    const list = [...m.values()]
+      .map((a) => {
+        const weekly = weeks.map((w) => a.wk[w.key] || 0);
+        weekly.forEach((n) => { if (n > weeklyMax) weeklyMax = n; });
+        const weekSum = weekly.reduce((s, n) => s + n, 0);
+        return { ...a, name: nameFull(a.id), cycle: a.cycleN ? a.cycleSum / a.cycleN : null, weekly, weekSum };
+      })
+      .filter((a) => a.open > 0 || a.doneTotal > 0)
+      .sort((a, b) => b.open - a.open || b.weekSum - a.weekSum || a.name.localeCompare(b.name));
+    const totals = list.reduce((t, a) => ({
+      open: t.open + a.open, late: t.late + a.late, done7: t.done7 + a.done7,
+      done30: t.done30 + a.done30, doneTotal: t.doneTotal + a.doneTotal,
+      weekly: t.weekly.map((n, i) => n + a.weekly[i]),
+    }), { open: 0, late: 0, done7: 0, done30: 0, doneTotal: 0, weekly: weeks.map(() => 0) });
+    const maxDone30 = list.reduce((mx, a) => Math.max(mx, a.done30), 0);
+    const ageMax = Math.max(1, age.b0_2, age.b3_7, age.b8_30, age.b30);
+    return { list, totals, maxDone30, age, ageMax, weeks, weeklyMax, curWeekKey };
+  }, [rows, todayStr, nameFull]);
+
   // Wekelijkse KPI-historie (maandag-metingen) — beweegt mee met de naam-filter.
   const scopeClerkId = fClerk && fClerk !== '__none__' && fClerk !== '__other__' ? fClerk : null;
   const history = useMemo(() => {
@@ -506,6 +589,24 @@ export default function MailboxPage() {
     await exportWL(group.items, `AP_Werklijst_${(group.label || 'persoon').replace(/\s+/g, '_')}`, `Werklijst — ${group.label} (alle deadlines)`);
   }
 
+  // Exporteer de productie per persoon per week naar Excel (dashboard).
+  async function exportProductivity() {
+    const out = productivity.list.map((a) => {
+      const row = {
+        Persoon: a.name, 'Open voorraad': a.open, 'Te laat': a.late,
+      };
+      productivity.weeks.forEach((w, i) => { row[`wk ${w.label}`] = a.weekly[i]; });
+      row['Totaal 8wk'] = a.weekSum;
+      row['Gem. doorlooptijd (dagen)'] = a.cycle != null ? Math.round(a.cycle * 10) / 10 : '';
+      return row;
+    });
+    await exportToExcel({
+      filename: 'AP_Dashboard_productie',
+      reportTitle: `AP Mailbox — productie per persoon per week (${new Date().toLocaleDateString('nl-NL')})`,
+      sheets: [{ name: 'Productie', rows: out }],
+    });
+  }
+
   // Filter voor de werklijst-groepen op basis van de persoon-keuze (fClerk).
   const wlGroupMatch = (g) => {
     if (!fClerk) return true;
@@ -519,11 +620,12 @@ export default function MailboxPage() {
       title="Streefdatum — wanneer moet dit af zijn?"
       className={`text-[12px] px-1.5 py-1 border rounded-lg bg-white ${isOverdue(r) ? 'border-red-400 text-red-700 font-semibold' : (r.due_date ? 'border-gray-200 text-[#1B3A5C]' : 'border-dashed border-gray-300 text-[#1B3A5C]/50')}`} />
   );
+  // Toewijzen mag iedereen: volledige dropdown — aan wie dan ook, terugzetten of herverdelen.
   const assignSelect = (r, compact) => (
     <div className="flex items-center gap-1.5">
       {r.assigned_clerk && (
-        <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-full text-white text-[10px] font-bold shrink-0" style={{ background: clerkColor(r.assigned_clerk) }}>
-          {initials(clerkName(r.assigned_clerk))}
+        <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-full text-white text-[10px] font-bold shrink-0" style={{ background: clerkColor(r.assigned_clerk) }} title={nameFull(r.assigned_clerk)}>
+          {initials(nameFull(r.assigned_clerk))}
         </span>
       )}
       <select value={r.assigned_clerk || ''} onChange={(e) => assign(r, e.target.value)} disabled={busy}
@@ -555,7 +657,7 @@ export default function MailboxPage() {
         <span className="text-[12px] text-[#1B3A5C]/50">{rows.length} berichten · {counts.inbox} in werklijst</span>
         <span className="text-[12px] text-[#1B3A5C]/40" title="Moment waarop de mailbox voor het laatst automatisch is opgehaald">🕑 Laatst bijgewerkt: {fmtDateTime(lastSync)}</span>
 
-        {/* Weergave-schakelaar: gewone mailbox of de dagelijkse werklijst per persoon */}
+        {/* Weergave-schakelaar: gewone mailbox, de dagelijkse werklijst per persoon, of het dashboard */}
         <div className="ml-auto flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
           <button onClick={() => setView('mailbox')}
             className={`text-[12px] font-semibold px-3 py-1.5 rounded-md ${view === 'mailbox' ? 'bg-white text-[#1B3A5C] shadow-sm' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C]'}`}>📥 Mailbox</button>
@@ -563,6 +665,10 @@ export default function MailboxPage() {
             className={`text-[12px] font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5 ${view === 'werklijst' ? 'bg-white text-[#1B3A5C] shadow-sm' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C]'}`}>
             📋 Werklijst
             {totalLate > 0 && <span className="text-[10px] font-bold text-white bg-[#c0392b] rounded-full px-1.5">{totalLate}</span>}
+          </button>
+          <button onClick={() => setView('productiviteit')}
+            className={`text-[12px] font-semibold px-3 py-1.5 rounded-md ${view === 'productiviteit' ? 'bg-white text-[#1B3A5C] shadow-sm' : 'text-[#1B3A5C]/60 hover:text-[#1B3A5C]'}`}>
+            📊 Dashboard
           </button>
         </div>
         <button onClick={doExport} disabled={busy}
@@ -662,7 +768,117 @@ export default function MailboxPage() {
         </div>
       </div>
 
-      {view === 'werklijst' ? (
+      {view === 'productiviteit' ? (
+        /* ====================== DASHBOARD — werkvoorraad, ouderdom, productie/week ====================== */
+        <div>
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            <div className="text-[13px] text-[#1B3A5C]/60">
+              Totale werkvoorraad, ouderdom en productie per persoon per week. <span className="text-[#1B3A5C]/45">"Productie" = regels die iemand uit de werklijst haalde (geboekt, factuur gevraagd, verplaatst).</span>
+            </div>
+            <button onClick={exportProductivity} disabled={busy || productivity.list.length === 0}
+              className="ml-auto text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-[#1f8a52] text-white hover:bg-[#186e41] disabled:opacity-50">
+              ⬇ Exporteer (Excel)
+            </button>
+          </div>
+
+          {/* 1) Totale werkvoorraad — samenvattingskaarten */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            {[
+              { k: 'total', label: 'Totale werkvoorraad', val: productivity.age.total, cls: 'text-[#1B3A5C]' },
+              { k: 'unassigned', label: 'Niet toegewezen', val: productivity.age.unassigned, cls: 'text-[#7a45c4]' },
+              { k: 'late', label: 'Te laat', val: productivity.age.late, cls: 'text-[#c0392b]' },
+              { k: 'done30', label: 'Productie · 30 dagen', val: productivity.totals.done30, cls: 'text-[#1f8a52]' },
+            ].map((c) => (
+              <div key={c.k} className="bg-white border border-gray-200 rounded-xl px-4 py-3">
+                <div className="text-[11px] uppercase tracking-wide text-[#1B3A5C]/45 font-semibold">{c.label}</div>
+                <div className={`text-[24px] font-extrabold tabular-nums ${c.cls}`}>{c.val}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* 2) Werkvoorraad naar ouderdom */}
+          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+            <div className="text-[12px] font-semibold text-[#1B3A5C]/60 mb-3">📦 Werkvoorraad naar ouderdom</div>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              {[
+                { label: '0–2 dagen', val: productivity.age.b0_2, color: '#1f8a52' },
+                { label: '3–7 dagen', val: productivity.age.b3_7, color: '#2f6fed' },
+                { label: '8–30 dagen', val: productivity.age.b8_30, color: '#c77700' },
+                { label: '30+ dagen', val: productivity.age.b30, color: '#c0392b' },
+              ].map((b) => (
+                <div key={b.label}>
+                  <div className="flex items-center justify-between text-[12px] mb-1">
+                    <span className="text-[#1B3A5C]/70 font-medium">{b.label}</span>
+                    <span className="tabular-nums font-bold" style={{ color: b.color }}>{b.val}</span>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${Math.round((b.val / productivity.ageMax) * 100)}%`, background: b.color }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="text-[11px] text-[#1B3A5C]/40 mt-3 italic">Ouderdom = dagen sinds binnenkomst van de mail. Hoe verder naar rechts (rood), hoe langer iets al blijft liggen.</div>
+          </div>
+
+          {/* 3) Productie per persoon per week + huidige voorraad */}
+          {productivity.list.length === 0 ? (
+            <div className="text-center text-[#1B3A5C]/40 py-10 border border-gray-200 rounded-xl bg-white">Nog geen gegevens om te tonen.</div>
+          ) : (
+            <div className="border border-gray-200 rounded-xl overflow-auto bg-white">
+              <div className="px-4 py-2.5 border-b border-gray-200 text-[12px] font-semibold text-[#1B3A5C]/60">📈 Productie per persoon per week <span className="font-normal text-[#1B3A5C]/40">· laatste 8 weken · links de huidige voorraad</span></div>
+              <table className="w-full border-separate border-spacing-0 text-[13px]" style={{ minWidth: `${520 + productivity.weeks.length * 48}px` }}>
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-[#1B3A5C]/50">
+                    <th className="sticky left-0 z-10 bg-[#f7f9fc] text-left font-semibold px-3 py-2 border-b border-gray-200">Persoon</th>
+                    <th className="text-right font-semibold px-2 py-2 border-b border-gray-200 bg-[#f7f9fc]" title="Huidige open voorraad">Open</th>
+                    <th className="text-right font-semibold px-2 py-2 border-b border-gray-200 bg-[#f7f9fc]">Te laat</th>
+                    {productivity.weeks.map((w) => (
+                      <th key={w.key} className={`text-right font-semibold px-2 py-2 border-b border-gray-200 ${w.key === productivity.curWeekKey ? 'bg-blue-50 text-[#1B3A5C]' : 'bg-[#f7f9fc]'}`} title={`week van ${w.label}`}>{w.label}</th>
+                    ))}
+                    <th className="text-right font-semibold px-3 py-2 border-b border-gray-200 bg-[#f7f9fc]" title="Totaal afgehandeld in de laatste 8 weken">Σ 8wk</th>
+                    <th className="text-right font-semibold px-3 py-2 border-b border-gray-200 bg-[#f7f9fc]" title="Gemiddelde tijd van binnenkomst tot afgehandeld">⌀ dgn</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productivity.list.map((a) => (
+                    <tr key={a.id} className="hover:bg-[#f8fafd]">
+                      <td className="sticky left-0 z-10 bg-white px-3 py-2 border-b border-gray-100 align-middle">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center w-[24px] h-[24px] rounded-full text-white text-[10px] font-bold shrink-0" style={{ background: clerkColor(a.id) }}>{initials(a.name)}</span>
+                          <span className="font-semibold text-[#1B3A5C] whitespace-nowrap">{a.name}</span>
+                        </div>
+                      </td>
+                      <td className="text-right px-2 py-2 border-b border-gray-100 tabular-nums font-semibold">{a.open || '—'}</td>
+                      <td className={`text-right px-2 py-2 border-b border-gray-100 tabular-nums font-semibold ${a.late > 0 ? 'text-[#c0392b]' : 'text-[#1B3A5C]/30'}`}>{a.late || '—'}</td>
+                      {a.weekly.map((n, i) => (
+                        <td key={i} className={`text-right px-2 py-2 border-b border-gray-100 tabular-nums ${productivity.weeks[i].key === productivity.curWeekKey ? 'bg-blue-50/50' : ''}`}
+                          style={n > 0 ? { color: '#1f8a52', fontWeight: 600 } : { color: 'rgba(27,58,92,0.25)' }}>{n || '·'}</td>
+                      ))}
+                      <td className="text-right px-3 py-2 border-b border-gray-100 tabular-nums font-bold text-[#1f8a52]">{a.weekSum || '—'}</td>
+                      <td className="text-right px-3 py-2 border-b border-gray-100 tabular-nums text-[#1B3A5C]/70">{a.cycle != null ? (Math.round(a.cycle * 10) / 10).toLocaleString('nl-NL') : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="font-bold text-[#1B3A5C] bg-[#f7f9fc]">
+                    <td className="sticky left-0 z-10 bg-[#f7f9fc] px-3 py-2 border-t border-gray-200">Totaal</td>
+                    <td className="text-right px-2 py-2 border-t border-gray-200 tabular-nums">{productivity.totals.open}</td>
+                    <td className="text-right px-2 py-2 border-t border-gray-200 tabular-nums text-[#c0392b]">{productivity.totals.late || '—'}</td>
+                    {productivity.totals.weekly.map((n, i) => (
+                      <td key={i} className={`text-right px-2 py-2 border-t border-gray-200 tabular-nums ${productivity.weeks[i].key === productivity.curWeekKey ? 'bg-blue-50/60' : ''}`}>{n || '·'}</td>
+                    ))}
+                    <td className="text-right px-3 py-2 border-t border-gray-200 tabular-nums text-[#1f8a52]">{productivity.totals.weekly.reduce((s, n) => s + n, 0)}</td>
+                    <td className="px-3 py-2 border-t border-gray-200"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+          <div className="text-[11px] text-[#1B3A5C]/40 mt-2 italic">
+            Elke kolom is een week (maandag t/m zondag); het getal is hoeveel die persoon die week afhandelde. De blauwe kolom is de lopende week. "Open" en "Te laat" links zijn de actuele voorraad. ⌀ dgn = gemiddelde doorlooptijd van binnenkomst tot afhandeling.
+          </div>
+        </div>
+      ) : view === 'werklijst' ? (
         /* ====================== WERKLIJST — per persoon, per dag ====================== */
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-2">
