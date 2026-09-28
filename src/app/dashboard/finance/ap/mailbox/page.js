@@ -17,7 +17,8 @@
    - "Openen": originele mail (met PDF-bijlage) in Outlook openen.
    - "Splitsen": mail met meerdere facturen opsplitsen in losse regels.
    - "Factuur gevraagd" opent de leveranciersmail (NL+EN) → /api/mailbox/resend-request.
-   - Toewijzen mag iedereen: aan wie dan ook, terugzetten of herverdelen.
+   - Verdelen mag alleen een manager (admin + Luca): aan iedereen toewijzen/herverdelen.
+     Gewone gebruikers pakken alleen een niet-toegewezen mail naar zichzelf op.
    ============================================================ */
 'use client';
 
@@ -120,7 +121,17 @@ function ymd(d) { return d.toLocaleDateString('en-CA'); }
 export default function MailboxPage() {
   const supabase = createClient();
   const ctx = useApRole();
-  const { effectiveProfileId, effectiveName, effectiveRole } = ctx;
+  const { effectiveProfileId, effectiveName, effectiveRole, actualProfile } = ctx;
+  // Wie is er écht ingelogd — bepaalt de "oppakken naar jezelf"-regel.
+  const myId = actualProfile?.id || effectiveProfileId;
+  // VERDELEN (aan iedereen toewijzen / herverdelen / terugzetten) mag alleen een manager:
+  // de admin (Jeroen) + Luca. Een gewone gebruiker mag alleen een niet-toegewezen mail
+  // naar zichzelf oppakken. We lezen manager bij voorkeur uit de layout (ctx.isManager),
+  // met een lokale fallback zodat de pagina ook los van de layout correct werkt.
+  const MANAGER_EMAILS_FALLBACK = ['lucavanderbreggen@gmail.com']; // Luca van der Breggen
+  const isManager = ctx.isManager != null
+    ? ctx.isManager
+    : (ctx.isAdmin || MANAGER_EMAILS_FALLBACK.includes((actualProfile?.email || '').toLowerCase()));
 
   const [rows, setRows] = useState([]);
   const [clerks, setClerks] = useState([]);
@@ -219,13 +230,22 @@ export default function MailboxPage() {
   }
 
   async function assign(row, clerkId) {
-    // Iedereen mag toewijzen én herverdelen: aan wie dan ook, terugzetten in de
-    // voorraad, of aan een ander geven. Wie wat uiteindelijk deed blijkt uit de
-    // productie in het dashboard (resolved_by).
-    const fields = { assigned_clerk: clerkId || null, assigned_at: clerkId ? new Date().toISOString() : null, assigned_by: effectiveProfileId };
-    if (clerkId && row.status === 'nieuw') fields.status = 'toegewezen';
-    await patch(row.id, fields, 'toegewezen', { clerk: clerkName(clerkId) });
+    const target = clerkId || null;
+    // Verdelen (aan iedereen toewijzen, herverdelen, of terugzetten) mag alleen een manager
+    // (admin + Luca). Een gewone gebruiker mag alleen een NIET-toegewezen mail naar zichzelf
+    // oppakken — niet aan een ander geven en niet andermans werk verplaatsen. Wie wat
+    // uiteindelijk deed blijkt uit de productie in het dashboard (resolved_by).
+    if (!isManager && !(target === myId && !row.assigned_clerk)) {
+      setErr('Alleen de manager verdeelt het werk. Je kunt zelf alleen een nog niet-toegewezen mail naar je eigen naam oppakken.');
+      return;
+    }
+    const fields = { assigned_clerk: target, assigned_at: target ? new Date().toISOString() : null, assigned_by: effectiveProfileId };
+    if (target && row.status === 'nieuw') fields.status = 'toegewezen';
+    await patch(row.id, fields, 'toegewezen', { clerk: clerkName(target) });
   }
+
+  // Gewone gebruiker pakt een niet-toegewezen mail naar zichzelf (voorraad verhogen).
+  async function takeToMe(row) { await assign(row, myId); }
 
   async function applyRouting(vendor, clerkId) {
     setBusy(true);
@@ -620,21 +640,51 @@ export default function MailboxPage() {
       title="Streefdatum — wanneer moet dit af zijn?"
       className={`text-[12px] px-1.5 py-1 border rounded-lg bg-white ${isOverdue(r) ? 'border-red-400 text-red-700 font-semibold' : (r.due_date ? 'border-gray-200 text-[#1B3A5C]' : 'border-dashed border-gray-300 text-[#1B3A5C]/50')}`} />
   );
-  // Toewijzen mag iedereen: volledige dropdown — aan wie dan ook, terugzetten of herverdelen.
-  const assignSelect = (r, compact) => (
-    <div className="flex items-center gap-1.5">
-      {r.assigned_clerk && (
-        <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-full text-white text-[10px] font-bold shrink-0" style={{ background: clerkColor(r.assigned_clerk) }} title={nameFull(r.assigned_clerk)}>
-          {initials(nameFull(r.assigned_clerk))}
-        </span>
-      )}
-      <select value={r.assigned_clerk || ''} onChange={(e) => assign(r, e.target.value)} disabled={busy}
-        className={`text-[12.5px] px-2 py-1 border rounded-lg bg-white ${r.assigned_clerk ? 'border-gray-200 text-[#1B3A5C]' : 'border-dashed border-gray-300 text-[#1B3A5C]/50'} ${compact ? 'max-w-[130px]' : ''}`}>
-        <option value="">Toewijzen…</option>
-        {clerks.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
-      </select>
-    </div>
-  );
+  // VERDELEN mag alleen een manager (Jeroen + Luca): volledige dropdown.
+  // Gewone gebruiker: eigen werk staat op slot, andermans werk is alleen-lezen,
+  // en een niet-toegewezen mail kan hij naar zichzelf oppakken.
+  const assignSelect = (r, compact) => {
+    const avatar = r.assigned_clerk && (
+      <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-full text-white text-[10px] font-bold shrink-0" style={{ background: clerkColor(r.assigned_clerk) }} title={nameFull(r.assigned_clerk)}>
+        {initials(nameFull(r.assigned_clerk))}
+      </span>
+    );
+    if (isManager) {
+      return (
+        <div className="flex items-center gap-1.5">
+          {avatar}
+          <select value={r.assigned_clerk || ''} onChange={(e) => assign(r, e.target.value)} disabled={busy}
+            className={`text-[12.5px] px-2 py-1 border rounded-lg bg-white ${r.assigned_clerk ? 'border-gray-200 text-[#1B3A5C]' : 'border-dashed border-gray-300 text-[#1B3A5C]/50'} ${compact ? 'max-w-[130px]' : ''}`}>
+            <option value="">Toewijzen…</option>
+            {clerks.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+          </select>
+        </div>
+      );
+    }
+    if (r.assigned_clerk === myId) {
+      return (
+        <div className="flex items-center gap-1.5" title="Dit staat bij jou — alleen de manager kan het verplaatsen.">
+          {avatar}
+          <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B3A5C] bg-[#eef3fb] border border-[#d6e2f5] rounded-lg px-2 py-1"><span aria-hidden>🔒</span> Van mij</span>
+        </div>
+      );
+    }
+    if (r.assigned_clerk) {
+      return (
+        <div className="flex items-center gap-1.5" title={`Toegewezen aan ${nameFull(r.assigned_clerk)} — alleen de manager kan dit wijzigen.`}>
+          {avatar}
+          <span className="text-[12px] text-[#1B3A5C]/60">{nameShort(r.assigned_clerk)}</span>
+        </div>
+      );
+    }
+    return (
+      <button onClick={() => takeToMe(r)} disabled={busy}
+        title="Deze nog niet-toegewezen mail naar jouw eigen naam oppakken"
+        className="text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-[#1B3A5C] text-white hover:bg-[#152e49] disabled:opacity-50 whitespace-nowrap">
+        ➜ Naar mij
+      </button>
+    );
+  };
   const destSelect = (r) => {
     const curDest = ['geboekt', 'reeds_geboekt', 'factuur_gevraagd', 'reeds_betaald', 'info_bericht'].includes(r.status) ? r.status : '';
     return (
@@ -707,8 +757,8 @@ export default function MailboxPage() {
 
       {err && <div className="mb-3 text-[12px] bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2">{err}</div>}
 
-      {/* voorstellen — leren met melding */}
-      {suggestions.length > 0 && (
+      {/* voorstellen — leren met melding (alleen managers: dit herverdeelt werk / maakt regels) */}
+      {isManager && suggestions.length > 0 && (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
           <div className="text-[12px] font-semibold text-amber-900 mb-2">💡 Voorstellen — vaste toewijzing leren</div>
           <div className="space-y-1.5">
