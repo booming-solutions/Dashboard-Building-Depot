@@ -68,7 +68,7 @@ export default function SalesDashboard(){
   const[corrections,setCorrections]=useState([]);
   const[lastDate,setLastDate]=useState(null);
   const[loading,setLoading]=useState(true);
-  const[store,setStore]=useState('1');
+  const[store,setStore]=useState(['1']);
   const[year,setYear]=useState(2026);
   const[months,setMonths]=useState([String(new Date().getMonth()+1)]);
   const[bum,setBum]=useState('all');
@@ -185,15 +185,32 @@ export default function SalesDashboard(){
   const currentYear=year,priorYear=year-1;
   const isYTD=months.includes('ytd'),isAll=months.includes('all');
   const selectedMonths=useMemo(()=>{if(isAll||isYTD)return null;return months.map(m=>parseInt(m)).filter(m=>!isNaN(m))},[months,isAll,isYTD]);
-  const isBonaire=store==='B';
+  const isBonaire=store.length===1&&store[0]==='B';
+  const isMultiStore=store.length>1;
+  const includesBonaire=store.includes('B');
   // Bonaire toont default USD; gebruiker kan switchen naar XCG (× 1.82) via toggle in header
   const [bonCurr,setBonCurr]=useState('USD');
   const XCG_USD=1.82;
-  // Reset naar USD als store van Bonaire af gaat
+  // Reset naar USD als store van Bonaire af gaat (of multi-select actief wordt)
   useEffect(()=>{if(!isBonaire&&bonCurr!=='USD')setBonCurr('USD')},[isBonaire,bonCurr]);
-  const curr=isBonaire?(bonCurr==='XCG'?'XCG':'US$'):'XCG';
-  // Conversie: alleen voor Bonaire + XCG modus. Anders 1:1.
+  // Multi-select: forceer XCG display (bedragen worden in filters geconverteerd)
+  const curr=isMultiStore?'XCG':(isBonaire?(bonCurr==='XCG'?'XCG':'US$'):'XCG');
+  // Conversie: alleen voor single Bonaire + XCG modus (data is USD; * 1.82 → XCG).
+  // Bij multi-store is conversie in filters gedaan, dus conv() = identity.
   const conv=useCallback(v=>(isBonaire&&bonCurr==='XCG')?v*XCG_USD:v,[isBonaire,bonCurr]);
+  // Helper: converteer een Bonaire rij (USD) naar XCG bij multi-store selectie
+  function normalizeBonRow(r){
+    if(!isMultiStore||r.store_number!=='B')return r;
+    return{...r,net_sales:parseFloat(r.net_sales||0)*XCG_USD,gross_margin:parseFloat(r.gross_margin||0)*XCG_USD};
+  }
+  function normalizeBonBudget(b){
+    if(!isMultiStore||b.store_number!=='B')return b;
+    return{...b,amount:parseFloat(b.amount||0)*XCG_USD};
+  }
+  function normalizeBonCorr(c){
+    if(!isMultiStore||c.store_number!=='B')return c;
+    return{...c,sales_correction:parseFloat(c.sales_correction||0)*XCG_USD,margin_correction:parseFloat(c.margin_correction||0)*XCG_USD};
+  }
   const fmtMC=useCallback(n=>fmtM(conv(n)),[conv]);
 
   const dayFrac=useMemo(()=>{
@@ -217,25 +234,30 @@ export default function SalesDashboard(){
   // BUM filter werkt nu op effective_bum_group (afdelings-code, niet persoonsnaam)
   const isRangeActive=!!(dateFrom&&dateTo&&dateFrom<=dateTo);
   const filtered=useMemo(()=>{
+    let out;
     if(isRangeActive){
-      // Range-modus: dagrijen filteren op CY-periode en filters
       const[fy,fm,fd]=dateFrom.split('-').map(Number);
       const[ty,tm,td]=dateTo.split('-').map(Number);
       const lyFrom=`${fy-1}-${String(fm).padStart(2,'0')}-${String(fd).padStart(2,'0')}`;
-      return rangeRows.filter(r=>r.sale_date>=dateFrom&&r.sale_date<=dateTo&&(store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept));
+      out=rangeRows.filter(r=>r.sale_date>=dateFrom&&r.sale_date<=dateTo&&store.includes(r.store_number)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept));
+    }else{
+      out=data.filter(r=>(store.includes(r.store_number)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===currentYear&&matchMonth(r.month)));
     }
-    return data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===currentYear&&matchMonth(r.month)));
-  },[isRangeActive,rangeRows,dateFrom,dateTo,data,store,currentYear,months,bum,dept,maxDataMonth]);
+    return isMultiStore?out.map(normalizeBonRow):out;
+  },[isRangeActive,rangeRows,dateFrom,dateTo,data,store,currentYear,months,bum,dept,maxDataMonth,isMultiStore]);
   const priorFiltered=useMemo(()=>{
+    let out;
     if(isRangeActive){
       const[fy,fm,fd]=dateFrom.split('-').map(Number);
       const[ty,tm,td]=dateTo.split('-').map(Number);
       const lyFrom=`${fy-1}-${String(fm).padStart(2,'0')}-${String(fd).padStart(2,'0')}`;
       const lyTo=`${ty-1}-${String(tm).padStart(2,'0')}-${String(td).padStart(2,'0')}`;
-      return rangeRows.filter(r=>r.sale_date>=lyFrom&&r.sale_date<=lyTo&&(store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept));
+      out=rangeRows.filter(r=>r.sale_date>=lyFrom&&r.sale_date<=lyTo&&store.includes(r.store_number)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept));
+    }else{
+      out=data.filter(r=>(store.includes(r.store_number)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===priorYear&&matchMonth(r.month)));
     }
-    return data.filter(r=>((store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept)&&r.year===priorYear&&matchMonth(r.month)));
-  },[isRangeActive,rangeRows,dateFrom,dateTo,data,store,priorYear,months,bum,dept,maxDataMonth]);
+    return isMultiStore?out.map(normalizeBonRow):out;
+  },[isRangeActive,rangeRows,dateFrom,dateTo,data,store,priorYear,months,bum,dept,maxDataMonth,isMultiStore]);
   const salesType=budgetMode==='target'?'target_sales':'cgf_sales';
   const marginType=budgetMode==='target'?'target_margin':'cgf_margin';
 
@@ -254,14 +276,17 @@ export default function SalesDashboard(){
   },[deptBumMapping,currentYear]);
 
   // Budget filter: gebruikt deptBumMap voor afdelings-filtering (lookup per jaar)
-  const budgetFiltered=useMemo(()=>budgetData.filter(b=>{
-    if(store!=='all'&&b.store_number!==store)return false;
-    if(dept!=='all'&&b.dept_code!==dept)return false;
-    if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
-    const[by,bm]=b.month.split('-').map(Number);
-    if(by!==currentYear||!matchMonth(bm))return false;
-    return b.budget_type===salesType||b.budget_type===marginType;
-  }),[budgetData,store,currentYear,months,dept,bum,deptBumMap,budgetMode,maxDataMonth,salesType,marginType]);
+  const budgetFiltered=useMemo(()=>{
+    const out=budgetData.filter(b=>{
+      if(!store.includes(b.store_number))return false;
+      if(dept!=='all'&&b.dept_code!==dept)return false;
+      if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
+      const[by,bm]=b.month.split('-').map(Number);
+      if(by!==currentYear||!matchMonth(bm))return false;
+      return b.budget_type===salesType||b.budget_type===marginType;
+    });
+    return isMultiStore?out.map(normalizeBonBudget):out;
+  },[budgetData,store,currentYear,months,dept,bum,deptBumMap,budgetMode,maxDataMonth,salesType,marginType,isMultiStore]);
 
   // Correcties: legacy data heeft 'bum' = persoonsnaam. Vertaal naar afdelingscode voor filtering.
   const personToGroup={PASCAL:'BUILDING_MATERIALS',HENK:'SANITAIR_KEUKENS',JOHN:'HARDWARE',GIJS:'LIVING',DANIEL:'APPLIANCES_HOUSEWARE',OTHER:'OVERIG'};
@@ -270,7 +295,10 @@ export default function SalesDashboard(){
     if(c.bum&&personToGroup[c.bum])return personToGroup[c.bum];
     return c.bum||'OVERIG';
   }
-  const corrFiltered=useMemo(()=>corrections.filter(c=>((store==='all'||c.store_number===store)&&(bum==='all'||corrBumToGroup(c)===bum)&&(dept==='all'||c.dept_code===dept)&&c.year===currentYear&&matchMonth(c.month))),[corrections,store,currentYear,months,bum,dept,maxDataMonth]);
+  const corrFiltered=useMemo(()=>{
+    const out=corrections.filter(c=>(store.includes(c.store_number)&&(bum==='all'||corrBumToGroup(c)===bum)&&(dept==='all'||c.dept_code===dept)&&c.year===currentYear&&matchMonth(c.month)));
+    return isMultiStore?out.map(normalizeBonCorr):out;
+  },[corrections,store,currentYear,months,bum,dept,maxDataMonth,isMultiStore]);
 
   const sum=(a,k)=>a.reduce((s,r)=>s+parseFloat(r[k]||0),0);
   const corrS=sum(corrFiltered,'sales_correction'),corrG=sum(corrFiltered,'margin_correction');
@@ -310,7 +338,7 @@ export default function SalesDashboard(){
     const targetType=budgetMode==='target'?'target_sales':'cgf_sales';
     const monthStr=`${currentYear}-${String(dayFrac.month).padStart(2,'0')}`;
     return budgetData.filter(b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
+      if(!store.includes(b.store_number))return false;
       if(dept!=='all'&&b.dept_code!==dept)return false;
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       if(b.month!==monthStr)return false;
@@ -332,7 +360,7 @@ export default function SalesDashboard(){
   const targetForFilter=useMemo(()=>{
     const targetType=budgetMode==='target'?'target_sales':'cgf_sales';
     return budgetData.filter(b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
+      if(!store.includes(b.store_number))return false;
       if(dept!=='all'&&b.dept_code!==dept)return false;
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       const[by]=b.month.split('-').map(Number);
@@ -342,7 +370,7 @@ export default function SalesDashboard(){
   },[budgetData,store,dept,bum,deptBumMap,currentYear,budgetMode]);
   const cgfForFilter=useMemo(()=>{
     return budgetData.filter(b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
+      if(!store.includes(b.store_number))return false;
       if(dept!=='all'&&b.dept_code!==dept)return false;
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       const[by]=b.month.split('-').map(Number);
@@ -355,7 +383,7 @@ export default function SalesDashboard(){
   // YTD = jan t/m max-data-maand; Alle = jaartotaal; specifieke maand(en) = som van die maanden.
   const targetForSelection=useMemo(()=>{
     return budgetData.filter(b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
+      if(!store.includes(b.store_number))return false;
       if(dept!=='all'&&b.dept_code!==dept)return false;
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       const[by,bm]=b.month.split('-').map(Number);
@@ -366,7 +394,7 @@ export default function SalesDashboard(){
 
   const cgfForSelection=useMemo(()=>{
     return budgetData.filter(b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
+      if(!store.includes(b.store_number))return false;
       if(dept!=='all'&&b.dept_code!==dept)return false;
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       const[by,bm]=b.month.split('-').map(Number);
@@ -382,7 +410,7 @@ export default function SalesDashboard(){
     const lastStr=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const lyStr=`${y-1}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     // Filter respecteren (store, bum, dept) — geen jaar/maand filter want we kijken specifieke dagen
-    const matchRow=r=>(store==='all'||r.store_number===store)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept);
+    const matchRow=r=>store.includes(r.store_number)&&(bum==='all'||r.effective_bum_group===bum)&&(dept==='all'||r.effective_dept_code===dept);
     const ty=dailyRows.filter(r=>r.sale_date===lastStr&&matchRow(r));
     const ly=dailyRows.filter(r=>r.sale_date===lyStr&&matchRow(r));
     const tySales=ty.reduce((s,r)=>s+parseFloat(r.net_sales||0),0);
@@ -392,7 +420,7 @@ export default function SalesDashboard(){
     const monthStr=`${y}-${String(m).padStart(2,'0')}`;
     const daysInMonth=new Date(y,m,0).getDate();
     const monthBudget=budgetData.filter(b=>{
-      if(store!=='all'&&b.store_number!==store)return false;
+      if(!store.includes(b.store_number))return false;
       if(dept!=='all'&&b.dept_code!==dept)return false;
       if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
       if(b.month!==monthStr)return false;
@@ -414,6 +442,7 @@ export default function SalesDashboard(){
   const budgetLabel=budgetMode==='target'?'Target':'CGF';
 
   function handleMonthClick(m,e){if(m==='all'||m==='ytd'){setMonths([m]);return}if(e&&e.ctrlKey){setMonths(prev=>{const c=prev.filter(x=>x!=='all'&&x!=='ytd');if(c.includes(m))return c.filter(x=>x!==m).length?c.filter(x=>x!==m):['all'];return[...c,m]})}else setMonths([m])}
+  function handleStoreClick(s,e){if(e&&(e.ctrlKey||e.metaKey)){setStore(prev=>{if(prev.includes(s)){const nx=prev.filter(x=>x!==s);return nx.length?nx:prev}return[...prev,s]})}else setStore([s])}
 
   // ── Waterfall: budget vs actual per BUM of per dept binnen BUM ──
   // Reageert op alle dashboard filters. Auto-schakel:
@@ -466,7 +495,7 @@ export default function SalesDashboard(){
     if(dayFrac.month&&isYTD){
       budgetData.filter(b=>{
         if(b.budget_type!==salesType)return false;
-        if(store!=='all'&&b.store_number!==store)return false;
+        if(!store.includes(b.store_number))return false;
         if(bum!=='all'&&deptBumMap[b.dept_code]!==bum)return false;
         const[by,bm]=b.month.split('-').map(Number);
         return by===currentYear&&bm>dayFrac.month;
@@ -623,8 +652,8 @@ export default function SalesDashboard(){
 
   if(loading)return <LoadingLogo text="Dashboard laden..." />;
   if(!data.length)return<div className="text-center py-16"><p className="text-[#6b5240]">Geen data beschikbaar.</p></div>;
-  const storeName=store==='all'?'Alle':SN[store]||store;
-  const currLabel=isBonaire?`${storeName} · US$`:`${storeName} · XCG`;
+  const storeName=store.length===0?'-':store.length===1?(SN[store[0]]||store[0]):store.map(s=>SN[s]||s).join(' + ');
+  const currLabel=isMultiStore?`${storeName} · XCG`:(isBonaire?`${storeName} · ${curr}`:`${storeName} · XCG`);
 
   return(
     <div className="max-w-[1520px] mx-auto" style={{fontFamily:"'DM Sans',-apple-system,sans-serif",color:'#1a0a04'}}>
@@ -683,7 +712,7 @@ export default function SalesDashboard(){
 
       {tab==='actuals'&&<>
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store===s} onClick={()=>setStore(s)}/>)}</div><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
+        <div className="flex flex-wrap items-center gap-3"><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Store</span><div className="flex gap-1">{stores.map(s=><Pill key={s} label={SN[s]||s} active={store.includes(s)} onClick={e=>handleStoreClick(s,e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere</span><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] ml-6">Jaar</span><div className="flex gap-1">{years.map(y=><Pill key={y} label={y+' TY'} active={currentYear===y} onClick={()=>setYear(y)}/>)}</div></div>
         <div className={"flex flex-wrap items-center gap-3 "+(isRangeActive?'opacity-40':'')}><span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-24">Maand</span><div className="flex gap-1 flex-wrap"><Pill label="Alle" active={months.includes('all')} onClick={()=>setMonths(['all'])}/><Pill label="YTD" active={months.includes('ytd')} onClick={()=>setMonths(['ytd'])}/>{MN.map((m,i)=><Pill key={i} label={m} active={months.includes(String(i+1))} onClick={e=>handleMonthClick(String(i+1),e)}/>)}</div><span className="text-[10px] text-[#a08a74] ml-2">Ctrl+klik voor meerdere{isRangeActive&&' — uitgeschakeld door datum-range'}</span></div>
         {(function(){
           const today=lastDate||new Date();
