@@ -1,7 +1,17 @@
 /* ============================================================
-   BESTAND: page_negative_inventory_v18.js
+   BESTAND: page_negative_inventory_v19.js
    KOPIEER NAAR: src/app/dashboard/inventory/negative/page.js
-   VERSIE: v3.28.32
+   VERSIE: v3.29.0
+
+   Wijzigingen t.o.v. v18 (v3.28.32):
+   - NIEUW: Multi-select store filter met Ctrl+klik.
+     · Gewone klik = alleen die store selecteren
+     · Ctrl+klik (Cmd+klik op Mac) = toevoegen/verwijderen uit selectie
+     · "Totaal" pill = alle 4 stores tegelijk (Curaçao + Bonaire + MMC + Repair)
+     · Bij lege selectie na Ctrl+klik: automatisch terug naar "Totaal"
+     · Alle waardes worden gesomd over de gekozen stores.
+     · Labels: "Curaçao + Bonaire", "MMC + Repair", "Totaal", etc.
+     · Snapshots trendgrafiek filtert dynamisch op de geselecteerde regio's.
 
    Wijzigingen t.o.v. v17:
    - NIEUW: 4 regio's in de store-filter (was 2). Voor Negative
@@ -200,6 +210,36 @@ function regionCode(storeNumber) {
   return 'CUR';
 }
 
+// v19: Multi-select store pill. Ctrl+klik toggelt in de selectie, gewone klik selecteert alleen deze.
+// Bij lege selectie na een Ctrl+klik valt 'ie terug op "Alle" (allCodes).
+function StorePillN({ label, code, stores, setStores, allCodes }) {
+  var active = stores.indexOf(code) !== -1;
+  function handleClick(e) {
+    if (e.ctrlKey || e.metaKey) {
+      var next;
+      if (active) next = stores.filter(function(s) { return s !== code; });
+      else next = stores.concat([code]);
+      if (next.length === 0) next = allCodes.slice();
+      setStores(next);
+    } else {
+      setStores([code]);
+    }
+  }
+  return <button
+    className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')}
+    onClick={handleClick}
+    title="Klik: alleen deze store. Ctrl+klik: voeg toe / verwijder uit selectie">{label}</button>;
+}
+
+// v19: Helpers voor multi-store logica (Negative Inventory: 4 stores)
+var NEG_ALL_STORES = ['Curacao', 'Bonaire', 'MMC', 'Repair'];
+function negIsAllStores(stores) { return stores.length >= NEG_ALL_STORES.length; }
+function negStoresLabel(stores) {
+  if (negIsAllStores(stores)) return 'Totaal';
+  var map = { 'Curacao': 'Curaçao', 'Bonaire': 'Bonaire', 'MMC': 'MMC', 'Repair': 'Repair Centre' };
+  return stores.map(function(s) { return map[s] || s; }).join(' + ');
+}
+
 function Pill({ label, active, onClick }) {
   return (
     <button
@@ -232,7 +272,8 @@ export default function NegativeInventoryPage() {
   var _me = _s({ email: '', name: '' }), me = _me[0], setMe = _me[1];
 
   // Filters
-  var _store = _s('Curacao'), store = _store[0], setStore = _store[1];     // default Curacao
+  // v19: multi-store selectie. Default = alleen Curacao (net als voorheen).
+  var _stores = _s(['Curacao']), stores = _stores[0], setStores = _stores[1];
   var _bum = _s('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = _s('__total__'), selDept = _dept[0], setSelDept = _dept[1];
 
@@ -432,26 +473,22 @@ export default function NegativeInventoryPage() {
   /* ── Apply global filters ── */
   function matchFilters(it) {
     // v3.28.32: 4 regio-filters (was 2)
-    if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return false;
-    if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return false;
-    if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return false;
-    if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return false;
+    // v19: multi-store filter
+    if (!negIsAllStores(stores) && stores.indexOf(regionOf(it.store_number)) === -1) return false;
     if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return false;
     if (selDept !== '__total__' && it.dept_code !== selDept) return false;
     if (qtyFilter && (it.qty_on_hand || 0) >= -5) return false;
     if (valFilter && (it.inv_value || 0) >= -500) return false;
     return true;
   }
-  var filteredItems = useMemo(function() { return items.filter(matchFilters); }, [items, store, selBum, selDept, qtyFilter, valFilter]);
+  var filteredItems = useMemo(function() { return items.filter(matchFilters); }, [items, stores, selBum, selDept, qtyFilter, valFilter]);
 
   /* ── Filter options ── */
   var bums = useMemo(function() {
     var s = {};
     items.forEach(function(it) {
-      if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
-      if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return;
-      if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return;
+      // v19: multi-store filter
+      if (!negIsAllStores(stores) && stores.indexOf(regionOf(it.store_number)) === -1) return;
       if (it.bum) s[it.bum.toUpperCase()] = true;
     });
     var l = Object.keys(s);
@@ -463,15 +500,13 @@ export default function NegativeInventoryPage() {
       return a.localeCompare(b);
     });
     return l;
-  }, [items, store]);
+  }, [items, stores]);
 
   var departments = useMemo(function() {
     var m = {};
     items.forEach(function(it) {
-      if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
-      if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return;
-      if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return;
+      // v19: multi-store filter
+      if (!negIsAllStores(stores) && stores.indexOf(regionOf(it.store_number)) === -1) return;
       if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
       if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
       if (valFilter && (it.inv_value || 0) >= -500) return;
@@ -492,16 +527,14 @@ export default function NegativeInventoryPage() {
       return (parseInt(a.deptCode) || 999) - (parseInt(b.deptCode) || 999);
     });
     return arr;
-  }, [items, store, selBum, qtyFilter, valFilter]);
+  }, [items, stores, selBum, qtyFilter, valFilter]);
 
   /* ── BUM groups (for "per BUM" view) ── */
   var bumGroups = useMemo(function() {
     var m = {};
     items.forEach(function(it) {
-      if (store === 'Curacao' && regionOf(it.store_number) !== 'Curacao') return;
-      if (store === 'Bonaire' && regionOf(it.store_number) !== 'Bonaire') return;
-      if (store === 'MMC' && regionOf(it.store_number) !== 'MMC') return;
-      if (store === 'Repair' && regionOf(it.store_number) !== 'Repair') return;
+      // v19: multi-store filter
+      if (!negIsAllStores(stores) && stores.indexOf(regionOf(it.store_number)) === -1) return;
       if (selBum !== 'all' && (it.bum || '').toUpperCase() !== selBum.toUpperCase()) return;
       if (qtyFilter && (it.qty_on_hand || 0) >= -5) return;
       if (valFilter && (it.inv_value || 0) >= -500) return;
@@ -524,7 +557,7 @@ export default function NegativeInventoryPage() {
       return a.bum.localeCompare(b.bum);
     });
     return arr;
-  }, [items, store, selBum, qtyFilter, valFilter]);
+  }, [items, stores, selBum, qtyFilter, valFilter]);
 
   /* ── Sorted rows for Overview tab ── */
   var overviewRows = useMemo(function() {
@@ -602,10 +635,8 @@ export default function NegativeInventoryPage() {
     var byDate = {};
     var bumUp = selBum.toUpperCase();
     snapshots.forEach(function(s) {
-      if (store === 'Curacao' && s.region !== 'Curacao') return;
-      if (store === 'Bonaire' && s.region !== 'Bonaire') return;
-      if (store === 'MMC' && s.region !== 'MMC') return;
-      if (store === 'Repair' && s.region !== 'Repair') return;
+      // v19: multi-store snapshot filter
+      if (!negIsAllStores(stores) && stores.indexOf(s.region) === -1) return;
       if (selDept !== '__total__' && s.department_code !== selDept) return;
       // BUM filter via dept→BUM lookup (snapshot tabel heeft geen BUM kolom)
       if (selBum !== 'all') {
@@ -623,7 +654,7 @@ export default function NegativeInventoryPage() {
     // Weekly sampling: anchor = laatste beschikbare snapshot, ga steeds 7 dagen terug.
     // Als de exacte -7 dag geen snapshot heeft, pak dichtstbijzijnde (1 dag eerder/later).
     return pickWeeklyDates(allDays);
-  }, [snapshots, store, selDept, selBum, deptToBum]);
+  }, [snapshots, stores, selDept, selBum, deptToBum]);
 
   /* ── Trend per BUM (voor stacked area chart) ──
      Berekent absolute (positieve) waarde per (datum × BUM).
@@ -633,10 +664,8 @@ export default function NegativeInventoryPage() {
     var byDate = {};
     var bumTotals = {};
     snapshots.forEach(function(s) {
-      if (store === 'Curacao' && s.region !== 'Curacao') return;
-      if (store === 'Bonaire' && s.region !== 'Bonaire') return;
-      if (store === 'MMC' && s.region !== 'MMC') return;
-      if (store === 'Repair' && s.region !== 'Repair') return;
+      // v19: multi-store snapshot filter
+      if (!negIsAllStores(stores) && stores.indexOf(s.region) === -1) return;
       if (selDept !== '__total__' && s.department_code !== selDept) return;
       var bum = deptToBum[s.department_code];
       if (!bum) return; // dept zonder BUM-mapping → uit grafiek
@@ -662,7 +691,7 @@ export default function NegativeInventoryPage() {
         return row;
       }),
     };
-  }, [snapshots, store, selDept, deptToBum]);
+  }, [snapshots, stores, selDept, deptToBum]);
 
   useEffect(function() {
     if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
@@ -875,12 +904,7 @@ export default function NegativeInventoryPage() {
     ? snapshots.reduce(function(max, s) { return s.snapshot_date > max ? s.snapshot_date : max; }, snapshots[0].snapshot_date)
     : null;
 
-  var storeName = store === 'all' ? 'Totaal'
-                : store === 'Curacao' ? 'Curaçao'
-                : store === 'Bonaire' ? 'Bonaire'
-                : store === 'MMC' ? 'MMC'
-                : store === 'Repair' ? 'Repair Centre'
-                : store;
+  var storeName = negStoresLabel(stores);
   var dateLabel = latestSnapshotDate ? fmtDateFull(latestSnapshotDate) : '';
 
   return (
@@ -899,12 +923,13 @@ export default function NegativeInventoryPage() {
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
-          <div className="flex gap-1">
-            <Pill label="Totaal" active={store === 'all'} onClick={function() { setStore('all'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="Curaçao" active={store === 'Curacao'} onClick={function() { setStore('Curacao'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="Bonaire" active={store === 'Bonaire'} onClick={function() { setStore('Bonaire'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="MMC" active={store === 'MMC'} onClick={function() { setStore('MMC'); setSelBum('all'); setSelDept('__total__'); }} />
-            <Pill label="Repair" active={store === 'Repair'} onClick={function() { setStore('Repair'); setSelBum('all'); setSelDept('__total__'); }} />
+          <div className="flex gap-1 items-center flex-wrap">
+            <Pill label="Totaal" active={negIsAllStores(stores)} onClick={function() { setStores(NEG_ALL_STORES.slice()); setSelBum('all'); setSelDept('__total__'); }} />
+            <StorePillN label="Curaçao" code="Curacao" stores={stores} setStores={function(next) { setStores(next); setSelBum('all'); setSelDept('__total__'); }} allCodes={NEG_ALL_STORES} />
+            <StorePillN label="Bonaire" code="Bonaire" stores={stores} setStores={function(next) { setStores(next); setSelBum('all'); setSelDept('__total__'); }} allCodes={NEG_ALL_STORES} />
+            <StorePillN label="MMC" code="MMC" stores={stores} setStores={function(next) { setStores(next); setSelBum('all'); setSelDept('__total__'); }} allCodes={NEG_ALL_STORES} />
+            <StorePillN label="Repair" code="Repair" stores={stores} setStores={function(next) { setStores(next); setSelBum('all'); setSelDept('__total__'); }} allCodes={NEG_ALL_STORES} />
+            <span className="text-[10px] text-[#a08a74] italic ml-2">Ctrl+klik voor meerdere</span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">

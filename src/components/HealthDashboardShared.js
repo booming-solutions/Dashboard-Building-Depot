@@ -1,7 +1,19 @@
 /* ============================================================
-   BESTAND: HealthDashboardShared_v8.js
+   BESTAND: HealthDashboardShared_v9.js
    KOPIEER NAAR: src/components/HealthDashboardShared.js
-   VERSIE: v3.28.31
+   VERSIE: v3.29.0
+
+   Wijzigingen t.o.v. v8 (v3.28.31):
+   - NIEUW: Multi-select store filter met Ctrl+klik.
+     · Gewone klik = alleen die store selecteren
+     · Ctrl+klik (Cmd+klik op Mac) = toevoegen/verwijderen uit selectie
+     · Nieuwe "Alle" pill = alle stores tegelijk (het oude Totaal-gedrag)
+     · Bij lege selectie na Ctrl+klik: automatisch terug naar "Alle"
+     · Voorraadwaarde is som over de gekozen stores. USD→XCG conversie
+       gebeurt per-rij (alleen BON), zodat gemengde selecties correct
+       optellen (bv. CUR + BON of alle drie).
+     · Labels: "Curaçao + Bonaire", "MMC", "Totaal", etc.
+     · Excel-filename bevat alle geselecteerde stores.
 
    Wijzigingen t.o.v. v7 (v3.28.28):
    - NIEUW: MMC (Multimart Curacao) als derde locatie naast CUR en BON.
@@ -58,8 +70,50 @@ var fmtC = function(n) { return 'Cg ' + fmt(Math.round(n || 0)); };
 var fmtMoi = function(n) { return n >= 99 ? '∞' : n.toFixed(1); };
 var BU_ORDER = ['PASCAL', 'HENK', 'JOHN', 'DANIEL', 'GIJS'];
 
-function Pill({ label, active, onClick }) {
-  return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick}>{label}</button>;
+function Pill({ label, active, onClick, title }) {
+  return <button className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')} onClick={onClick} title={title}>{label}</button>;
+}
+
+// v14: Multi-select pill. Ctrl+klik toggelt in de selectie, gewone klik selecteert alleen deze.
+// Bij lege selectie na een Ctrl+klik valt 'ie terug op "Alle" (via de wrapper-logica).
+function StorePill({ label, code, stores, setStores, allCodes }) {
+  var active = stores.indexOf(code) !== -1;
+  function handleClick(e) {
+    if (e.ctrlKey || e.metaKey) {
+      // Toggle in selectie
+      var next;
+      if (active) {
+        next = stores.filter(function(s) { return s !== code; });
+      } else {
+        next = stores.concat([code]);
+      }
+      // Bij lege selectie: val terug op alles
+      if (next.length === 0) next = allCodes.slice();
+      setStores(next);
+    } else {
+      // Gewone klik: alleen deze
+      setStores([code]);
+    }
+  }
+  return <button
+    className={'px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all border whitespace-nowrap ' + (active ? 'bg-[#E84E1B] text-white border-[#E84E1B]' : 'bg-white text-[#6b5240] border-[#e5ddd4] hover:border-[#E84E1B]')}
+    onClick={handleClick}
+    title="Klik: alleen deze store. Ctrl+klik: voeg toe / verwijder uit selectie">{label}</button>;
+}
+
+// Helpers voor de multi-store logica
+var HEALTH_ALL_STORES = ['1', 'B', 'M'];
+function isAllStoresH(stores) {
+  return stores.length >= HEALTH_ALL_STORES.length;
+}
+function storesToLabelH(stores) {
+  if (isAllStoresH(stores)) return 'Totaal';
+  var map = { '1': 'Curaçao', 'B': 'Bonaire', 'M': 'MMC' };
+  return stores.map(function(s) { return map[s] || s; }).join(' + ');
+}
+function storesToRegioH(stores) {
+  var map = { '1': 'CUR', 'B': 'BON', 'M': 'MMC' };
+  return stores.map(function(s) { return map[s]; });
 }
 
 function Spark({ sales }) {
@@ -120,7 +174,8 @@ export default function HealthDashboardShared({ bumFilter }) {
   var _d = useState([]), data = _d[0], setData = _d[1];
   var _lo = useState(true), loading = _lo[0], setLoading = _lo[1];
   var _upd = useState(null), lastUpdate = _upd[0], setLastUpdate = _upd[1];
-  var _store = useState('1'), store = _store[0], setStore = _store[1];
+  // v14: multi-store selectie. Ctrl+klik = toggelen, gewone klik = alleen deze.
+  var _stores = useState(['1']), stores = _stores[0], setStores = _stores[1];
   var _bum = useState('all'), selBum = _bum[0], setSelBum = _bum[1];
   var _dept = useState('all'), selDept = _dept[0], setSelDept = _dept[1];
   var _view = useState('overview'), view = _view[0], setView = _view[1];
@@ -159,19 +214,16 @@ export default function HealthDashboardShared({ bumFilter }) {
 
   /* Aggregate items across stores within region */
   var items = useMemo(function() {
-    var cFactor = store === 'B' ? 1.82 : 1;
+    // v14: multi-store filter. Bij multi-select wordt USD→XCG conversie per-rij bepaald
+    // (alleen BON items × 1.82; CUR en MMC zijn al XCG).
+    var wantedRegios = storesToRegioH(stores);
     var filtered = data.filter(function(r) {
-      // FIX: filter op regio kolom (CUR/BON/MMC) sinds buying-pipeline v17.
-      // store_number is nu leeg bij nieuwe buying-data.
-      // v34: MMC (Multimart Curacao) toegevoegd als derde regio.
-      if (store === '1') return r.regio === 'CUR';
-      if (store === 'B') return r.regio === 'BON';
-      if (store === 'M') return r.regio === 'MMC';
-      return true;
+      return wantedRegios.indexOf(r.regio) !== -1;
     });
 
     var map = {};
     filtered.forEach(function(r) {
+      var cFactor = r.regio === 'BON' ? 1.82 : 1;   // per-rij, niet per selectie
       var key = r.item_number;
       if (!map[key]) {
         map[key] = {
@@ -277,7 +329,7 @@ export default function HealthDashboardShared({ bumFilter }) {
 
     // Alleen items met positieve voorraad voor rapportage
     return list.filter(function(m) { return m.qoh > 0 && m.inv_value > 0; });
-  }, [data, store]);
+  }, [data, stores]);
 
   /* Filter by BUM and dept (voor stacked bars en detail) */
   var filteredItems = useMemo(function() {
@@ -474,7 +526,8 @@ export default function HealthDashboardShared({ bumFilter }) {
   if (loading) return <LoadingLogo text={'Gezondheid laden' + (bumFilter ? ' (' + bumFilter + ')' : '') + '...'} />;
   if (!data.length) return <div className="text-center py-16"><p className="text-[#6b5240]">{"Geen data beschikbaar" + (bumFilter ? " voor " + bumFilter : "") + "."}</p></div>;
 
-  var storeName = store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'MMC';
+  var storeName = storesToLabelH(stores);
+  var storeSlug = isAllStoresH(stores) ? 'Totaal' : stores.map(function(s) { return s === '1' ? 'Curacao' : s === 'B' ? 'Bonaire' : 'MMC'; }).join('+');
   var updateLabel = lastUpdate ? 'Data t/m ' + (function() { var p = lastUpdate.split('-'); var MN2 = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec']; return parseInt(p[2]) + ' ' + MN2[parseInt(p[1])-1] + ' ' + p[0]; })() : '';
 
   // Stacked bar render helper
@@ -508,10 +561,12 @@ export default function HealthDashboardShared({ bumFilter }) {
       <div className="bg-white rounded-[14px] border border-[#e5ddd4] p-4 mb-5 space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#6b5240] font-bold uppercase tracking-[0.8px] w-20">Store</span>
-          <div className="flex gap-1">
-            <Pill label="Curaçao" active={store === '1'} onClick={function() { setStore('1'); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} />
-            <Pill label="Bonaire" active={store === 'B'} onClick={function() { setStore('B'); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} />
-            <Pill label="MMC" active={store === 'M'} onClick={function() { setStore('M'); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} />
+          <div className="flex gap-1 items-center">
+            <Pill label="Alle" active={isAllStoresH(stores)} onClick={function() { setStores(HEALTH_ALL_STORES.slice()); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} title="Selecteer alle stores" />
+            <StorePill label="Curaçao" code="1" stores={stores} setStores={function(next) { setStores(next); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} allCodes={HEALTH_ALL_STORES} />
+            <StorePill label="Bonaire" code="B" stores={stores} setStores={function(next) { setStores(next); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} allCodes={HEALTH_ALL_STORES} />
+            <StorePill label="MMC" code="M" stores={stores} setStores={function(next) { setStores(next); setSelBum('all'); setSelDept('all'); setDetailDept(null); }} allCodes={HEALTH_ALL_STORES} />
+            <span className="text-[10px] text-[#a08a74] italic ml-2">Ctrl+klik voor meerdere</span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -637,8 +692,8 @@ export default function HealthDashboardShared({ bumFilter }) {
           })}
         </div>
         <ExcelExportButton
-          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraadgezondheid_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + (store === '1' ? 'Curacao' : store === 'B' ? 'Bonaire' : 'MMC'); })()}
-          reportTitle={'Gezondheid Voorraden — ' + (bumFilter ? bumFilter + ' — ' : '') + (store === '1' ? 'Curaçao' : store === 'B' ? 'Bonaire' : 'MMC')}
+          filename={(function() { var d = new Date(); var pad = function(n){return n<10?'0'+n:''+n;}; return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_voorraadgezondheid_' + (bumFilter || (selBum !== 'all' ? selBum : 'alle')) + '_' + storeSlug; })()}
+          reportTitle={'Gezondheid Voorraden — ' + (bumFilter ? bumFilter + ' — ' : '') + storeName}
           sheets={buildExportSheets}
           className="px-4 py-1.5 mb-1 rounded-lg text-[12px] font-semibold border bg-white text-[#E84E1B] border-[#E84E1B] hover:bg-[#faf5f0] transition-colors"
         />
